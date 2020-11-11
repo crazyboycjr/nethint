@@ -1,0 +1,31 @@
+[package]
+name = "allreduce"
+version = "0.1.0"
+authors = ["Jingrong Chen <crazyboycjr@gmail.com>"]
+edition = "2018"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.11"
+rand = "0.8.3"
+gnuplot = "0.0.37"
+nethint = { path = "../nethint" }
+logging = { path = "../logging" }
+mapreduce = { path = "../mapreduce" }
+utils = { path = "../utils" }
+structopt = "0.3.21"
+lpsolve = "0.1.0"
+lpsolve-sys = "5.5.0"
+rand_distr = "0.4.0"
+toml = "0.5.8"
+serde = { version = "1.0.122", features = ["derive"] }
+lazy_static = "1.4.0"
+rayon = "1.5.0"
+rat_solver = { path = "../rat_solver" }
+indicatif = "0.17.0-rc.4"
+
+[[bin]]
+name = "allreduce_experiment"
+path = "src/experiment.rs"

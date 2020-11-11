@@ -1,0 +1,31 @@
+[package]
+name = "mapreduce"
+version = "0.1.0"
+authors = ["Jingrong Chen <crazyboycjr@gmail.com>"]
+edition = "2018"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.11"
+rand = "0.7.3"
+gnuplot = "0.0.37"
+nethint = { path = "../nethint" }
+logging = { path = "../logging" }
+spiril = { git = "https://github.com/Jeffail/spiril", branch = "master" }
+utils = { path = "../utils" }
+structopt = "0.3.21"
+futures = "0.3.8"
+async-std = "1.7.0"
+num_cpus = "1.13.0"
+anyhow = "1.0.35"
+zipf = "6.1.0"
+toml = "0.5.8"
+serde = { version = "1.0.122", features = ["derive"] }
+lazy_static = "1.4.0"
+rayon = "1.5.0"
+
+[[bin]]
+name = "mapreduce_experiment"
+path = "src/experiment.rs"

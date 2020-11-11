@@ -1,0 +1,104 @@
+# 3:1, jobsize = 4n, poisson = 24s, background: (60s, 0.5, 5), max_slots = 1
+# Specifiation of a Allreduce application experiment
+
+# Number of jobs
+ncases = 100
+
+# Job size distributions [(percentage, number of workers)]
+# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+# job_size_distribution = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]]
+# job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
+# job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
+job_size_distribution = [[40, 4], [40, 8], [40, 12]]
+
+# Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
+buffer_size = 100_000_000
+
+# Number of iterations for all jobs
+num_iterations = 10
+
+# Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
+poisson_lambda = 24_0_000_000.0
+
+placement_strategy = { type = "Compact" }
+# placement_strategy = { type = "CompactLoadBalanced" }
+# placement_strategy = { type = "Spread" }
+# placement_strategy = { type = "Random", args = 0 }
+
+# global seed
+seed = 1
+
+# Output path of for the simulation results
+directory = "/tmp/rl_result_for_paper/probe_bad"
+
+# Number of repeats for each batch of experiments
+batch_repeat = 5
+
+[[batch]]
+policy = "Random"
+probe = { enable = false }
+nethint_level = 0
+
+[[batch]]
+policy = "TopologyAware" # which is ring
+probe = { enable = true, round_ms = 10 }
+nethint_level = 1
+
+[[batch]]
+policy = "TopologyAware" # which is ring
+probe = { enable = false }
+nethint_level = 1
+
+[[batch]]
+policy = "RAT"
+probe = { enable = false }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 10
+
+[simulator]
+nethint = true
+sample_interval_ns = 100_000_000 # 100ms
+loopback_speed = 400
+# possible values of fairness model are "PerFlowMaxMin", "PerVmPairMaxMin", and "TenantFlowMaxMin"
+# fairness = "TenantFlowMaxMin"
+fairness = "PerFlowMaxMin"
+
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 5 }
+# background_flow_hard = { enable = false }
+# nethint_delay_ms = 100
+
+[brain]
+# Random seed for multiple uses
+seed = 1
+# Whether the cluster's bandwidth is asymmetric
+asymmetric = false
+# The percentage of nodes marked broken
+broken = 0.0
+# The slots of each physical machine
+max_slots = 1
+# how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
+sharing_mode = "Guaranteed"
+# in Gbps
+guaranteed_bandwidth = 25
+background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
+# background_flow_high_freq = { enable = false }
+gc_period = 100
+
+# The topology for simulation
+[brain.topology]
+type = "Arbitrary"  # another possible value is "FatTree"
+
+# [brain.topology.args] # When type = "FatTree"
+# nports = 20           # the number of ports of a switch
+# bandwidth = 100       # in Gbps
+# oversub_ratio = 4.0   # oversubscription ratio
+
+[brain.topology.args]         # When type = "Arbitrary"
+nracks = 300        # the number of racks
+rack_size = 6       # the number of hosts under a rack
+host_bw = 100       # bandwidth of a host, in Gbps
+rack_bw = 200       # bandwidth of a ToR switch, in Gbps
+
+# [envs]
+# KEY = "value"
