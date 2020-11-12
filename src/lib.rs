@@ -1,15 +1,17 @@
-use std::collections::HashMap;
-use std::collections::BinaryHeap;
-use std::cmp::Reverse;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use log::{trace, debug};
 
 pub mod cluster;
-use crate::cluster::{Topology, Cluster, Route, Link};
+use crate::cluster::{Cluster, Link, Route, Topology};
 
 // nanoseconds
-type Timestamp = u64;
-type Duration = u64;
+pub type Timestamp = u64;
+pub type Duration = u64;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Bandwidth {
@@ -135,12 +137,10 @@ impl Simulator {
             f.borrow_mut().speed = 0.0;
         });
         while converged < active_flows {
-            let res = self.state.flows
-                .iter()
-                .min_by_key(|(l, fs)| {
-                    assert!(!fs.is_empty());
-                    Self::calc_delta(l, fs)
-                });
+            let res = self.state.flows.iter().min_by_key(|(l, fs)| {
+                assert!(!fs.is_empty());
+                Self::calc_delta(l, fs)
+            });
 
             let (l, fs) = res.expect("impossible");
             let speed_inc = Self::calc_delta(l, fs).value();
@@ -168,12 +168,16 @@ impl Simulator {
             // all FlowStates are converged
 
             // find the first event
-            let first_complete_flow = self.state.running_flows.iter().min_by_key(|f| {
-                f.borrow().time_to_complete()
-            }).expect("");
+            let first_complete_flow = self
+                .state
+                .running_flows
+                .iter()
+                .min_by_key(|f| f.borrow().time_to_complete())
+                .expect("");
 
             let ts_inc = {
-                let first_complete_flow_time = self.ts + first_complete_flow.borrow().time_to_complete();
+                let first_complete_flow_time =
+                    self.ts + first_complete_flow.borrow().time_to_complete();
 
                 if !self.state.flow_bufs.is_empty() {
                     let first_ready_flow = self.state.flow_bufs.peek().unwrap();
@@ -204,11 +208,12 @@ impl Executor for Simulator {
         // let's write some conceptual code
         let mut output = Trace::new();
         let mut event = app.on_event(AppEvent::AppStart);
+        assert!(matches!(event, Event::FlowArrive(_)));
         loop {
-            assert!(matches!(event, Event::FlowArrive(_)));
-
+            trace!("simulator: on event {:?}", event);
             event = match event {
                 Event::FlowArrive(recs) => {
+                    assert!(!recs.is_empty(), "No flow arrives.");
                     // 1. find path for each flow and add to current net state
                     for r in recs {
                         self.state.add_flow(r, &self.cluster, self.ts);
@@ -238,30 +243,54 @@ impl Executor for Simulator {
 /// A flow Trace is a table of flow record.
 #[derive(Debug, Clone)]
 pub struct Trace {
-    recs: Vec<TraceRecord>,
+    pub recs: Vec<TraceRecord>,
 }
 
 impl Trace {
     pub fn new() -> Self {
         Trace { recs: Vec::new() }
     }
+
+    #[inline]
+    pub fn add_record(&mut self, rec: TraceRecord) {
+        self.recs.push(rec);
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct TraceRecord {
     /// The start timestamp of the flow.
-    ts: Timestamp,
-    flow: Flow,
-    dura: Option<Duration>, // this is calculated by the simulator
+    pub ts: Timestamp,
+    pub flow: Flow,
+    pub dura: Option<Duration>, // this is calculated by the simulator
+}
+
+impl TraceRecord {
+    #[inline]
+    pub fn new(ts: Timestamp, flow: Flow, dura: Option<Duration>) -> Self {
+        TraceRecord { ts, flow, dura }
+    }
 }
 
 #[derive(Debug, Clone)]
-struct Flow {
+pub struct Flow {
     bytes: usize,
     src: String,
     dst: String,
     /// a optional tag for application use (e.g. identify the flow in application)
     token: Option<Token>,
+}
+
+impl Flow {
+    #[inline]
+    pub fn new(bytes: usize, src: &str, dst: &str, token: Option<Token>) -> Self {
+        Flow {
+            bytes,
+            src: src.to_owned(),
+            dst: dst.to_owned(),
+            token,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -301,7 +330,10 @@ impl NetState {
             // add to current flow states, an invereted index
             self.running_flows.push(Rc::clone(&fs));
             for l in &route.path {
-                self.flows.entry(l.borrow().clone()).or_insert(Vec::new()).push(Rc::clone(&fs));
+                self.flows
+                    .entry(l.borrow().clone())
+                    .or_insert(Vec::new())
+                    .push(Rc::clone(&fs));
             }
         }
     }
@@ -309,13 +341,15 @@ impl NetState {
     fn emit_flows(&mut self, sim_ts: Timestamp, cluster: &Cluster) {
         while let Some(f) = self.flow_bufs.pop() {
             let f = Rc::clone(&f.0);
-            if sim_ts< f.borrow().ts { break; }
+            if sim_ts < f.borrow().ts {
+                break;
+            }
             assert_eq!(sim_ts, f.borrow().ts);
-            self.add_flow(TraceRecord {
-                ts: f.borrow().ts,
-                flow: f.borrow().flow.clone(),
-                dura: None,
-            }, cluster, sim_ts);
+            self.add_flow(
+                TraceRecord::new(f.borrow().ts, f.borrow().flow.clone(), None),
+                cluster,
+                sim_ts,
+            );
         }
     }
 
@@ -327,27 +361,21 @@ impl NetState {
             f.borrow_mut().bytes_sent += (speed * ts_inc as f64).round() as usize / 8;
 
             if f.borrow().completed() {
-                comp_flows.push(TraceRecord {
-                    ts: f.borrow().ts,
-                    flow: f.borrow().flow.clone(),
-                    dura: Some(sim_ts + ts_inc - f.borrow().ts),
-                });
+                comp_flows.push(TraceRecord::new(
+                    f.borrow().ts,
+                    f.borrow().flow.clone(),
+                    Some(sim_ts + ts_inc - f.borrow().ts),
+                ));
             }
         });
 
-        self.running_flows.retain(|f| {
-            f.borrow().completed()
-        });
+        self.running_flows.retain(|f| f.borrow().completed());
 
         for (_, fs) in self.flows.iter_mut() {
-            fs.retain(|f| {
-                f.borrow().completed()
-            });
+            fs.retain(|f| f.borrow().completed());
         }
         // filter all empty links
-        self.flows.retain(|_, fs| {
-            !fs.is_empty()
-        });
+        self.flows.retain(|_, fs| !fs.is_empty());
 
         comp_flows
     }

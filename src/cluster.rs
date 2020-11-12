@@ -3,6 +3,8 @@ use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+use log::{debug};
+
 use crate::Bandwidth;
 
 pub type NodeRef = Rc<RefCell<Node>>;
@@ -71,6 +73,9 @@ impl Topology for Cluster {
             if vis[x.id] {
                 return None;
             }
+            if x.id == goal.borrow().id {
+                return Some(vec![]);
+            }
             vis[x.id] = true;
             for l in &x.links {
                 let y = Weak::upgrade(&l.borrow().to).unwrap();
@@ -85,6 +90,8 @@ impl Topology for Cluster {
             None
         }
 
+        debug!("find route from {} to {}", src, dst);
+        debug!("src_node: {:?}, dst_node: {:?}", src_node, dst_node);
         let path = dfs(Rc::clone(&src_node), Rc::clone(&dst_node), &mut vis);
         match path {
             None => panic!("route from {} to {} not found", src, dst),
