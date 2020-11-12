@@ -1,10 +1,8 @@
 use nethint::cluster::{Cluster, Node};
 use nethint::{Bandwidth, Executor, Flow, Simulator, Trace, TraceRecord};
 
-// #[macro_use]
-// extern crate log;
-
-use log::{info};
+#[macro_use]
+extern crate log;
 
 fn init_log() {
     use chrono::Utc;
@@ -23,11 +21,10 @@ fn init_log() {
                 &record.args()
             )
         })
-    .init();
+        .init();
 
     info!("env_logger initialized");
 }
-
 
 fn main() {
     init_log();
@@ -52,12 +49,14 @@ fn main() {
     .for_each(|args| cluster.add_edge(args.0, args.1, args.2));
 
     let mut trace = Trace::new();
-    trace.add_record(TraceRecord::new(
-        0,
-        Flow::new(1e6 as usize, "a1", "a5", None),
-        None,
-    ));
+    let records: Vec<TraceRecord> =
+        vec![(0, 1e6 as usize, "a1", "a5"), (0, 1e6 as usize, "a2", "a6"), (1000000, 1e6 as usize, "a2", "a3")]
+            .into_iter()
+            .map(|args| TraceRecord::new(args.0, Flow::new(args.1, args.2, args.3, None), None))
+            .collect();
+    records.into_iter().for_each(|r| trace.add_record(r));
+
     let mut simulator = Simulator::new(cluster);
     let output = simulator.run_with_trace(trace);
-    println!("{:?}", output);
+    println!("{:#?}", output);
 }

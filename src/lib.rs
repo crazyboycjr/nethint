@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::{trace, debug};
+use log::{debug, trace};
 
 pub mod cluster;
 use crate::cluster::{Cluster, Link, Route, Topology};
@@ -12,6 +12,17 @@ use crate::cluster::{Cluster, Link, Route, Topology};
 // nanoseconds
 pub type Timestamp = u64;
 pub type Duration = u64;
+
+trait ToStdDuration {
+    fn to_dura(self) -> std::time::Duration;
+}
+
+impl ToStdDuration for u64 {
+    #[inline]
+    fn to_dura(self) -> std::time::Duration {
+        std::time::Duration::new(self / 1000_000_000, (self % 1000_1000_1000) as u32)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Bandwidth {
@@ -137,10 +148,15 @@ impl Simulator {
             f.borrow_mut().speed = 0.0;
         });
         while converged < active_flows {
-            let res = self.state.flows.iter().min_by_key(|(l, fs)| {
-                assert!(!fs.is_empty());
-                Self::calc_delta(l, fs)
-            });
+            let res = self
+                .state
+                .flows
+                .iter()
+                .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged))
+                .min_by_key(|(l, fs)| {
+                    assert!(!fs.is_empty());
+                    Self::calc_delta(l, fs)
+                });
 
             let (l, fs) = res.expect("impossible");
             let speed_inc = Self::calc_delta(l, fs).value();
@@ -156,7 +172,6 @@ impl Simulator {
             for f in &self.state.running_flows {
                 if !f.borrow().converged {
                     f.borrow_mut().speed += speed_inc;
-                    // check if the link is converged
                 }
             }
         }
@@ -165,30 +180,32 @@ impl Simulator {
     fn min_max_fairness(&mut self) -> Vec<TraceRecord> {
         loop {
             self.min_max_fairness_converge();
+            trace!(
+                "after min_max_fairness converged, ts: {:?}, running flows: {:#?}\nnumber of ready flows: {}",
+                self.ts.to_dura(),
+                self.state.running_flows,
+                self.state.flow_bufs.len(),
+            );
             // all FlowStates are converged
 
             // find the first event
-            let first_complete_flow = self
+            // get min from first_complete_time and first_ready_time, both could be None
+            let first_complete_time = self
                 .state
                 .running_flows
                 .iter()
-                .min_by_key(|f| f.borrow().time_to_complete())
-                .expect("");
+                .map(|f| f.borrow().time_to_complete() + self.ts)
+                .min();
 
-            let ts_inc = {
-                let first_complete_flow_time =
-                    self.ts + first_complete_flow.borrow().time_to_complete();
+            let first_ready_time = self.state.flow_bufs.peek().map(|f| f.0.borrow().ts);
 
-                if !self.state.flow_bufs.is_empty() {
-                    let first_ready_flow = self.state.flow_bufs.peek().unwrap();
-                    let first_ready_flow_time = first_ready_flow.0.borrow().ts;
-                    assert!(first_ready_flow_time > self.ts);
-                    first_ready_flow_time.min(first_complete_flow_time)
-                } else {
-                    assert!(first_complete_flow_time > self.ts);
-                    first_complete_flow_time
-                }
-            };
+            let ts_inc = first_complete_time
+                .into_iter()
+                .chain(first_ready_time)
+                .min()
+                .expect("running flows and ready flows are both empty") - self.ts;
+
+            assert!(ts_inc > 0);
 
             let comp_flows = self.proceed(ts_inc);
             if !comp_flows.is_empty() {
@@ -220,6 +237,12 @@ impl Executor for Simulator {
                     }
                     // 2. run min-max fairness to find the next completed flow
                     let comp_flows = self.min_max_fairness();
+                    trace!(
+                        "ts: {:?}, completed flows: {:?}",
+                        self.ts.to_dura(),
+                        comp_flows
+                    );
+
                     // 3. add completed flows to trace output
                     output.recs.append(&mut comp_flows.clone());
 
@@ -231,6 +254,14 @@ impl Executor for Simulator {
                 }
                 Event::Continue => {
                     let comp_flows = self.min_max_fairness();
+                    trace!(
+                        "ts: {:?}, completed flows: {:?}",
+                        self.ts.to_dura(),
+                        comp_flows
+                    );
+
+                    output.recs.append(&mut comp_flows.clone());
+
                     app.on_event(AppEvent::FlowComplete(comp_flows))
                 }
             }
@@ -257,7 +288,7 @@ impl Trace {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TraceRecord {
     /// The start timestamp of the flow.
     pub ts: Timestamp,
@@ -269,6 +300,17 @@ impl TraceRecord {
     #[inline]
     pub fn new(ts: Timestamp, flow: Flow, dura: Option<Duration>) -> Self {
         TraceRecord { ts, flow, dura }
+    }
+}
+
+impl std::fmt::Debug for TraceRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dura = self.dura.map(|x| x.to_dura());
+        f.debug_struct("TraceRecord")
+            .field("ts", &self.ts)
+            .field("flow", &self.flow)
+            .field("dura", &dura)
+            .finish()
     }
 }
 
@@ -339,11 +381,12 @@ impl NetState {
     }
 
     fn emit_flows(&mut self, sim_ts: Timestamp, cluster: &Cluster) {
-        while let Some(f) = self.flow_bufs.pop() {
+        while let Some(f) = self.flow_bufs.peek() {
             let f = Rc::clone(&f.0);
             if sim_ts < f.borrow().ts {
                 break;
             }
+            self.flow_bufs.pop();
             assert_eq!(sim_ts, f.borrow().ts);
             self.add_flow(
                 TraceRecord::new(f.borrow().ts, f.borrow().flow.clone(), None),
@@ -354,11 +397,16 @@ impl NetState {
     }
 
     fn complete_flows(&mut self, sim_ts: Timestamp, ts_inc: Duration) -> Vec<TraceRecord> {
+        trace!(
+            "complete_flows: sim_ts: {:?}, ts_inc: {:?}",
+            sim_ts.to_dura(),
+            ts_inc.to_dura()
+        );
         let mut comp_flows = Vec::new();
 
         self.running_flows.iter_mut().for_each(|f| {
             let speed = f.borrow().speed;
-            f.borrow_mut().bytes_sent += (speed * ts_inc as f64).round() as usize / 8;
+            f.borrow_mut().bytes_sent += (speed / 1e9 * ts_inc as f64).round() as usize / 8;
 
             if f.borrow().completed() {
                 comp_flows.push(TraceRecord::new(
@@ -369,10 +417,10 @@ impl NetState {
             }
         });
 
-        self.running_flows.retain(|f| f.borrow().completed());
+        self.running_flows.retain(|f| !f.borrow().completed());
 
         for (_, fs) in self.flows.iter_mut() {
-            fs.retain(|f| f.borrow().completed());
+            fs.retain(|f| !f.borrow().completed());
         }
         // filter all empty links
         self.flows.retain(|_, fs| !fs.is_empty());
@@ -384,6 +432,7 @@ impl NetState {
 type FlowStateRef = Rc<RefCell<FlowState>>;
 
 /// A running flow
+#[derive(Debug)]
 struct FlowState {
     /// flow start time, could be greater than sim_ts, read only
     ts: Timestamp,
@@ -413,7 +462,7 @@ impl FlowState {
     fn time_to_complete(&self) -> Duration {
         assert!(self.speed > 0.0);
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
-        (time_sec * 1e9) as Duration
+        (time_sec * 1e9).round() as Duration
     }
 
     #[inline]

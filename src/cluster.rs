@@ -90,16 +90,21 @@ impl Topology for Cluster {
             None
         }
 
-        debug!("find route from {} to {}", src, dst);
+        debug!("searching route from {} to {}", src, dst);
         debug!("src_node: {:?}, dst_node: {:?}", src_node, dst_node);
         let path = dfs(Rc::clone(&src_node), Rc::clone(&dst_node), &mut vis);
         match path {
             None => panic!("route from {} to {} not found", src, dst),
-            Some(path) => Route {
-                from: src_node,
-                to: dst_node,
-                path,
-            },
+            Some(mut path) => {
+                path.reverse();
+                let route = Route {
+                    from: src_node,
+                    to: dst_node,
+                    path,
+                };
+                debug!("find a route from {} to {}\n{:#?}", src, dst, route);
+                route
+            }
         }
     }
 }

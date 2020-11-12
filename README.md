@@ -11,3 +11,5 @@ Here's the plan
 - BackgroundFlow
 - MapReduce Example
 - Allreduce Example
+
+dot visualization topology
