@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use log::{debug};
 
-use crate::Bandwidth;
+use crate::bandwidth::Bandwidth;
 
 pub type NodeRef = Rc<RefCell<Node>>;
 pub type LinkRef = Rc<RefCell<Link>>;

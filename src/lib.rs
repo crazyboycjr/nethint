@@ -6,8 +6,13 @@ use std::rc::Rc;
 
 use log::{debug, trace};
 
+pub mod bandwidth;
+use bandwidth::{Bandwidth, BandwidthTrait};
+
 pub mod cluster;
 use crate::cluster::{Cluster, Link, Route, Topology};
+
+pub mod logging;
 
 // nanoseconds
 pub type Timestamp = u64;
@@ -21,70 +26,6 @@ impl ToStdDuration for u64 {
     #[inline]
     fn to_dura(self) -> std::time::Duration {
         std::time::Duration::new(self / 1000_000_000, (self % 1000_1000_1000) as u32)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Bandwidth {
-    Kbps(f64),
-    Mbps(f64),
-    Gbps(f64),
-}
-
-impl Bandwidth {
-    fn value(self) -> f64 {
-        // to bit/s
-        use Bandwidth::*;
-        match self {
-            Kbps(x) => x * 1e3,
-            Mbps(x) => x * 1e6,
-            Gbps(x) => x * 1e9,
-        }
-    }
-}
-
-impl std::cmp::PartialEq for Bandwidth {
-    fn eq(&self, other: &Self) -> bool {
-        self.value().eq(&other.value())
-    }
-}
-
-impl Eq for Bandwidth {}
-
-impl std::cmp::PartialOrd for Bandwidth {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.value().partial_cmp(&other.value())
-    }
-}
-
-impl std::cmp::Ord for Bandwidth {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.value().partial_cmp(&other.value()).unwrap()
-    }
-}
-
-impl std::ops::Div<f64> for Bandwidth {
-    type Output = Self;
-    fn div(self, rhs: f64) -> Self::Output {
-        use Bandwidth::*;
-        match self {
-            Kbps(x) => Kbps(x / rhs),
-            Mbps(x) => Mbps(x / rhs),
-            Gbps(x) => Gbps(x / rhs),
-        }
-    }
-}
-
-impl std::ops::Sub for Bandwidth {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        use Bandwidth::*;
-        let x = self.value() - rhs.value();
-        match self {
-            Kbps(_) => Kbps(x / 1e3),
-            Mbps(_) => Mbps(x / 1e6),
-            Gbps(_) => Gbps(x / 1e9),
-        }
     }
 }
 
@@ -126,7 +67,7 @@ impl Simulator {
             let f = f.borrow();
             (acc.0 + !f.converged as usize, acc.1 + f.speed)
         });
-        (l.bandwidth - Bandwidth::Gbps(consumed_bw * 1e-9)) / num_active as f64
+        (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active as f64
     }
 
     fn proceed(&mut self, ts_inc: Duration) -> Vec<TraceRecord> {
@@ -159,7 +100,7 @@ impl Simulator {
                 });
 
             let (l, fs) = res.expect("impossible");
-            let speed_inc = Self::calc_delta(l, fs).value();
+            let speed_inc = Self::calc_delta(l, fs).val() as f64;
 
             for f in fs {
                 if !f.borrow().converged {
