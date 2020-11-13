@@ -76,7 +76,7 @@ impl Simulator {
 
         // start new ready flows
         self.ts += ts_inc;
-        self.state.emit_flows(self.ts, &self.cluster);
+        self.state.emit_ready_flows(self.ts);
 
         comp_flows
     }
@@ -309,25 +309,29 @@ struct NetState {
 
 impl NetState {
     #[inline]
+    fn emit_flow(&mut self, fs: FlowStateRef) {
+        self.running_flows.push(Rc::clone(&fs));
+        for l in &fs.borrow().route.path {
+            self.flows
+                .entry(l.borrow().clone())
+                .or_insert_with(Vec::new)
+                .push(Rc::clone(&fs));
+        }
+    }
+
     fn add_flow(&mut self, r: TraceRecord, cluster: &Cluster, sim_ts: Timestamp) {
         let route = cluster.resolve_route(&r.flow.src, &r.flow.dst);
-        let fs = FlowState::new(r.ts, r.flow, route.clone());
+        let fs = FlowState::new(r.ts, r.flow, route);
         if r.ts > sim_ts {
             // add to buffered flows
             self.flow_bufs.push(Reverse(fs));
         } else {
             // add to current flow states, an invereted index
-            self.running_flows.push(Rc::clone(&fs));
-            for l in &route.path {
-                self.flows
-                    .entry(l.borrow().clone())
-                    .or_insert_with(Vec::new)
-                    .push(Rc::clone(&fs));
-            }
+            self.emit_flow(fs);
         }
     }
 
-    fn emit_flows(&mut self, sim_ts: Timestamp, cluster: &Cluster) {
+    fn emit_ready_flows(&mut self, sim_ts: Timestamp) {
         while let Some(f) = self.flow_bufs.peek() {
             let f = Rc::clone(&f.0);
             if sim_ts < f.borrow().ts {
@@ -335,11 +339,7 @@ impl NetState {
             }
             self.flow_bufs.pop();
             assert_eq!(sim_ts, f.borrow().ts);
-            self.add_flow(
-                TraceRecord::new(f.borrow().ts, f.borrow().flow.clone(), None),
-                cluster,
-                sim_ts,
-            );
+            self.emit_flow(f);
         }
     }
 
