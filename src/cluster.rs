@@ -58,7 +58,7 @@ impl Topology for Cluster {
             self.nodes
                 .iter()
                 .find(|n| n.borrow().name == name)
-                .expect(format!("cannot find node with name: {}", name).as_str()),
+                .unwrap_or_else(|| panic!("cannot find node with name: {}", name))
         )
     }
 

@@ -1,8 +1,8 @@
 #[derive(Debug, Clone, Copy)]
 enum BandwidthUnit {
     Kbps = 1000,
-    Mbps = 1000_000,
-    Gbps = 1000_000_000,
+    Mbps = 1_000_000,
+    Gbps = 1_000_000_000,
 }
 
 impl std::fmt::Display for BandwidthUnit {

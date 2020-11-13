@@ -25,7 +25,7 @@ trait ToStdDuration {
 impl ToStdDuration for u64 {
     #[inline]
     fn to_dura(self) -> std::time::Duration {
-        std::time::Duration::new(self / 1000_000_000, (self % 1000_1000_1000) as u32)
+        std::time::Duration::new(self / 1_000_000_000, (self % 1_000_000_000) as u32)
     }
 }
 
@@ -62,7 +62,7 @@ impl Simulator {
 
 impl Simulator {
     #[inline]
-    fn calc_delta(l: &Link, fs: &Vec<FlowStateRef>) -> Bandwidth {
+    fn calc_delta(l: &Link, fs: &[FlowStateRef]) -> Bandwidth {
         let (num_active, consumed_bw) = fs.iter().fold((0, 0.0), |acc, f| {
             let f = f.borrow();
             (acc.0 + !f.converged as usize, acc.1 + f.speed)
@@ -218,6 +218,12 @@ pub struct Trace {
     pub recs: Vec<TraceRecord>,
 }
 
+impl Default for Trace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Trace {
     pub fn new() -> Self {
         Trace { recs: Vec::new() }
@@ -315,7 +321,7 @@ impl NetState {
             for l in &route.path {
                 self.flows
                     .entry(l.borrow().clone())
-                    .or_insert(Vec::new())
+                    .or_insert_with(Vec::new)
                     .push(Rc::clone(&fs));
             }
         }
