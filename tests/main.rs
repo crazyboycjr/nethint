@@ -1,9 +1,13 @@
+#[cfg(test)]
+mod logging;
+
 use nethint::bandwidth::BandwidthTrait;
 use nethint::cluster::{Cluster, Node};
 use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
 
+#[test]
 fn main() {
-    nethint::logging::init_log();
+    // logging::init_log();
 
     let nodes = vec!["a1", "a2", "a3", "a5", "a6", "vs1", "vs2", "cloud"]
         .into_iter()
@@ -38,4 +42,10 @@ fn main() {
     let mut simulator = Simulator::new(cluster);
     let output = simulator.run_with_trace(trace);
     println!("{:#?}", output);
+    assert_eq!(output.recs[0].dura, Some(800_000));
+    assert_eq!(output.recs[1].dura, Some(1_600_000));
+    assert_eq!(
+        output.recs[2].dura,
+        Some(((600. + (10. / 16.) * 1600. * (5. / 9.)) * 1e3f64).round() as u64)
+    );
 }

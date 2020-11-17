@@ -4,15 +4,13 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::{debug, trace};
+use log::trace;
 
 pub mod bandwidth;
 use bandwidth::{Bandwidth, BandwidthTrait};
 
 pub mod cluster;
 use crate::cluster::{Cluster, Link, Route, Topology};
-
-pub mod logging;
 
 // nanoseconds
 pub type Timestamp = u64;

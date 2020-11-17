@@ -168,14 +168,15 @@ mod tests {
         let a: Bandwidth = 1000.kbps();
         let b: Bandwidth = (10.1555).mbps();
         let c: Bandwidth = (9.5).gbps();
-        println!("{:?}", a);
-        println!("{}", b.val());
-        println!("{}", c.kbps());
-        println!("{}", (c - b).mbps());
-        println!("{}", (c + b).mbps() / 1000);
-        println!("{}", (c - b).gbps() * 1000 + a * 1000);
+        assert_eq!(format!("{:?}", a), "Bandwidth { val: 1000000, unit: Kbps }");
+        assert_eq!(format!("{}", b.val()), "10155500");
+        assert_eq!(format!("{}", c.kbps()), "9500000 Kb/s");
+        assert_eq!(format!("{}", (c - b).mbps()), "9489.8445 Mb/s");
+        assert_eq!(format!("{}", (c + b).mbps() / 1000), "9.510155 Mb/s");
+        assert_eq!(format!("{}", (c - b).gbps() * 1000 + a * 1000), "9490.8445 Gb/s");
+
         let d: Bandwidth = c / 1000;
-        println!("{}", d.mbps());
-        println!("{}", ((c / 1000) as Bandwidth).mbps());
+        assert_eq!(format!("{}", d.mbps()), "9.5 Mb/s");
+        assert_eq!(format!("{}", ((c / 1000) as Bandwidth).mbps()), "9.5 Mb/s");
     }
 }
