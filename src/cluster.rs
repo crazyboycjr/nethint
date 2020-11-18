@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
-use log::{debug};
+use log::debug;
 
 use crate::bandwidth::Bandwidth;
 
@@ -21,14 +21,18 @@ pub trait Topology {
 }
 
 /// The network topology and hardware configuration of the cluster.
+#[derive(Debug, Default)]
 pub struct Cluster {
     nodes: Vec<NodeRef>,
     links: Vec<LinkRef>,
 }
 
 impl Cluster {
-    pub fn from_nodes(nodes: Vec<NodeRef>) -> Self
-    {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn from_nodes(nodes: Vec<NodeRef>) -> Self {
         Cluster {
             nodes,
             links: Vec::new(),
@@ -36,7 +40,23 @@ impl Cluster {
     }
 
     #[inline]
-    pub fn add_edge(&mut self, src: &str, dst: &str, bw: Bandwidth) {
+    pub fn add_node(&mut self, node: NodeRef) {
+        self.nodes.push(node);
+    }
+
+    #[inline]
+    pub fn add_link(&mut self, link: LinkRef) {
+        let src_node = link
+            .borrow()
+            .from
+            .upgrade()
+            .unwrap_or_else(|| panic!("link: {:?}", link));
+        src_node.borrow_mut().links.push(Rc::clone(&link));
+        self.links.push(link);
+    }
+
+    #[inline]
+    pub fn add_link_by_name(&mut self, src: &str, dst: &str, bw: Bandwidth) {
         let src_node = self.get_node(src);
         let dst_node = self.get_node(dst);
 
@@ -49,7 +69,6 @@ impl Cluster {
         self.links.push(l1);
         self.links.push(l2);
     }
-
 }
 
 impl Topology for Cluster {
@@ -58,7 +77,7 @@ impl Topology for Cluster {
             self.nodes
                 .iter()
                 .find(|n| n.borrow().name == name)
-                .unwrap_or_else(|| panic!("cannot find node with name: {}", name))
+                .unwrap_or_else(|| panic!("cannot find node with name: {}", name)),
         )
     }
 

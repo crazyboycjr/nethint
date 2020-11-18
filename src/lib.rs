@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::trace;
+use log::{trace, info};
 
 pub mod bandwidth;
 use bandwidth::{Bandwidth, BandwidthTrait};
@@ -206,6 +206,7 @@ impl Executor for Simulator {
             }
         }
 
+        info!("resolve_route time: {:?}", self.state.resolve_route_time);
         output
     }
 }
@@ -303,6 +304,7 @@ struct NetState {
     running_flows: Vec<FlowStateRef>,
     // TODO(cjr): maybe change to BTreeMap later?
     flows: HashMap<Link, Vec<FlowStateRef>>,
+    resolve_route_time: std::time::Duration,
 }
 
 impl NetState {
@@ -318,7 +320,11 @@ impl NetState {
     }
 
     fn add_flow(&mut self, r: TraceRecord, cluster: &Cluster, sim_ts: Timestamp) {
+        let start = std::time::Instant::now();
         let route = cluster.resolve_route(&r.flow.src, &r.flow.dst);
+        let end = std::time::Instant::now();
+        self.resolve_route_time += end - start;
+
         let fs = FlowState::new(r.ts, r.flow, route);
         if r.ts > sim_ts {
             // add to buffered flows

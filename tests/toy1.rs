@@ -26,7 +26,7 @@ fn main() {
         ("vs2", "cloud", 15.gbps()),
     ]
     .into_iter()
-    .for_each(|args| cluster.add_edge(args.0, args.1, args.2));
+    .for_each(|args| cluster.add_link_by_name(args.0, args.1, args.2));
 
     let mut trace = Trace::new();
     let records: Vec<TraceRecord> = vec![
