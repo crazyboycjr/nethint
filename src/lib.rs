@@ -321,7 +321,7 @@ impl NetState {
 
     fn add_flow(&mut self, r: TraceRecord, cluster: &Cluster, sim_ts: Timestamp) {
         let start = std::time::Instant::now();
-        let route = cluster.resolve_route(&r.flow.src, &r.flow.dst);
+        let route = cluster.resolve_route(&r.flow.src, &r.flow.dst, None);
         let end = std::time::Instant::now();
         self.resolve_route_time += end - start;
 
@@ -499,4 +499,8 @@ impl Replayer {
             completed: 0,
         }
     }
+}
+
+pub trait LoadBalancer {
+    fn load_balance(&mut self, routes: &[Route]) -> Route;
 }

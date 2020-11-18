@@ -83,7 +83,7 @@ impl std::cmp::Ord for Bandwidth {
     }
 }
 
-macro_rules! impl_bandwidth_div_for {
+macro_rules! impl_bandwidth_div_mul_for {
     ($($ty:ty),+ $(,)?) => (
         $(impl std::ops::Div<$ty> for Bandwidth {
             type Output = Self;
@@ -106,7 +106,7 @@ macro_rules! impl_bandwidth_div_for {
     )
 }
 
-impl_bandwidth_div_for!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
+impl_bandwidth_div_mul_for!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, isize, usize);
 
 impl std::ops::Sub for Bandwidth {
     type Output = Self;
@@ -157,7 +157,7 @@ macro_rules! impl_bandwidth_trait_for {
     )
 }
 
-impl_bandwidth_trait_for!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
+impl_bandwidth_trait_for!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, isize, usize);
 
 #[cfg(test)]
 mod tests {
