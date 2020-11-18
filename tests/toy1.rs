@@ -9,10 +9,19 @@ use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
 fn main() {
     // logging::init_log();
 
-    let nodes = vec!["a1", "a2", "a3", "a5", "a6", "vs1", "vs2", "cloud"]
-        .into_iter()
-        .map(|n| Node::new(n))
-        .collect();
+    let nodes = vec![
+        ("a1", 3),
+        ("a2", 3),
+        ("a3", 3),
+        ("a5", 3),
+        ("a6", 3),
+        ("vs1", 2),
+        ("vs2", 2),
+        ("cloud", 1),
+    ]
+    .into_iter()
+    .map(|(n, depth)| Node::new(n, depth))
+    .collect();
 
     let mut cluster = Cluster::from_nodes(nodes);
 
@@ -26,7 +35,7 @@ fn main() {
         ("vs2", "cloud", 15.gbps()),
     ]
     .into_iter()
-    .for_each(|args| cluster.add_edge(args.0, args.1, args.2));
+    .for_each(|args| cluster.add_link_by_name(args.1, args.0, args.2));
 
     let mut trace = Trace::new();
     let records: Vec<TraceRecord> = vec![
