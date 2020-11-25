@@ -16,7 +16,7 @@ use crate::cluster::{Cluster, Link, Route, Topology};
 pub type Timestamp = u64;
 pub type Duration = u64;
 
-trait ToStdDuration {
+pub trait ToStdDuration {
     fn to_dura(self) -> std::time::Duration;
 }
 
@@ -206,7 +206,7 @@ impl Executor for Simulator {
             }
         }
 
-        info!("resolve_route time: {:?}", self.state.resolve_route_time);
+        info!("resolve_route sim_time: {:?}", self.state.resolve_route_time);
         output
     }
 }
@@ -413,7 +413,7 @@ impl FlowState {
     fn time_to_complete(&self) -> Duration {
         assert!(self.speed > 0.0);
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
-        (time_sec * 1e9).round() as Duration
+        (time_sec * 1e9).ceil() as Duration
     }
 
     #[inline]
@@ -468,7 +468,7 @@ pub trait Application {
 }
 
 /// A Replayer is an application that takes a trace and replay the trace.
-struct Replayer {
+pub struct Replayer {
     trace: Trace,
     num_flows: usize,
     completed: usize,
@@ -491,7 +491,7 @@ impl Application for Replayer {
 }
 
 impl Replayer {
-    fn new(trace: Trace) -> Replayer {
+    pub fn new(trace: Trace) -> Replayer {
         let num_flows = trace.recs.len();
         Replayer {
             trace,

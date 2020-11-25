@@ -7,11 +7,12 @@ pub fn init_log() {
     let env = env_logger::Env::default().default_filter_or("debug");
     env_logger::Builder::from_env(env)
         .format(|buf, record| {
+            let level_style = buf.default_level_style(record.level());
             writeln!(
                 buf,
                 "[{} {} {}:{}] {}",
                 Utc::now().format("%Y-%m-%d %H:%M:%S%.6f"),
-                record.level(),
+                level_style.value(record.level()),
                 record.file().unwrap_or("<unnamed>"),
                 record.line().unwrap_or(0),
                 &record.args()
