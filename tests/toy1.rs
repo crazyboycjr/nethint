@@ -2,7 +2,7 @@
 mod logging;
 
 use nethint::bandwidth::BandwidthTrait;
-use nethint::cluster::{Cluster, Node};
+use nethint::cluster::{Cluster, Node, NodeType};
 use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
 
 #[test]
@@ -20,7 +20,17 @@ fn main() {
         ("cloud", 1),
     ]
     .into_iter()
-    .map(|(n, depth)| Node::new(n, depth))
+    .map(|(n, depth)| {
+        Node::new(
+            n,
+            depth,
+            if depth == 3 {
+                NodeType::Host
+            } else {
+                NodeType::Switch
+            },
+        )
+    })
     .collect();
 
     let mut cluster = Cluster::from_nodes(nodes);

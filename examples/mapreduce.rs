@@ -1,11 +1,10 @@
-#[cfg(test)]
-mod logging;
-
+use std::rc::Rc;
+use std::cell::RefCell;
 use log::{debug, info};
-use rand::{self, Rng, SeedableRng};
+use rand::{self, Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use nethint::bandwidth::{Bandwidth, BandwidthTrait};
-use nethint::cluster::{Cluster, Node};
+use nethint::cluster::{Cluster, Node, NodeType, Topology};
 use nethint::{
     AppEvent, Application, Event, Executor, Flow, Simulator, ToStdDuration, Trace, TraceRecord,
 };
@@ -13,7 +12,13 @@ use nethint::{
 use spiril::population::Population;
 use spiril::unit::Unit;
 
+mod logging;
+
 const RAND_SEED: u64 = 0;
+thread_local! {
+    pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
+}
+
 
 fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
     assert!(
@@ -31,13 +36,13 @@ fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluste
     let _num_hosts = num_edges * num_hosts_under_edge;
 
     let mut cluster = Cluster::new();
-    let cloud = Node::new(&format!("cloud"), 1);
+    let cloud = Node::new(&format!("cloud"), 1, NodeType::Switch);
     cluster.add_node(cloud);
 
     let mut host_id = 0;
     for i in 0..num_edges {
         let tor_name = format!("tor_{}", i);
-        let tor = Node::new(&tor_name, 2);
+        let tor = Node::new(&tor_name, 2, NodeType::Switch);
         cluster.add_node(tor);
         cluster.add_link_by_name(
             "cloud",
@@ -47,7 +52,7 @@ fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluste
 
         for j in host_id..host_id + num_hosts_under_edge {
             let host_name = format!("host_{}", j);
-            let host = Node::new(&host_name, 3);
+            let host = Node::new(&host_name, 3, NodeType::Host);
             cluster.add_node(host);
             cluster.add_link_by_name(&tor_name, &host_name, bw);
         }
@@ -58,7 +63,7 @@ fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluste
     cluster
 }
 
-trait ReducerPlacementPolicy {
+trait PlaceReducer {
     // from a high-level view, the inputs should be:
     // input1: a cluster of hosts with slots
     // input2: job/reduce task specification
@@ -66,18 +71,25 @@ trait ReducerPlacementPolicy {
     // input4: shuffle flows
     fn place(
         &mut self,
-        num_hosts: usize,
+        cluster: &Cluster,
         num_reduce: usize,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
     ) -> Placement;
 }
 
-trait MapperPlacementPolicy {
+trait PlaceMapper {
     // from a high-level view, the inputs should be:
     // input1: a cluster of hosts with slots
     // input2: job specification
-    fn place(&mut self, num_hosts: usize, num_map: usize) -> Placement;
+    fn place(&mut self, cluster: &Cluster, num_map: usize) -> Placement;
+}
+
+#[derive(Debug)]
+enum ReducerPlacementPolicy {
+    Random,
+    GeneticAlgorithm,
+    HierarchicalGreedy,
 }
 
 #[derive(Debug, Default)]
@@ -89,45 +101,47 @@ impl RandomReducerScheduler {
     }
 }
 
-impl ReducerPlacementPolicy for RandomReducerScheduler {
+impl PlaceReducer for RandomReducerScheduler {
     fn place(
         &mut self,
-        num_hosts: usize,
+        cluster: &Cluster,
         num_reduce: usize,
         mapper: &Placement,
         _shuffle_pairs: &Shuffle,
     ) -> Placement {
-        use rand::seq::SliceRandom;
-        let mut rng2 = rand::rngs::StdRng::seed_from_u64(RAND_SEED);
-        let mut hosts: Vec<String> = (0..num_hosts).map(|x| format!("host_{}", x)).collect();
-        hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
-        let hosts = hosts
-            .choose_multiple(&mut rng2, num_reduce)
-            .cloned()
-            .collect();
-        Placement(hosts)
+        RNG.with(|rng| {
+            let mut rng = rng.borrow_mut();
+            let num_hosts = cluster.num_hosts();
+            let mut hosts: Vec<String> = (0..num_hosts).map(|x| format!("host_{}", x)).collect();
+            hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
+            let hosts = hosts
+                .choose_multiple(&mut *rng, num_reduce)
+                .cloned()
+                .collect();
+            Placement(hosts)
+        })
     }
 }
 
 #[derive(Debug, Default)]
-struct HeuristicReducerScheduler {}
+struct GeneticReducerScheduler {}
 
-impl HeuristicReducerScheduler {
+impl GeneticReducerScheduler {
     fn new() -> Self {
         Default::default()
     }
 }
 
-impl ReducerPlacementPolicy for HeuristicReducerScheduler {
+impl PlaceReducer for GeneticReducerScheduler {
     fn place(
         &mut self,
-        num_hosts: usize,
+        cluster: &Cluster,
         num_reduce: usize,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
     ) -> Placement {
-        use rand::seq::SliceRandom;
-        let mut rng2 = rand::rngs::StdRng::seed_from_u64(RAND_SEED);
+        let mut rng = StdRng::seed_from_u64(RAND_SEED);
+        let num_hosts = cluster.num_hosts();
         let mut hosts: Vec<String> = (0..num_hosts).map(|x| format!("host_{}", x)).collect();
         hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
 
@@ -136,7 +150,7 @@ impl ReducerPlacementPolicy for HeuristicReducerScheduler {
                 mapper: mapper.clone(),
                 reducer: Placement(
                     hosts
-                        .choose_multiple(&mut rng2, num_reduce)
+                        .choose_multiple(&mut rng, num_reduce)
                         .cloned()
                         .collect(),
                 ),
@@ -145,8 +159,8 @@ impl ReducerPlacementPolicy for HeuristicReducerScheduler {
             .collect();
 
         let solutions = Population::new(units)
-            .set_size(1000)
-            .set_breed_factor(0.3)
+            .set_size(500)
+            .set_breed_factor(0.5)
             .set_survival_factor(0.5)
             .epochs_parallel(50, 1) // 1 CPU cores
             .finish();
@@ -168,17 +182,19 @@ impl MapperScheduler {
     }
 }
 
-impl MapperPlacementPolicy for MapperScheduler {
-    fn place(&mut self, num_hosts: usize, num_map: usize) -> Placement {
+impl PlaceMapper for MapperScheduler {
+    fn place(&mut self, cluster: &Cluster, num_map: usize) -> Placement {
         // here we just consider the case where there is only one single job
-        use rand::seq::SliceRandom;
-        let mut rng2 = rand::rngs::StdRng::seed_from_u64(RAND_SEED);
-        let hosts = (0..num_hosts)
-            .collect::<Vec<_>>()
-            .choose_multiple(&mut rng2, num_map)
-            .map(|x| format!("host_{}", x))
-            .collect();
-        Placement(hosts)
+        RNG.with(|rng| {
+            let mut rng = rng.borrow_mut();
+            let num_hosts = cluster.num_hosts();
+            let hosts = (0..num_hosts)
+                .collect::<Vec<_>>()
+                .choose_multiple(&mut *rng, num_map)
+                .map(|x| format!("host_{}", x))
+                .collect();
+            Placement(hosts)
+        })
     }
 }
 
@@ -220,43 +236,51 @@ impl<'s> Unit for JobPlacement<'s> {
     }
 
     fn breed_with(&self, other: &JobPlacement) -> Self {
-        use rand::seq::SliceRandom;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(RAND_SEED);
-        let num_intersect = rng.gen_range(0, self.reducer.0.len() / 2 + 1);
-        let indices: Vec<usize> = (0..self.reducer.0.len())
-            .collect::<Vec<usize>>()
-            .choose_multiple(&mut rng, num_intersect)
-            .map(|&x| x)
-            .collect();
-        let mut result = self.clone();
-        for i in indices {
-            result.reducer.0[i] = other.reducer.0[i].clone();
-        }
-        result.reducer.0.dedup();
-        if result.reducer.0.len() < self.reducer.0.len() {
-            result.reducer = self.reducer.clone();
-        }
-        result
+        RNG.with(|rng| {
+            let mut rng = rng.borrow_mut();
+            let num_intersect = rng.gen_range(0, self.reducer.0.len() / 2 + 1);
+            let indices: Vec<usize> = (0..self.reducer.0.len())
+                .collect::<Vec<usize>>()
+                .choose_multiple(&mut *rng, num_intersect)
+                .map(|&x| x)
+                .collect();
+            let mut result = self.clone();
+            for i in indices {
+                result.reducer.0[i] = other.reducer.0[i].clone();
+            }
+            result.reducer.0.dedup();
+            if result.reducer.0.len() < self.reducer.0.len() {
+                result.reducer = self.reducer.clone();
+            }
+            result
+        })
     }
 }
 
 #[derive(Debug)]
 struct Shuffle(Vec<Vec<usize>>);
 
-struct MapReduceApp {
+struct MapReduceApp<'c> {
     num_map: usize,
     num_reduce: usize,
-    num_hosts: usize,
+    cluster: &'c Cluster,
+    reducer_place_policy: ReducerPlacementPolicy,
     replayer: nethint::Replayer,
 }
 
-impl MapReduceApp {
-    fn new(num_map: usize, num_reduce: usize, num_hosts: usize) -> Self {
+impl<'c> MapReduceApp<'c> {
+    fn new(
+        num_map: usize,
+        num_reduce: usize,
+        cluster: &'c Cluster,
+        reducer_place_policy: ReducerPlacementPolicy,
+    ) -> Self {
         let trace = Trace::new();
         MapReduceApp {
             num_map,
             num_reduce,
-            num_hosts,
+            cluster,
+            reducer_place_policy,
             replayer: nethint::Replayer::new(trace),
         }
     }
@@ -266,12 +290,15 @@ impl MapReduceApp {
         info!("shuffle: {:?}", shuffle);
 
         let mut map_scheduler = MapperScheduler::new();
-        let mappers = map_scheduler.place(self.num_hosts, self.num_map);
+        let mappers = map_scheduler.place(self.cluster, self.num_map);
         info!("mappers: {:?}", mappers);
 
-        let mut reduce_scheduler = RandomReducerScheduler::new();
-        // let mut reduce_scheduler = HeuristicReducerScheduler::new();
-        let reducers = reduce_scheduler.place(self.num_hosts, self.num_reduce, &mappers, &shuffle);
+        let mut reduce_scheduler: Box<dyn PlaceReducer> = match self.reducer_place_policy {
+            ReducerPlacementPolicy::Random => Box::new(RandomReducerScheduler::new()),
+            ReducerPlacementPolicy::GeneticAlgorithm => Box::new(GeneticReducerScheduler::new()),
+            ReducerPlacementPolicy::HierarchicalGreedy => unimplemented!(),
+        };
+        let reducers = reduce_scheduler.place(self.cluster, self.num_reduce, &mappers, &shuffle);
         info!("reducers: {:?}", reducers);
 
         // reinitialize replayer with new trace
@@ -288,12 +315,12 @@ impl MapReduceApp {
     }
 
     fn generate_shuffle_flows(&mut self) -> Shuffle {
-        let mut rng2 = rand::rngs::StdRng::seed_from_u64(RAND_SEED);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(RAND_SEED);
 
         let mut pairs = Vec::new();
         for _i in 0..self.num_map {
-            let data_size = 1_000_000 * rng2.gen_range(1, 5);
-            let nums: Vec<usize> = std::iter::repeat_with(|| rng2.gen_range(1, 5))
+            let data_size = 1_000_000 * rng.gen_range(1, 5);
+            let nums: Vec<usize> = std::iter::repeat_with(|| rng.gen_range(1, 5))
                 .take(self.num_reduce)
                 .collect();
             let sum: usize = nums.iter().map(|x| *x).sum();
@@ -305,32 +332,46 @@ impl MapReduceApp {
     }
 }
 
-impl Application for MapReduceApp {
+impl<'c> Application for MapReduceApp<'c> {
     fn on_event(&mut self, event: AppEvent) -> Event {
         self.replayer.on_event(event)
     }
 }
 
-#[test]
+fn run_map_reduce(cluster: &Cluster, reduce_place_policy: ReducerPlacementPolicy) -> Trace {
+    let mut simulator = Simulator::new(cluster.clone());
+
+    let mut app = Box::new(MapReduceApp::new(4, 4, cluster, reduce_place_policy));
+    app.finish_map_stage();
+
+    let output = simulator.run_with_appliation(app);
+
+    println!("{:#?}", output);
+    output
+}
+
 fn main() {
-    // env_logger::init();
     logging::init_log();
 
     let nports = 4;
     let oversub_ratio = 2.0;
     let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
+    assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
 
-    let nhosts = nports * nports * nports / 4;
-    // let trace = alltoall_trace(nhosts, 1_000_000);
+    let output = run_map_reduce(&cluster, ReducerPlacementPolicy::Random);
+    let time1 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-    let mut simulator = Simulator::new(cluster);
+    let output = run_map_reduce(&cluster, ReducerPlacementPolicy::GeneticAlgorithm);
+    let time2 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-    let mut app = Box::new(MapReduceApp::new(4, 4, nhosts));
-    app.finish_map_stage();
-
-    let output = simulator.run_with_appliation(app);
-    println!("{:#?}", output);
-
-    let job_finish_time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
-    println!("job_finish_time: {:?}", job_finish_time.unwrap().to_dura());
+    println!(
+        "{:?}, job_finish_time: {:?}",
+        ReducerPlacementPolicy::Random,
+        time1.unwrap().to_dura()
+    );
+    println!(
+        "{:?}, job_finish_time: {:?}",
+        ReducerPlacementPolicy::GeneticAlgorithm,
+        time2.unwrap().to_dura()
+    );
 }

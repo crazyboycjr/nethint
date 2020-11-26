@@ -19,13 +19,15 @@ lazy_static! {
 pub trait Topology {
     fn get_node(&self, name: &str) -> NodeRef;
     fn resolve_route(&self, src: &str, dst: &str, load_balancer: Option<Box<dyn LoadBalancer>>) -> Route;
+    fn num_hosts(&self) -> usize;
 }
 
 /// The network topology and hardware configuration of the cluster.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Cluster {
     nodes: Vec<NodeRef>,
     links: Vec<LinkRef>,
+    num_hosts: usize,
 }
 
 impl Cluster {
@@ -34,14 +36,19 @@ impl Cluster {
     }
 
     pub fn from_nodes(nodes: Vec<NodeRef>) -> Self {
+        let num_hosts = nodes.iter().filter(|n| n.borrow().is_host()).count();
         Cluster {
             nodes,
             links: Vec::new(),
+            num_hosts,
         }
     }
 
     #[inline]
     pub fn add_node(&mut self, node: NodeRef) {
+        if node.borrow().is_host() {
+            self.num_hosts += 1;
+        }
         self.nodes.push(node);
     }
 
@@ -135,6 +142,10 @@ impl Topology for Cluster {
         assert!(load_balancer.is_none(), "unimplemented");
         route
     }
+
+    fn num_hosts(&self) -> usize {
+        self.num_hosts
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -174,13 +185,21 @@ impl std::hash::Hash for Link {
 }
 
 #[derive(Debug, Clone)]
+pub enum NodeType {
+    Host,
+    Switch,
+}
+
+#[derive(Debug, Clone)]
 pub struct Node {
     id: usize,
     name: String,
     depth: usize, // 1: core, 2: agg, 3: edge, 4: host
+    node_type: NodeType,
     parent: Option<LinkRef>,
     children: Vec<LinkRef>,
 }
+
 impl std::cmp::PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -203,14 +222,20 @@ impl std::cmp::Ord for Node {
 
 impl Node {
     #[inline]
-    pub fn new(name: &str, depth: usize) -> NodeRef {
+    pub fn new(name: &str, depth: usize, node_type: NodeType) -> NodeRef {
         Rc::new(RefCell::new(Node {
             id: NODE_ID.fetch_add(1, SeqCst),
             name: name.to_string(),
             depth,
+            node_type,
             parent: None,
             children: Vec::new(),
         }))
+    }
+
+    #[inline]
+    pub fn is_host(&self) -> bool {
+        matches!(self.node_type, NodeType::Host)
     }
 
     // fn get_parent_nodes(&self) -> Vec<NodeRef> {

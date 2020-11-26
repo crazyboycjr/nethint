@@ -28,9 +28,9 @@ impl ToStdDuration for u64 {
 }
 
 /// The simulator driver API
-pub trait Executor {
+pub trait Executor<'a> {
     fn run_with_trace(&mut self, trace: Trace) -> Trace;
-    fn run_with_appliation(&mut self, app: Box<dyn Application>) -> Trace;
+    fn run_with_appliation(&mut self, app: Box<dyn Application + 'a>) -> Trace;
 }
 
 /// The flow-level simulator.
@@ -56,9 +56,7 @@ impl Simulator {
     pub fn resume(&mut self, path: &std::path::Path) {
         // resume from the previous saved state
     }
-}
 
-impl Simulator {
     #[inline]
     fn calc_delta(l: &Link, fs: &[FlowStateRef]) -> Bandwidth {
         let (num_active, consumed_bw) = fs.iter().fold((0, 0.0), |acc, f| {
@@ -154,13 +152,13 @@ impl Simulator {
     }
 }
 
-impl Executor for Simulator {
+impl<'a> Executor<'a> for Simulator {
     fn run_with_trace(&mut self, trace: Trace) -> Trace {
         let app = Box::new(Replayer::new(trace));
         self.run_with_appliation(app)
     }
 
-    fn run_with_appliation(&mut self, mut app: Box<dyn Application>) -> Trace {
+    fn run_with_appliation(&mut self, mut app: Box<dyn Application + 'a>) -> Trace {
         // let's write some conceptual code
         let mut output = Trace::new();
         let mut event = app.on_event(AppEvent::AppStart);

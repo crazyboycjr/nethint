@@ -2,7 +2,7 @@
 mod logging;
 
 use nethint::bandwidth::{BandwidthTrait, Bandwidth};
-use nethint::cluster::{Cluster, Node, Link, NodeRef};
+use nethint::cluster::{Cluster, Node, Link, NodeRef, NodeType};
 use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
 use std::rc::Rc;
 
@@ -46,7 +46,7 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
 
     // create core layer switches
     let cores: Vec<NodeRef> = (0..num_cores)
-        .map(|i| Node::new(&format!("core_{}", i), 1))
+        .map(|i| Node::new(&format!("core_{}", i), 1, NodeType::Switch))
         .collect();
 
     cluster.add_layer(&cores);
@@ -57,12 +57,12 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
         // create aggregation layer switches
         let start = i * num_pods;
         let aggs: Vec<NodeRef> = (start..start + num_aggs_in_pod)
-            .map(|i| Node::new(&format!("agg_{}", i), 2))
+            .map(|i| Node::new(&format!("agg_{}", i), 2, NodeType::Switch))
             .collect();
 
         // create edge layer switches
         let edges: Vec<NodeRef> = (start..start + num_edges_in_pod)
-            .map(|i| Node::new(&format!("edge_{}", i), 3))
+            .map(|i| Node::new(&format!("edge_{}", i), 3, NodeType::Switch))
             .collect();
 
         cluster.add_layer(&aggs);
@@ -83,7 +83,7 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
         for sw in edges {
             // create hosts
             let hosts: Vec<NodeRef> = (host_id..host_id + num_hosts_under_edge)
-                .map(|i| Node::new(&format!("host_{}", i), 4))
+                .map(|i| Node::new(&format!("host_{}", i), 4, NodeType::Host))
                 .collect();
             host_id += num_hosts_under_edge;
 
@@ -109,19 +109,19 @@ fn build_fatree_fake(nports: usize, bw: Bandwidth) -> Cluster {
 
 
     let mut cluster = Cluster::new();
-    let cloud = Node::new(&format!("cloud"), 1);
+    let cloud = Node::new(&format!("cloud"), 1, NodeType::Switch);
     cluster.add_node(cloud);
 
     let mut host_id = 0;
     for i in 0..num_edges {
         let tor_name = format!("tor_{}", i);
-        let tor = Node::new(&tor_name, 2);
+        let tor = Node::new(&tor_name, 2, NodeType::Switch);
         cluster.add_node(tor);
         cluster.add_link_by_name("cloud", &tor_name, bw * num_hosts_under_edge);
 
         for j in host_id..host_id + num_hosts_under_edge {
             let host_name = format!("host_{}", j);
-            let host = Node::new(&host_name, 3);
+            let host = Node::new(&host_name, 3, NodeType::Host);
             cluster.add_node(host);
             cluster.add_link_by_name(&tor_name, &host_name, bw);
         }
