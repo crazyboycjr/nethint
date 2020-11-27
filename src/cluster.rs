@@ -1,8 +1,9 @@
-use lazy_static::lazy_static;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+use lazy_static::lazy_static;
 use log::debug;
 
 use crate::bandwidth::Bandwidth;
@@ -18,14 +19,20 @@ lazy_static! {
 
 pub trait Topology {
     fn get_node(&self, name: &str) -> NodeRef;
-    fn resolve_route(&self, src: &str, dst: &str, load_balancer: Option<Box<dyn LoadBalancer>>) -> Route;
+    fn resolve_route(
+        &self,
+        src: &str,
+        dst: &str,
+        load_balancer: Option<Box<dyn LoadBalancer>>,
+    ) -> Route;
     fn num_hosts(&self) -> usize;
+    fn num_switches(&self) -> usize;
 }
 
 /// The network topology and hardware configuration of the cluster.
 #[derive(Debug, Default, Clone)]
 pub struct Cluster {
-    nodes: Vec<NodeRef>,
+    nodes: HashMap<String, NodeRef>,
     links: Vec<LinkRef>,
     num_hosts: usize,
 }
@@ -37,6 +44,10 @@ impl Cluster {
 
     pub fn from_nodes(nodes: Vec<NodeRef>) -> Self {
         let num_hosts = nodes.iter().filter(|n| n.borrow().is_host()).count();
+        let nodes = nodes
+            .into_iter()
+            .map(|n| (n.borrow().name.clone(), Rc::clone(&n)))
+            .collect();
         Cluster {
             nodes,
             links: Vec::new(),
@@ -49,7 +60,13 @@ impl Cluster {
         if node.borrow().is_host() {
             self.num_hosts += 1;
         }
-        self.nodes.push(node);
+        let old = self
+            .nodes
+            .insert(node.borrow().name.clone(), Rc::clone(&node));
+        assert!(
+            old.is_none(),
+            format!("repeated key: {}", node.borrow().name)
+        );
     }
 
     #[inline]
@@ -98,20 +115,24 @@ impl Topology for Cluster {
     fn get_node(&self, name: &str) -> NodeRef {
         Rc::clone(
             self.nodes
-                .iter()
-                .find(|n| n.borrow().name == name)
+                .get(name)
                 .unwrap_or_else(|| panic!("cannot find node with name: {}", name)),
         )
     }
 
-    fn resolve_route(&self, src: &str, dst: &str, load_balancer: Option<Box<dyn LoadBalancer>>) -> Route {
+    fn resolve_route(
+        &self,
+        src: &str,
+        dst: &str,
+        load_balancer: Option<Box<dyn LoadBalancer>>,
+    ) -> Route {
         let src_node = self.get_node(src);
         let dst_node = self.get_node(dst);
 
         debug!("searching route from {} to {}", src, dst);
         debug!("src_node: {:?}, dst_node: {:?}", src_node, dst_node);
         assert_eq!(src_node.borrow().depth, dst_node.borrow().depth);
-        let mut depth= src_node.borrow().depth;
+        let mut depth = src_node.borrow().depth;
 
         let mut path1 = Vec::new();
         let mut path2 = Vec::new();
@@ -145,6 +166,10 @@ impl Topology for Cluster {
 
     fn num_hosts(&self) -> usize {
         self.num_hosts
+    }
+
+    fn num_switches(&self) -> usize {
+        self.nodes.len() - self.num_hosts
     }
 }
 
@@ -237,10 +262,6 @@ impl Node {
     pub fn is_host(&self) -> bool {
         matches!(self.node_type, NodeType::Host)
     }
-
-    // fn get_parent_nodes(&self) -> Vec<NodeRef> {
-    //     self.parents.iter().map(|l| Weak::upgrade(&l.borrow().to).unwrap()).collect()
-    // }
 }
 
 impl std::hash::Hash for Node {
