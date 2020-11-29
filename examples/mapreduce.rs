@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use nethint::bandwidth::{Bandwidth, BandwidthTrait};
-use nethint::cluster::{Cluster, Node, NodeType, Topology};
+use nethint::cluster::{Cluster, Node, NodeRef, NodeType, Topology};
 use nethint::{
     AppEvent, Application, Event, Executor, Flow, Simulator, ToStdDuration, Trace, TraceRecord,
 };
@@ -155,7 +155,7 @@ impl PlaceReducer for GeneticReducerScheduler {
                             .collect(),
                     ),
                     shuffle: shuffle_pairs,
-                    // cluster,
+                    cluster,
                 })
                 .collect();
             units
@@ -232,32 +232,46 @@ struct JobPlacement<'s> {
     mapper: Placement,
     reducer: Placement,
     shuffle: &'s Shuffle,
-    // cluster: &'s Cluster,
+    cluster: &'s Cluster,
 }
 
 impl<'s> Unit for JobPlacement<'s> {
     fn fitness(&self) -> f64 {
-        let mut rack = vec![0; 16];
+        let num_racks = self.cluster.num_switches() - 1;
+        let mut rack = vec![0; num_racks];
+        let get_rack_id = |n: NodeRef| -> usize {
+            let tor = n.borrow().get_parent().unwrap();
+            let id: usize = tor
+                .borrow()
+                .name
+                .strip_prefix("tor_")
+                .unwrap()
+                .parse()
+                .unwrap();
+            id
+        };
         for r in self.reducer.0.iter() {
-            let id: usize = r.strip_prefix("host_").unwrap().parse().unwrap();
-            rack[id / 2] += 1;
+            let host = self.cluster.get_node(r);
+            let id = get_rack_id(host);
+            rack[id] += 1;
         }
         let mut res: f64 = 0.;
         for (j, r) in self.reducer.0.iter().enumerate() {
             let mut size_inner = 0;
             let mut size_outer = 0;
-            let idr: usize = r.strip_prefix("host_").unwrap().parse().unwrap();
+            let host_r = self.cluster.get_node(r);
+            let rack_r = get_rack_id(host_r);
             for (i, m) in self.mapper.0.iter().enumerate() {
-                let idm: usize = m.strip_prefix("host_").unwrap().parse().unwrap();
-                assert_ne!(idm, idr);
-                if idm / 2 == idr / 2 {
+                let host_m = self.cluster.get_node(m);
+                let rack_m = get_rack_id(host_m);
+                if rack_r == rack_m {
                     size_inner += self.shuffle.0[i][j];
                 } else {
                     size_outer += self.shuffle.0[i][j];
                 }
             }
-            assert!(rack[idr / 2] > 0);
-            let acc_time = std::cmp::max(size_inner, size_outer * rack[idr / 2]) as f64;
+            assert!(rack[rack_r] > 0);
+            let acc_time = std::cmp::max(size_inner, size_outer * rack[rack_r]) as f64;
             res = res.max(acc_time);
         }
         1.0 / res
@@ -381,10 +395,14 @@ impl<'c> Application for MapReduceApp<'c> {
     }
 }
 
-fn run_map_reduce(cluster: &Cluster, reduce_place_policy: ReducerPlacementPolicy, seed: u64) -> Trace {
+fn run_map_reduce(
+    cluster: &Cluster,
+    reduce_place_policy: ReducerPlacementPolicy,
+    seed: u64,
+) -> Trace {
     let mut simulator = Simulator::new(cluster.clone());
 
-    let job_spec = JobSpec::new(4, 4);
+    let job_spec = JobSpec::new(32, 32);
     let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
     app.finish_map_stage(seed);
 
@@ -397,8 +415,8 @@ fn run_map_reduce(cluster: &Cluster, reduce_place_policy: ReducerPlacementPolicy
 fn main() {
     logging::init_log();
 
-    let nports = 4;
-    let oversub_ratio = 2.0;
+    let nports = 8;
+    let oversub_ratio = 4.0;
     let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
 
@@ -409,12 +427,12 @@ fn main() {
         let output = run_map_reduce(&cluster, ReducerPlacementPolicy::GeneticAlgorithm, i);
         let time2 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-        println!(
+        info!(
             "{:?}, job_finish_time: {:?}",
             ReducerPlacementPolicy::Random,
             time1.unwrap().to_dura()
         );
-        println!(
+        info!(
             "{:?}, job_finish_time: {:?}",
             ReducerPlacementPolicy::GeneticAlgorithm,
             time2.unwrap().to_dura()

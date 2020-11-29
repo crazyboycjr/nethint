@@ -218,9 +218,9 @@ pub enum NodeType {
 #[derive(Debug, Clone)]
 pub struct Node {
     id: usize,
-    name: String,
-    depth: usize, // 1: core, 2: agg, 3: edge, 4: host
-    node_type: NodeType,
+    pub name: String,
+    pub depth: usize, // 1: core, 2: agg, 3: edge, 4: host
+    pub node_type: NodeType,
     parent: Option<LinkRef>,
     children: Vec<LinkRef>,
 }
@@ -261,6 +261,13 @@ impl Node {
     #[inline]
     pub fn is_host(&self) -> bool {
         matches!(self.node_type, NodeType::Host)
+    }
+
+    #[inline]
+    pub fn get_parent(&self) -> Option<NodeRef> {
+        self.parent
+            .as_ref()
+            .map(|l| Weak::upgrade(&l.borrow().to).unwrap())
     }
 }
 
