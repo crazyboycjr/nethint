@@ -15,9 +15,14 @@ use spiril::unit::Unit;
 
 mod logging;
 
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
+
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
+    pub static TOT: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
+    pub static SUCC: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
 }
 
 fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
@@ -189,7 +194,12 @@ impl GreedyReducerScheduler {
 fn get_rack_id(cluster: &Cluster, h: &str) -> usize {
     let host_ix = cluster.get_node_index(h);
     let tor_ix = cluster.get_target(cluster.get_uplink(host_ix));
-    let rack_id: usize = cluster[tor_ix].name.strip_prefix("tor_").unwrap().parse().unwrap();
+    let rack_id: usize = cluster[tor_ix]
+        .name
+        .strip_prefix("tor_")
+        .unwrap()
+        .parse()
+        .unwrap();
     rack_id
 }
 
@@ -373,10 +383,29 @@ impl<'s> Unit for JobPlacement<'s> {
             for i in indices {
                 result.reducer.0[i] = other.reducer.0[i].clone();
             }
+
+            // 0.1 probability mutation
+            let v = rng.gen_range(0, 10);
+            if v < 1 {
+                let i = rng.gen_range(0, self.reducer.0.len());
+                loop {
+                    let y = rng.gen_range(0, self.cluster.num_hosts());
+                    let y = format!("host_{}", y);
+                    if self.mapper.0.iter().find(|&x| x.eq(&y)).is_some() {
+                        continue;
+                    }
+                    result.reducer.0[i] = y;
+                    break;
+                }
+            }
+
+            // prune invalid result
             result.reducer.0.dedup();
             if result.reducer.0.len() < self.reducer.0.len() {
                 result.reducer = self.reducer.clone();
+                SUCC.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
             }
+            TOT.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
             result
         })
     }
@@ -483,7 +512,7 @@ fn run_map_reduce(
 ) -> Trace {
     let mut simulator = Simulator::new(cluster.clone());
 
-    let job_spec = JobSpec::new(4, 5);
+    let job_spec = JobSpec::new(32, 32);
     let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
     app.finish_map_stage(seed);
 
@@ -496,12 +525,15 @@ fn run_map_reduce(
 fn main() {
     logging::init_log();
 
-    let nports = 4;
-    let oversub_ratio = 2.0;
+    let nports = 8;
+    let oversub_ratio = 4.0;
     let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
 
+    let mut data = Vec::new();
     for i in 0..100 {
+        info!("testcase: {}", i);
+
         let output = run_map_reduce(&cluster, ReducerPlacementPolicy::Random, i);
         let time1 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
@@ -526,5 +558,62 @@ fn main() {
             ReducerPlacementPolicy::HierarchicalGreedy,
             time3.unwrap().to_dura()
         );
+
+        data.push(time1);
+        data.push(time2);
+        data.push(time3);
     }
+
+    debug!("breed success rate: {:?}/{:?}", SUCC.with(|x| x.borrow().load(SeqCst)), TOT.with(|x| x.borrow().load(SeqCst)));
+
+    let l1: Vec<f64> = data.iter().skip(0).step_by(3).map(|x| x.unwrap() as f64 / 1000.).collect();
+    let l2: Vec<f64> = data.iter().skip(1).step_by(3).map(|x| x.unwrap() as f64 / 1000.).collect();
+    let l3: Vec<f64> = data.iter().skip(2).step_by(3).map(|x| x.unwrap() as f64 / 1000.).collect();
+
+    use gnuplot::{Caption, Color, DashType, Figure, LineStyle, PointSymbol, LineWidth};
+
+    let x: Vec<usize> = (1..=l1.len()).collect();
+    let mut fg = Figure::new();
+    fg.axes2d()
+        .lines_points(
+            &x,
+            &l1,
+            &[
+                Caption("Random"),
+                Color("red"),
+                PointSymbol('+'),
+                LineWidth(2.),
+                LineStyle(DashType::DotDotDash),
+            ],
+        )
+        .lines_points(
+            &x,
+            &l2,
+            &[
+                Caption("GeneticAlgorithm"),
+                Color("forest-green"),
+                PointSymbol('x'),
+                LineWidth(2.),
+                LineStyle(DashType::DotDash),
+            ],
+        )
+        .lines_points(
+            &x,
+            &l3,
+            &[
+                Caption("HierarchicalGreedy"),
+                Color("blue"),
+                PointSymbol('*'),
+                LineWidth(2.),
+                LineStyle(DashType::Dash),
+            ],
+        );
+
+    let fname = format!(
+        "examples/figure/mapreduce_{}_{}.pdf",
+        cluster.num_hosts(),
+        oversub_ratio
+    );
+    fg.save_to_pdf(&fname, 12, 8).unwrap();
+    fg.show().unwrap();
 }
