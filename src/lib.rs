@@ -311,7 +311,7 @@ impl NetState {
         self.running_flows.push(Rc::clone(&fs));
         for l in &fs.borrow().route.path {
             self.flows
-                .entry(l.borrow().clone())
+                .entry(l.clone())
                 .or_insert_with(Vec::new)
                 .push(Rc::clone(&fs));
         }

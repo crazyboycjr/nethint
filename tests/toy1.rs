@@ -6,8 +6,8 @@ use nethint::cluster::{Cluster, Node, NodeType};
 use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
 
 #[test]
-fn main() {
-    // logging::init_log();
+fn toy1() {
+    logging::init_log();
 
     let nodes = vec![
         ("a1", 3),

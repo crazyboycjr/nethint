@@ -1,37 +1,38 @@
 #[cfg(test)]
 mod logging;
 
-use nethint::bandwidth::{BandwidthTrait, Bandwidth};
-use nethint::cluster::{Cluster, Node, Link, NodeRef, NodeType};
+use nethint::bandwidth::{Bandwidth, BandwidthTrait};
+use nethint::cluster::{Cluster, Node, NodeType};
 use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
-use std::rc::Rc;
 
-type Layer = [NodeRef];
+type Layer<'a> = &'a [Node];
 
 trait Network {
-    fn add_layer(&mut self, layer: &Layer);
-    fn fully_connect(&mut self, layer1: &Layer, layer2: &Layer, bw: Bandwidth);
+    fn add_layer(&mut self, layer: Layer);
+    fn fully_connect(&mut self, layer1: Layer, layer2: Layer, bw: Bandwidth);
 }
 
 impl Network for Cluster {
-    fn add_layer(&mut self, layer: &Layer) {
+    fn add_layer(&mut self, layer: Layer) {
         for n in layer {
-            self.add_node(Rc::clone(n));
+            self.add_node(n.clone());
         }
     }
 
-    fn fully_connect(&mut self, layer1: &Layer, layer2: &Layer, bw: Bandwidth) {
+    fn fully_connect(&mut self, layer1: Layer, layer2: Layer, bw: Bandwidth) {
         for n1 in layer1 {
             for n2 in layer2 {
-                self.add_link(Link::new(Rc::clone(n1), Rc::clone(n2), bw));
-                self.add_link(Link::new(Rc::clone(n2), Rc::clone(n1), bw));
+                self.add_link_by_name(&n1.name, &n2.name, bw);
             }
         }
     }
 }
 
 fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
-    assert!(nports % 2 == 0, "the number of ports of a switch is required to be even");
+    assert!(
+        nports % 2 == 0,
+        "the number of ports of a switch is required to be even"
+    );
     let k = nports;
     let num_pods = k;
     let num_cores = k * k / 4;
@@ -45,7 +46,7 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
     let mut cluster = Cluster::new();
 
     // create core layer switches
-    let cores: Vec<NodeRef> = (0..num_cores)
+    let cores: Vec<Node> = (0..num_cores)
         .map(|i| Node::new(&format!("core_{}", i), 1, NodeType::Switch))
         .collect();
 
@@ -56,12 +57,12 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
     for i in 0..num_pods {
         // create aggregation layer switches
         let start = i * num_pods;
-        let aggs: Vec<NodeRef> = (start..start + num_aggs_in_pod)
+        let aggs: Vec<Node> = (start..start + num_aggs_in_pod)
             .map(|i| Node::new(&format!("agg_{}", i), 2, NodeType::Switch))
             .collect();
 
         // create edge layer switches
-        let edges: Vec<NodeRef> = (start..start + num_edges_in_pod)
+        let edges: Vec<Node> = (start..start + num_edges_in_pod)
             .map(|i| Node::new(&format!("edge_{}", i), 3, NodeType::Switch))
             .collect();
 
@@ -75,14 +76,13 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
             let agg = &aggs[a];
             for c in (0..cores.len()).step_by(k / 2) {
                 let core = &cores[c];
-                cluster.add_link(Link::new(Rc::clone(core), Rc::clone(agg), bw));
-                cluster.add_link(Link::new(Rc::clone(agg), Rc::clone(core), bw));
+                cluster.add_link_by_name(&core.name, &agg.name, bw);
             }
         }
 
         for sw in edges {
             // create hosts
-            let hosts: Vec<NodeRef> = (host_id..host_id + num_hosts_under_edge)
+            let hosts: Vec<Node> = (host_id..host_id + num_hosts_under_edge)
                 .map(|i| Node::new(&format!("host_{}", i), 4, NodeType::Host))
                 .collect();
             host_id += num_hosts_under_edge;
@@ -96,17 +96,19 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
 }
 
 fn build_fatree_fake(nports: usize, bw: Bandwidth) -> Cluster {
-    assert!(nports % 2 == 0, "the number of ports of a switch is required to be even");
+    assert!(
+        nports % 2 == 0,
+        "the number of ports of a switch is required to be even"
+    );
     let k = nports;
     let num_pods = k;
-    let num_cores = k * k / 4;
+    let _num_cores = k * k / 4;
     let num_aggs_in_pod = k / 2;
-    let num_aggs = num_pods * num_aggs_in_pod;
+    let _num_aggs = num_pods * num_aggs_in_pod;
     let num_edges_in_pod = k / 2;
     let num_edges = num_pods * num_edges_in_pod;
     let num_hosts_under_edge = k / 2;
-    let num_hosts = num_edges * num_hosts_under_edge;
-
+    let _num_hosts = num_edges * num_hosts_under_edge;
 
     let mut cluster = Cluster::new();
     let cloud = Node::new(&format!("cloud"), 1, NodeType::Switch);
@@ -152,7 +154,7 @@ fn alltoall_trace(num_hosts: usize, flow_size: usize) -> Trace {
 }
 
 #[test]
-fn main() {
+fn alltoall() {
     env_logger::init();
 
     let nports = 12;
@@ -162,6 +164,6 @@ fn main() {
     let trace = alltoall_trace(nhosts, 1_000_000);
 
     let mut simulator = Simulator::new(cluster);
-    let output = simulator.run_with_trace(trace);
+    let _output = simulator.run_with_trace(trace);
     // println!("{:?}", output);
 }
