@@ -22,3 +22,6 @@ pub fn init_log() {
 
     info!("env_logger initialized");
 }
+
+fn main() {
+}

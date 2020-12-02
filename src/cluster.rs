@@ -1,24 +1,25 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
-use lazy_static::lazy_static;
 use log::debug;
+use petgraph::graph::{Graph, EdgeIndex, NodeIndex};
+use lazy_static::lazy_static;
 
 use crate::bandwidth::Bandwidth;
 use crate::LoadBalancer;
 
-pub type NodeRef = Rc<RefCell<Node>>;
-pub type LinkRef = Rc<RefCell<Link>>;
-
 lazy_static! {
-    static ref NODE_ID: AtomicUsize = AtomicUsize::new(0);
     static ref LINK_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
+pub type LinkIx = EdgeIndex;
+pub type NodeIx = NodeIndex;
+
 pub trait Topology {
-    fn get_node(&self, name: &str) -> NodeRef;
+    fn get_node_index(&self, name: &str) -> NodeIx;
+    fn get_target(&self, id: LinkIx) -> NodeIx;
+    fn get_uplink(&self, id: NodeIx) -> LinkIx;
+    fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx>;
     fn resolve_route(
         &self,
         src: &str,
@@ -32,8 +33,8 @@ pub trait Topology {
 /// The network topology and hardware configuration of the cluster.
 #[derive(Debug, Default, Clone)]
 pub struct Cluster {
-    nodes: HashMap<String, NodeRef>,
-    links: Vec<LinkRef>,
+    graph: Graph<Node, Link>,
+    node_map: HashMap<String, NodeIndex>,
     num_hosts: usize,
 }
 
@@ -42,82 +43,91 @@ impl Cluster {
         Default::default()
     }
 
-    pub fn from_nodes(nodes: Vec<NodeRef>) -> Self {
-        let num_hosts = nodes.iter().filter(|n| n.borrow().is_host()).count();
-        let nodes = nodes
-            .into_iter()
-            .map(|n| (n.borrow().name.clone(), Rc::clone(&n)))
-            .collect();
+    pub fn from_nodes(nodes: Vec<Node>) -> Self {
+        let mut g = Graph::new();
+        let mut node_map = HashMap::new();
+        let num_hosts = nodes.iter().filter(|n| n.is_host()).count();
+        nodes.into_iter().for_each(|n| {
+            let name = n.name.clone();
+            let node_idx = g.add_node(n);
+            let old = node_map.insert(name.clone(), node_idx);
+            assert!(
+                old.is_none(),
+                format!("repeated key: {}", name)
+            );
+        });
         Cluster {
-            nodes,
-            links: Vec::new(),
+            graph: g,
+            node_map,
             num_hosts,
         }
     }
 
     #[inline]
-    pub fn add_node(&mut self, node: NodeRef) {
-        if node.borrow().is_host() {
+    pub fn add_node(&mut self, node: Node) -> NodeIndex {
+        if node.is_host() {
             self.num_hosts += 1;
         }
-        let old = self
-            .nodes
-            .insert(node.borrow().name.clone(), Rc::clone(&node));
+        let name = node.name.clone();
+        let node_idx = self.graph.add_node(node);
+        let old = self.node_map.insert(name.clone(), node_idx);
         assert!(
             old.is_none(),
-            format!("repeated key: {}", node.borrow().name)
+            format!("repeated key: {}", name)
         );
-    }
-
-    #[inline]
-    pub fn add_link(&mut self, link: LinkRef) {
-        let from_node = link
-            .borrow()
-            .from
-            .upgrade()
-            .unwrap_or_else(|| panic!("link: {:?}", link));
-        let to_node = link
-            .borrow()
-            .to
-            .upgrade()
-            .unwrap_or_else(|| panic!("link: {:?}", link));
-
-        match from_node.borrow().depth.cmp(&to_node.borrow().depth) {
-            std::cmp::Ordering::Less => {
-                assert!(from_node.borrow().parent.is_none());
-                from_node.borrow_mut().parent = Some(Rc::clone(&link));
-            }
-            std::cmp::Ordering::Greater => from_node.borrow_mut().children.push(Rc::clone(&link)),
-            _ => panic!("from_node: {:?}, to_node: {:?}", from_node, to_node),
-        }
-
-        self.links.push(link);
+        node_idx
     }
 
     #[inline]
     pub fn add_link_by_name(&mut self, parent: &str, child: &str, bw: Bandwidth) {
-        let pnode = self.get_node(parent);
-        let cnode = self.get_node(child);
+        let &pnode = self.node_map.get(parent).unwrap_or_else(|| panic!("cannot find node with name: {}", parent));
+        let &cnode = self.node_map.get(child).unwrap_or_else(|| panic!("cannot find node with name: {}", child));
 
-        let l1 = Link::new(Rc::clone(&pnode), Rc::clone(&cnode), bw);
-        let l2 = Link::new(Rc::clone(&cnode), Rc::clone(&pnode), bw);
+        let l1 = self.graph.add_edge(pnode, cnode, Link::new(bw));
+        let l2 = self.graph.add_edge(cnode, pnode, Link::new(bw));
 
-        pnode.borrow_mut().children.push(Rc::clone(&l1));
-        assert!(cnode.borrow().parent.is_none());
-        cnode.borrow_mut().parent = Some(Rc::clone(&l2));
+        self.graph[pnode].children.push(l1);
+        assert!(self.graph[cnode].parent.is_none());
+        self.graph[cnode].parent = Some(l2);
+    }
+}
 
-        self.links.push(l1);
-        self.links.push(l2);
+impl std::ops::Index<NodeIx> for Cluster {
+    type Output = Node;
+    fn index(&self, index: NodeIx) -> &Self::Output {
+        &self.graph[index]
+    }
+}
+
+impl std::ops::Index<LinkIx> for Cluster {
+    type Output = Link;
+    fn index(&self, index: LinkIx) -> &Self::Output {
+        &self.graph[index]
     }
 }
 
 impl Topology for Cluster {
-    fn get_node(&self, name: &str) -> NodeRef {
-        Rc::clone(
-            self.nodes
-                .get(name)
-                .unwrap_or_else(|| panic!("cannot find node with name: {}", name)),
-        )
+    #[inline]
+    fn get_node_index(&self, name: &str) -> NodeIx {
+        let &id = self.node_map
+            .get(name)
+            .unwrap_or_else(|| panic!("cannot find node with name: {}", name));
+        id
+    }
+
+    #[inline]
+    fn get_target(&self, id: LinkIx) -> NodeIx {
+        self.graph.raw_edges()[id.index()].target()
+    }
+
+    #[inline]
+    fn get_uplink(&self, id: NodeIx) -> LinkIx {
+        self.graph[id].parent.unwrap_or_else(|| panic!("invalid index: {:?}", id))
+    }
+
+    #[inline]
+    fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx> {
+        self.graph[id].children.iter()
     }
 
     fn resolve_route(
@@ -126,35 +136,36 @@ impl Topology for Cluster {
         dst: &str,
         load_balancer: Option<Box<dyn LoadBalancer>>,
     ) -> Route {
-        let src_node = self.get_node(src);
-        let dst_node = self.get_node(dst);
+        let g = &self.graph;
+        let src_id = self.node_map[src];
+        let dst_id = self.node_map[dst];
 
         debug!("searching route from {} to {}", src, dst);
-        debug!("src_node: {:?}, dst_node: {:?}", src_node, dst_node);
-        assert_eq!(src_node.borrow().depth, dst_node.borrow().depth);
-        let mut depth = src_node.borrow().depth;
+        debug!("src_node: {:?}, dst_node: {:?}", g[src_id], g[dst_id]);
+        assert_eq!(g[src_id].depth, g[dst_id].depth);
+        let mut depth = g[src_id].depth;
 
         let mut path1 = Vec::new();
         let mut path2 = Vec::new();
 
-        let mut x = Rc::clone(&src_node);
-        let mut y = Rc::clone(&dst_node);
+        let mut x = self.node_map[src];
+        let mut y = self.node_map[dst];
         while x != y && depth > 1 {
-            let parx = Rc::clone(x.borrow().parent.as_ref().unwrap());
-            let pary = Rc::clone(y.borrow().parent.as_ref().unwrap());
-            x = Weak::upgrade(&parx.borrow().to).unwrap();
-            y = Weak::upgrade(&pary.borrow().to).unwrap();
+            let parx = g[x].parent.unwrap();
+            let pary = g[y].parent.unwrap();
+            x = g.raw_edges()[parx.index()].target();
+            y = g.raw_edges()[pary.index()].target();
             depth -= 1;
-            path1.push(parx);
-            path2.push(Rc::clone(&self.links[pary.borrow().id ^ 1]));
+            path1.push(g[parx].clone());
+            path2.push(g[EdgeIndex::new(pary.index() ^ 1)].clone());
         }
 
         assert!(x == y, format!("route from {} to {} not found", src, dst));
         path2.reverse();
         path1.append(&mut path2);
         let route = Route {
-            from: src_node,
-            to: dst_node,
+            from: src_id,
+            to: dst_id,
             path: path1,
         };
 
@@ -169,29 +180,25 @@ impl Topology for Cluster {
     }
 
     fn num_switches(&self) -> usize {
-        self.nodes.len() - self.num_hosts
+        self.graph.node_count() - self.num_hosts
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Link {
-    pub(crate) id: usize,
-    pub(crate) from: Weak<RefCell<Node>>,
-    pub(crate) to: Weak<RefCell<Node>>,
-    pub(crate) bandwidth: Bandwidth,
+    id: usize,
+    pub bandwidth: Bandwidth,
     // latency: Duration,
     // drop_rate: f64,
 }
 
 impl Link {
     #[inline]
-    pub fn new(from: NodeRef, to: NodeRef, bw: Bandwidth) -> LinkRef {
-        Rc::new(RefCell::new(Link {
+    pub fn new(bw: Bandwidth) -> Link {
+        Link {
             id: LINK_ID.fetch_add(1, SeqCst),
-            from: Rc::downgrade(&from),
-            to: Rc::downgrade(&to),
             bandwidth: bw,
-        }))
+        }
     }
 }
 
@@ -217,69 +224,36 @@ pub enum NodeType {
 
 #[derive(Debug, Clone)]
 pub struct Node {
-    id: usize,
     pub name: String,
     pub depth: usize, // 1: core, 2: agg, 3: edge, 4: host
     pub node_type: NodeType,
-    parent: Option<LinkRef>,
-    children: Vec<LinkRef>,
-}
-
-impl std::cmp::PartialEq for Node {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for Node {}
-
-impl std::cmp::PartialOrd for Node {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.id.partial_cmp(&other.id)
-    }
-}
-
-impl std::cmp::Ord for Node {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
+    // this gives us faster route search
+    parent: Option<EdgeIndex>,
+    children: Vec<EdgeIndex>,
 }
 
 impl Node {
     #[inline]
-    pub fn new(name: &str, depth: usize, node_type: NodeType) -> NodeRef {
-        Rc::new(RefCell::new(Node {
-            id: NODE_ID.fetch_add(1, SeqCst),
-            name: name.to_string(),
+    pub fn new(name: &str, depth: usize, node_type: NodeType) -> Node {
+        Node {
+            name: name.to_owned(),
             depth,
             node_type,
             parent: None,
             children: Vec::new(),
-        }))
+        }
     }
 
     #[inline]
     pub fn is_host(&self) -> bool {
         matches!(self.node_type, NodeType::Host)
     }
-
-    #[inline]
-    pub fn get_parent(&self) -> Option<NodeRef> {
-        self.parent
-            .as_ref()
-            .map(|l| Weak::upgrade(&l.borrow().to).unwrap())
-    }
 }
 
-impl std::hash::Hash for Node {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
 /// A route is a network path that a flow goes through
 #[derive(Debug, Clone)]
 pub struct Route {
-    pub(crate) from: NodeRef,
-    pub(crate) to: NodeRef,
-    pub(crate) path: Vec<LinkRef>,
+    pub(crate) from: NodeIndex,
+    pub(crate) to: NodeIndex,
+    pub(crate) path: Vec<Link>,
 }

@@ -10,6 +10,7 @@ edition = "2018"
 lazy_static = "1.4.0"
 log = "0.4.11"
 rand = "0.7.3"
+petgraph = "0.5.1"
 
 [dev-dependencies]
 env_logger = "0.8.1"
