@@ -186,6 +186,13 @@ impl GreedyReducerScheduler {
     }
 }
 
+fn get_rack_id(cluster: &Cluster, h: &str) -> usize {
+    let host_ix = cluster.get_node_index(h);
+    let tor_ix = cluster.get_target(cluster.get_uplink(host_ix));
+    let rack_id: usize = cluster[tor_ix].name.strip_prefix("tor_").unwrap().parse().unwrap();
+    rack_id
+}
+
 impl PlaceReducer for GreedyReducerScheduler {
     fn place(
         &mut self,
@@ -205,9 +212,7 @@ impl PlaceReducer for GreedyReducerScheduler {
         let mut taken: HashSet<NodeIx> =
             mapper.0.iter().map(|m| cluster.get_node_index(m)).collect();
         mapper.0.iter().for_each(|m| {
-            let host_ix = cluster.get_node_index(m);
-            let tor_ix = cluster.get_target(cluster.get_uplink(host_ix));
-            let rack_id: usize = cluster[tor_ix].name.strip_prefix("tor_").unwrap().parse().unwrap();
+            let rack_id = get_rack_id(cluster, m);
             rack_taken[rack_id] += 1;
         });
 
@@ -307,41 +312,52 @@ impl<'s> Unit for JobPlacement<'s> {
     fn fitness(&self) -> f64 {
         let num_racks = self.cluster.num_switches() - 1;
         let mut rack = vec![0; num_racks];
-        let get_rack_id = |n: NodeIx| -> usize {
-            let tor_ix = self.cluster.get_target(self.cluster.get_uplink(n));
-            let id: usize = self.cluster[tor_ix]
-                .name
-                .strip_prefix("tor_")
-                .unwrap()
-                .parse()
-                .unwrap();
-            id
-        };
-        for r in self.reducer.0.iter() {
-            let host = self.cluster.get_node_index(r);
-            let id = get_rack_id(host);
+        let mut traffic = vec![vec![0; num_racks]; self.mapper.0.len()];
+
+        self.reducer.0.iter().enumerate().for_each(|(j, r)| {
+            let id = get_rack_id(self.cluster, r);
+            self.mapper.0.iter().enumerate().for_each(|(i, m)| {
+                let rack_m = get_rack_id(self.cluster, m);
+                if id != rack_m {
+                    traffic[i][id] += self.shuffle.0[i][j];
+                }
+            });
+        });
+
+        self.reducer.0.iter().for_each(|r| {
+            let id = get_rack_id(self.cluster, r);
             rack[id] += 1;
-        }
+        });
+
         let mut res: f64 = 0.;
         for (j, r) in self.reducer.0.iter().enumerate() {
-            let mut size_inner = 0;
-            let mut size_outer = 0;
-            let host_r = self.cluster.get_node_index(r);
-            let rack_r = get_rack_id(host_r);
+            let mut inner_est = 0.;
+            let mut outer_est = 0.;
+            let rack_r = get_rack_id(self.cluster, r);
+
+            let r_ix = self.cluster.get_node_index(r);
+            let tor_ix = self.cluster.get_target(self.cluster.get_uplink(r_ix));
+            let rack_bw = self.cluster[self.cluster.get_uplink(tor_ix)].bandwidth;
+
             for (i, m) in self.mapper.0.iter().enumerate() {
-                let host_m = self.cluster.get_node_index(m);
-                let rack_m = get_rack_id(host_m);
-                if rack_r == rack_m {
-                    size_inner += self.shuffle.0[i][j];
+                let m_ix = self.cluster.get_node_index(m);
+                let tor_m_ix = self.cluster.get_target(self.cluster.get_uplink(m_ix));
+                let m_bw = self.cluster[self.cluster.get_uplink(m_ix)].bandwidth;
+
+                if tor_ix == tor_m_ix {
+                    inner_est += self.shuffle.0[i][j] as f64 / m_bw.val() as f64;
                 } else {
-                    size_outer += self.shuffle.0[i][j];
+                    outer_est += traffic[i][rack_r] as f64 / rack_bw.val() as f64;
                 }
             }
+
             assert!(rack[rack_r] > 0);
-            let acc_time = std::cmp::max(size_inner, size_outer * rack[rack_r]) as f64;
+            let acc_time = inner_est.max(outer_est);
             res = res.max(acc_time);
         }
-        1.0 / res
+
+        // 1 - sigmoid(res)
+        1.0 - 1.0 / (1.0 + (-res).exp())
     }
 
     fn breed_with(&self, other: &JobPlacement) -> Self {
@@ -467,7 +483,7 @@ fn run_map_reduce(
 ) -> Trace {
     let mut simulator = Simulator::new(cluster.clone());
 
-    let job_spec = JobSpec::new(32, 32);
+    let job_spec = JobSpec::new(4, 5);
     let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
     app.finish_map_stage(seed);
 
@@ -480,8 +496,8 @@ fn run_map_reduce(
 fn main() {
     logging::init_log();
 
-    let nports = 8;
-    let oversub_ratio = 4.0;
+    let nports = 4;
+    let oversub_ratio = 2.0;
     let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
 
@@ -489,8 +505,11 @@ fn main() {
         let output = run_map_reduce(&cluster, ReducerPlacementPolicy::Random, i);
         let time1 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-        let output = run_map_reduce(&cluster, ReducerPlacementPolicy::HierarchicalGreedy, i);
+        let output = run_map_reduce(&cluster, ReducerPlacementPolicy::GeneticAlgorithm, i);
         let time2 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+
+        let output = run_map_reduce(&cluster, ReducerPlacementPolicy::HierarchicalGreedy, i);
+        let time3 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
         info!(
             "{:?}, job_finish_time: {:?}",
@@ -499,8 +518,13 @@ fn main() {
         );
         info!(
             "{:?}, job_finish_time: {:?}",
-            ReducerPlacementPolicy::HierarchicalGreedy,
+            ReducerPlacementPolicy::GeneticAlgorithm,
             time2.unwrap().to_dura()
+        );
+        info!(
+            "{:?}, job_finish_time: {:?}",
+            ReducerPlacementPolicy::HierarchicalGreedy,
+            time3.unwrap().to_dura()
         );
     }
 }
