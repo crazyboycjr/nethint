@@ -171,7 +171,7 @@ impl PlaceReducer for GeneticReducerScheduler {
             .set_size(1000)
             .set_breed_factor(0.5)
             .set_survival_factor(0.8)
-            .epochs_parallel(50, 1) // 1 CPU cores
+            .epochs_parallel(50, 4) // 1 CPU cores
             .finish();
 
         let job_placement = solutions.first().unwrap();
@@ -432,7 +432,7 @@ impl JobSpec {
 struct Shuffle(Vec<Vec<usize>>);
 
 struct MapReduceApp<'c> {
-    job_spec: JobSpec,
+    job_spec: &'c JobSpec,
     cluster: &'c Cluster,
     reducer_place_policy: ReducerPlacementPolicy,
     replayer: nethint::Replayer,
@@ -440,7 +440,7 @@ struct MapReduceApp<'c> {
 
 impl<'c> MapReduceApp<'c> {
     fn new(
-        job_spec: JobSpec,
+        job_spec: &'c JobSpec,
         cluster: &'c Cluster,
         reducer_place_policy: ReducerPlacementPolicy,
     ) -> Self {
@@ -507,12 +507,12 @@ impl<'c> Application for MapReduceApp<'c> {
 
 fn run_map_reduce(
     cluster: &Cluster,
+    job_spec: &JobSpec,
     reduce_place_policy: ReducerPlacementPolicy,
     seed: u64,
 ) -> Trace {
     let mut simulator = Simulator::new(cluster.clone());
 
-    let job_spec = JobSpec::new(32, 32);
     let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
     app.finish_map_stage(seed);
 
@@ -525,22 +525,26 @@ fn run_map_reduce(
 fn main() {
     logging::init_log();
 
-    let nports = 8;
-    let oversub_ratio = 4.0;
+    let nports = 4;
+    let oversub_ratio = 2.0;
     let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
+    info!("cluster:\n{}", cluster.to_dot());
+
+
+    let job_spec = JobSpec::new(4, 4);
 
     let mut data = Vec::new();
-    for i in 0..100 {
+    for i in 0..10 {
         info!("testcase: {}", i);
 
-        let output = run_map_reduce(&cluster, ReducerPlacementPolicy::Random, i);
+        let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::Random, i);
         let time1 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-        let output = run_map_reduce(&cluster, ReducerPlacementPolicy::GeneticAlgorithm, i);
+        let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::GeneticAlgorithm, i);
         let time2 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-        let output = run_map_reduce(&cluster, ReducerPlacementPolicy::HierarchicalGreedy, i);
+        let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::HierarchicalGreedy, i);
         let time3 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
         info!(
@@ -610,9 +614,11 @@ fn main() {
         );
 
     let fname = format!(
-        "examples/figure/mapreduce_{}_{}.pdf",
+        "examples/figure/mapreduce_{}_{}_{}_{}.pdf",
         cluster.num_hosts(),
-        oversub_ratio
+        oversub_ratio,
+        job_spec.num_map,
+        job_spec.num_reduce,
     );
     fg.save_to_pdf(&fname, 12, 8).unwrap();
     fg.show().unwrap();

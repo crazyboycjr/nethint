@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use log::debug;
-use petgraph::graph::{Graph, EdgeIndex, NodeIndex};
+use petgraph::{
+    dot::{Dot, Config},
+    graph::{Graph, EdgeIndex, NodeIndex}
+};
 use lazy_static::lazy_static;
 
 use crate::bandwidth::Bandwidth;
@@ -89,6 +92,10 @@ impl Cluster {
         self.graph[pnode].children.push(l1);
         assert!(self.graph[cnode].parent.is_none());
         self.graph[cnode].parent = Some(l2);
+    }
+
+    pub fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
+        Dot::with_config(&self.graph, &[])
     }
 }
 
@@ -202,6 +209,12 @@ impl Link {
     }
 }
 
+impl std::fmt::Display for Link {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.bandwidth)
+    }
+}
+
 impl std::cmp::PartialEq for Link {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -247,6 +260,12 @@ impl Node {
     #[inline]
     pub fn is_host(&self) -> bool {
         matches!(self.node_type, NodeType::Host)
+    }
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 
