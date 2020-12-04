@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::{trace, info};
+use log::{trace, debug};
 
 pub mod bandwidth;
 use bandwidth::{Bandwidth, BandwidthTrait};
@@ -160,6 +160,7 @@ impl<'a> Executor<'a> for Simulator {
 
     fn run_with_appliation(&mut self, mut app: Box<dyn Application + 'a>) -> Trace {
         // let's write some conceptual code
+        let start = std::time::Instant::now();
         let mut output = Trace::new();
         let mut event = app.on_event(AppEvent::AppStart);
         assert!(matches!(event, Event::FlowArrive(_)));
@@ -204,7 +205,9 @@ impl<'a> Executor<'a> for Simulator {
             }
         }
 
-        info!("resolve_route sim_time: {:?}", self.state.resolve_route_time);
+        let end = std::time::Instant::now();
+
+        debug!("sim_time: {:?}", end - start);
         output
     }
 }

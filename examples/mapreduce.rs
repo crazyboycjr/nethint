@@ -21,8 +21,9 @@ use std::sync::atomic::Ordering::SeqCst;
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
-    pub static TOT: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
+    pub static CROSS: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
     pub static SUCC: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
+    pub static MUTATION: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
 }
 
 fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
@@ -145,42 +146,200 @@ impl PlaceReducer for GeneticReducerScheduler {
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
     ) -> Placement {
+        let mapper_id: Vec<usize> = mapper
+            .0
+            .iter()
+            .map(|x| x.strip_prefix("host_").unwrap().parse().unwrap())
+            .collect();
+
+        let ctx = &GAContext {
+            mapper: mapper.clone(),
+            mapper_id: mapper_id,
+            shuffle: shuffle_pairs,
+            cluster,
+        };
+
+        let ga_size = 1000;
+        let ga_breed_factor = 0.5;
+        let ga_survival_factor = 0.5;
+        let ga_epochs = 50;
+
         let units = RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
             let num_hosts = cluster.num_hosts();
-            let mut hosts: Vec<String> = (0..num_hosts).map(|x| format!("host_{}", x)).collect();
-            hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
 
-            let units: Vec<JobPlacement> = (0..1000)
-                .map(|_| JobPlacement {
-                    mapper: mapper.clone(),
-                    reducer: Placement(
-                        hosts
-                            .choose_multiple(&mut *rng, job_spec.num_reduce)
-                            .cloned()
-                            .collect(),
-                    ),
-                    shuffle: shuffle_pairs,
-                    cluster,
-                })
+            let hosts: Vec<usize> = (0..num_hosts)
+                .filter(|&h| ctx.mapper_id.iter().find(|&&m| m == h).is_none())
                 .collect();
-            units
+
+            (0..ga_size)
+                .map(|_| GAUnit {
+                    reducer: hosts
+                        .choose_multiple(&mut *rng, job_spec.num_reduce)
+                        .cloned()
+                        .collect(),
+                    ctx: &ctx,
+                })
+                .collect()
         });
 
         let solutions = Population::new(units)
-            .set_size(1000)
-            .set_breed_factor(0.5)
-            .set_survival_factor(0.8)
-            .epochs_parallel(50, 4) // 1 CPU cores
+            .set_size(ga_size)
+            .set_breed_factor(ga_breed_factor)
+            .set_survival_factor(ga_survival_factor)
+            .epochs_parallel(ga_epochs, 4) // 1 CPU cores
             .finish();
 
         let job_placement = solutions.first().unwrap();
         debug!("fitness: {}", job_placement.fitness());
         // let hosts = vec![1, 7, 12, 13].into_iter().map(|x| format!("host_{}", x)).collect();
         // Placement(hosts)
-        job_placement.reducer.clone()
+        Placement(
+            job_placement
+                .reducer
+                .iter()
+                .map(|x| format!("host_{}", *x))
+                .collect(),
+        )
     }
 }
+
+#[derive(Debug)]
+struct GAContext<'a> {
+    mapper: Placement,
+    mapper_id: Vec<usize>,
+    shuffle: &'a Shuffle,
+    cluster: &'a Cluster,
+}
+
+#[derive(Debug, Clone)]
+struct GAUnit<'a, 'ctx> {
+    reducer: Vec<usize>,
+    ctx: &'ctx GAContext<'a>,
+}
+
+impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
+    fn fitness(&self) -> f64 {
+        let GAContext {
+            mapper,
+            mapper_id: _,
+            shuffle,
+            cluster,
+        } = self.ctx;
+
+        let num_racks = cluster.num_switches() - 1;
+        let mut rack = vec![0; num_racks];
+        let mut traffic = vec![vec![0; num_racks]; mapper.0.len()];
+
+        let reducer_name: Vec<String> = self
+            .reducer
+            .iter()
+            .map(|x| format!("host_{}", *x))
+            .collect();
+
+        self.reducer.iter().enumerate().for_each(|(j, r)| {
+            let id = get_rack_id(cluster, &reducer_name[j]);
+            mapper.0.iter().enumerate().for_each(|(i, m)| {
+                let rack_m = get_rack_id(cluster, m);
+                if id != rack_m {
+                    traffic[i][id] += shuffle.0[i][j];
+                }
+            });
+        });
+
+        self.reducer.iter().enumerate().for_each(|(j, _)| {
+            let id = get_rack_id(cluster, &reducer_name[j]);
+            rack[id] += 1;
+        });
+
+        let mut res: f64 = 0.;
+        for (j, _) in self.reducer.iter().enumerate() {
+            let mut inner_est: f64 = 0.;
+            let mut outer_est: f64 = 0.;
+            let rack_r = get_rack_id(cluster, &reducer_name[j]);
+
+            let r_ix = cluster.get_node_index(&reducer_name[j]);
+            let tor_ix = cluster.get_target(cluster.get_uplink(r_ix));
+            let rack_bw = cluster[cluster.get_uplink(tor_ix)].bandwidth;
+
+            for (i, m) in mapper.0.iter().enumerate() {
+                let m_ix = cluster.get_node_index(m);
+                let tor_m_ix = cluster.get_target(cluster.get_uplink(m_ix));
+                let m_bw = cluster[cluster.get_uplink(m_ix)].bandwidth;
+
+                if tor_ix == tor_m_ix {
+                    inner_est += shuffle.0[i][j] as f64 / m_bw.val() as f64;
+                } else {
+                    outer_est += traffic[i][rack_r] as f64 / rack_bw.val() as f64;
+                }
+            }
+
+            assert!(rack[rack_r] > 0);
+            let acc_time = inner_est.max(outer_est);
+            res = res.max(acc_time);
+        }
+
+        // 2 * (1 - sigmoid(res)) -> (0, 1)
+        2.0 - 2.0 / (1.0 + (-res).exp())
+    }
+
+    fn breed_with(&self, other: &GAUnit) -> Self {
+        let GAContext {
+            mapper: _,
+            mapper_id,
+            shuffle: _,
+            cluster,
+        } = self.ctx;
+
+        RNG.with(|rng| {
+            let mut rng = rng.borrow_mut();
+
+            let num_intersect = rng.gen_range(0, other.reducer.len() / 2 + 1);
+            let indices: Vec<usize> = (0..other.reducer.len())
+                .collect::<Vec<usize>>()
+                .choose_multiple(&mut *rng, num_intersect)
+                .cloned()
+                .collect();
+
+            let mut result = self.reducer.clone();
+            let set: HashSet<_> = result.iter().cloned().collect();
+            for i in indices {
+                if !set.contains(&other.reducer[i]) {
+                    result[i] = other.reducer[i].clone();
+                }
+            }
+
+            // 0.1 probability mutation
+            let p = rng.gen_range(0, 10);
+            if p < 1 {
+                let i = rng.gen_range(0, self.reducer.len());
+                (0..cluster.num_hosts()).map(|_| rng.gen_range(0, cluster.num_hosts()))
+                    .filter(|y| mapper_id.iter().find(|&x| x.eq(&y)).is_none())
+                    .filter(|y| result.iter().find(|&x| x.eq(&y)).is_none())
+                    .take(1)
+                    .next()
+                    .map(|y| {
+                        result[i] = y;
+                        MUTATION.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
+                    });
+            }
+
+            // prune invalid result
+            result.dedup();
+            if result.len() < other.reducer.len() {
+                result = other.reducer.clone();
+            } else {
+                SUCC.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
+            }
+            CROSS.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
+            GAUnit {
+                reducer: result,
+                ctx: self.ctx,
+            }
+        })
+    }
+}
+
 
 #[derive(Debug, Default)]
 struct GreedyReducerScheduler {}
@@ -310,107 +469,6 @@ impl PlaceMapper for MapperScheduler {
 #[derive(Debug, Clone)]
 struct Placement(Vec<String>);
 
-#[derive(Debug, Clone)]
-struct JobPlacement<'s> {
-    mapper: Placement,
-    reducer: Placement,
-    shuffle: &'s Shuffle,
-    cluster: &'s Cluster,
-}
-
-impl<'s> Unit for JobPlacement<'s> {
-    fn fitness(&self) -> f64 {
-        let num_racks = self.cluster.num_switches() - 1;
-        let mut rack = vec![0; num_racks];
-        let mut traffic = vec![vec![0; num_racks]; self.mapper.0.len()];
-
-        self.reducer.0.iter().enumerate().for_each(|(j, r)| {
-            let id = get_rack_id(self.cluster, r);
-            self.mapper.0.iter().enumerate().for_each(|(i, m)| {
-                let rack_m = get_rack_id(self.cluster, m);
-                if id != rack_m {
-                    traffic[i][id] += self.shuffle.0[i][j];
-                }
-            });
-        });
-
-        self.reducer.0.iter().for_each(|r| {
-            let id = get_rack_id(self.cluster, r);
-            rack[id] += 1;
-        });
-
-        let mut res: f64 = 0.;
-        for (j, r) in self.reducer.0.iter().enumerate() {
-            let mut inner_est = 0.;
-            let mut outer_est = 0.;
-            let rack_r = get_rack_id(self.cluster, r);
-
-            let r_ix = self.cluster.get_node_index(r);
-            let tor_ix = self.cluster.get_target(self.cluster.get_uplink(r_ix));
-            let rack_bw = self.cluster[self.cluster.get_uplink(tor_ix)].bandwidth;
-
-            for (i, m) in self.mapper.0.iter().enumerate() {
-                let m_ix = self.cluster.get_node_index(m);
-                let tor_m_ix = self.cluster.get_target(self.cluster.get_uplink(m_ix));
-                let m_bw = self.cluster[self.cluster.get_uplink(m_ix)].bandwidth;
-
-                if tor_ix == tor_m_ix {
-                    inner_est += self.shuffle.0[i][j] as f64 / m_bw.val() as f64;
-                } else {
-                    outer_est += traffic[i][rack_r] as f64 / rack_bw.val() as f64;
-                }
-            }
-
-            assert!(rack[rack_r] > 0);
-            let acc_time = inner_est.max(outer_est);
-            res = res.max(acc_time);
-        }
-
-        // 1 - sigmoid(res)
-        1.0 - 1.0 / (1.0 + (-res).exp())
-    }
-
-    fn breed_with(&self, other: &JobPlacement) -> Self {
-        RNG.with(|rng| {
-            let mut rng = rng.borrow_mut();
-            let num_intersect = rng.gen_range(0, self.reducer.0.len() / 2 + 1);
-            let indices: Vec<usize> = (0..self.reducer.0.len())
-                .collect::<Vec<usize>>()
-                .choose_multiple(&mut *rng, num_intersect)
-                .map(|&x| x)
-                .collect();
-            let mut result = self.clone();
-            for i in indices {
-                result.reducer.0[i] = other.reducer.0[i].clone();
-            }
-
-            // 0.1 probability mutation
-            let v = rng.gen_range(0, 10);
-            if v < 1 {
-                let i = rng.gen_range(0, self.reducer.0.len());
-                loop {
-                    let y = rng.gen_range(0, self.cluster.num_hosts());
-                    let y = format!("host_{}", y);
-                    if self.mapper.0.iter().find(|&x| x.eq(&y)).is_some() {
-                        continue;
-                    }
-                    result.reducer.0[i] = y;
-                    break;
-                }
-            }
-
-            // prune invalid result
-            result.reducer.0.dedup();
-            if result.reducer.0.len() < self.reducer.0.len() {
-                result.reducer = self.reducer.clone();
-                SUCC.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
-            }
-            TOT.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
-            result
-        })
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 struct JobSpec {
     num_map: usize,
@@ -525,14 +583,13 @@ fn run_map_reduce(
 fn main() {
     logging::init_log();
 
-    let nports = 4;
-    let oversub_ratio = 2.0;
+    let nports = 8;
+    let oversub_ratio = 4.0;
     let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
     info!("cluster:\n{}", cluster.to_dot());
 
-
-    let job_spec = JobSpec::new(4, 4);
+    let job_spec = JobSpec::new(32, 32);
 
     let mut data = Vec::new();
     for i in 0..10 {
@@ -541,10 +598,20 @@ fn main() {
         let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::Random, i);
         let time1 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-        let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::GeneticAlgorithm, i);
+        let output = run_map_reduce(
+            &cluster,
+            &job_spec,
+            ReducerPlacementPolicy::GeneticAlgorithm,
+            i,
+        );
         let time2 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
-        let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::HierarchicalGreedy, i);
+        let output = run_map_reduce(
+            &cluster,
+            &job_spec,
+            ReducerPlacementPolicy::HierarchicalGreedy,
+            i,
+        );
         let time3 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
 
         info!(
@@ -568,13 +635,33 @@ fn main() {
         data.push(time3);
     }
 
-    debug!("breed success rate: {:?}/{:?}", SUCC.with(|x| x.borrow().load(SeqCst)), TOT.with(|x| x.borrow().load(SeqCst)));
+    debug!(
+        "success/mutation/crossover: {:?}/{:?}/{:?}",
+        SUCC.with(|x| x.borrow().load(SeqCst)),
+        MUTATION.with(|x| x.borrow().load(SeqCst)),
+        CROSS.with(|x| x.borrow().load(SeqCst)),
+    );
 
-    let l1: Vec<f64> = data.iter().skip(0).step_by(3).map(|x| x.unwrap() as f64 / 1000.).collect();
-    let l2: Vec<f64> = data.iter().skip(1).step_by(3).map(|x| x.unwrap() as f64 / 1000.).collect();
-    let l3: Vec<f64> = data.iter().skip(2).step_by(3).map(|x| x.unwrap() as f64 / 1000.).collect();
+    let l1: Vec<f64> = data
+        .iter()
+        .skip(0)
+        .step_by(3)
+        .map(|x| x.unwrap() as f64 / 1000.)
+        .collect();
+    let l2: Vec<f64> = data
+        .iter()
+        .skip(1)
+        .step_by(3)
+        .map(|x| x.unwrap() as f64 / 1000.)
+        .collect();
+    let l3: Vec<f64> = data
+        .iter()
+        .skip(2)
+        .step_by(3)
+        .map(|x| x.unwrap() as f64 / 1000.)
+        .collect();
 
-    use gnuplot::{Caption, Color, DashType, Figure, LineStyle, PointSymbol, LineWidth};
+    use gnuplot::{Caption, Color, DashType, Figure, LineStyle, LineWidth, PointSymbol};
 
     let x: Vec<usize> = (1..=l1.len()).collect();
     let mut fg = Figure::new();
