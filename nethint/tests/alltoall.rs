@@ -1,5 +1,4 @@
 #[cfg(test)]
-use logging;
 
 use nethint::bandwidth::{Bandwidth, BandwidthTrait};
 use nethint::cluster::{Cluster, Node, NodeType};
@@ -28,7 +27,7 @@ impl Network for Cluster {
     }
 }
 
-fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
+fn _build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
     assert!(
         nports % 2 == 0,
         "the number of ports of a switch is required to be even"
@@ -37,11 +36,11 @@ fn build_fatree(nports: usize, bw: Bandwidth) -> Cluster {
     let num_pods = k;
     let num_cores = k * k / 4;
     let num_aggs_in_pod = k / 2;
-    let num_aggs = num_pods * num_aggs_in_pod;
+    let _num_aggs = num_pods * num_aggs_in_pod;
     let num_edges_in_pod = k / 2;
     let num_edges = num_pods * num_edges_in_pod;
     let num_hosts_under_edge = k / 2;
-    let num_hosts = num_edges * num_hosts_under_edge;
+    let _num_hosts = num_edges * num_hosts_under_edge;
 
     let mut cluster = Cluster::new();
 

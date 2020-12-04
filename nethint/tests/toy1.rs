@@ -1,5 +1,4 @@
 #[cfg(test)]
-use logging;
 
 use nethint::bandwidth::BandwidthTrait;
 use nethint::cluster::{Cluster, Node, NodeType};
