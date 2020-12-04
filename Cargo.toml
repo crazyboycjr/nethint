@@ -1,19 +1,2 @@
-[package]
-name = "nethint"
-version = "0.1.0"
-authors = ["Jingrong Chen <crazyboycjr@gmail.com>"]
-edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-lazy_static = "1.4.0"
-log = "0.4.11"
-rand = "0.7.3"
-petgraph = "0.5.1"
-
-[dev-dependencies]
-env_logger = "0.8.1"
-chrono = "0.4.19"
-spiril = { path = "../spiril" }
-gnuplot = "0.0.37"
+[workspace]
+members = ["nethint", "logging", "mapreduce"]

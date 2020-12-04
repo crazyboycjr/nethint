@@ -14,7 +14,8 @@ use nethint::{
 use spiril::population::Population;
 use spiril::unit::Unit;
 
-mod logging;
+// mod logging;
+use logging;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -750,7 +751,7 @@ fn main() {
         );
 
     let fname = format!(
-        "examples/figure/mapreduce_{}_{}_{}_{}.pdf",
+        "figure/mapreduce_{}_{}_{}_{}.pdf",
         cluster.num_hosts(),
         oversub_ratio,
         job_spec.num_map,

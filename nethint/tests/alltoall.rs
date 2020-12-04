@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod logging;
+use logging;
 
 use nethint::bandwidth::{Bandwidth, BandwidthTrait};
 use nethint::cluster::{Cluster, Node, NodeType};
@@ -155,7 +155,7 @@ fn alltoall_trace(num_hosts: usize, flow_size: usize) -> Trace {
 
 #[test]
 fn alltoall() {
-    env_logger::init();
+    logging::init_log();
 
     let nports = 12;
     let cluster = build_fatree_fake(nports, 100.gbps());
