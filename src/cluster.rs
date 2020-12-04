@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use log::debug;
 use petgraph::{
-    dot::{Dot, Config},
+    dot::Dot,
     graph::{Graph, EdgeIndex, NodeIndex}
 };
 use lazy_static::lazy_static;

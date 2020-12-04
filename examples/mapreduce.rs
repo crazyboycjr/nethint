@@ -10,6 +10,7 @@ use nethint::{
     AppEvent, Application, Event, Executor, Flow, Simulator, ToStdDuration, Trace, TraceRecord,
 };
 
+#[allow(clippy::all)]
 use spiril::population::Population;
 use spiril::unit::Unit;
 
@@ -42,7 +43,7 @@ fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluste
     let _num_hosts = num_edges * num_hosts_under_edge;
 
     let mut cluster = Cluster::new();
-    let cloud = Node::new(&format!("cloud"), 1, NodeType::Switch);
+    let cloud = Node::new("cloud", 1, NodeType::Switch);
     cluster.add_node(cloud);
 
     let mut host_id = 0;
@@ -146,6 +147,12 @@ impl PlaceReducer for GeneticReducerScheduler {
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
     ) -> Placement {
+        let ga_size = 1000;
+        let ga_breed_factor = 0.5;
+        let ga_survival_factor = 0.2;
+        let ga_epochs = 50;
+        let ga_mutate_rate = 0.1;
+
         let mapper_id: Vec<usize> = mapper
             .0
             .iter()
@@ -154,15 +161,11 @@ impl PlaceReducer for GeneticReducerScheduler {
 
         let ctx = &GAContext {
             mapper: mapper.clone(),
-            mapper_id: mapper_id,
+            mapper_id,
             shuffle: shuffle_pairs,
             cluster,
+            mutate_rate: ga_mutate_rate,
         };
-
-        let ga_size = 1000;
-        let ga_breed_factor = 0.5;
-        let ga_survival_factor = 0.5;
-        let ga_epochs = 50;
 
         let units = RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
@@ -210,6 +213,7 @@ struct GAContext<'a> {
     mapper_id: Vec<usize>,
     shuffle: &'a Shuffle,
     cluster: &'a Cluster,
+    mutate_rate: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +229,7 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
             mapper_id: _,
             shuffle,
             cluster,
+            ..
         } = self.ctx;
 
         let num_racks = cluster.num_switches() - 1;
@@ -237,7 +242,7 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
             .map(|x| format!("host_{}", *x))
             .collect();
 
-        self.reducer.iter().enumerate().for_each(|(j, r)| {
+        self.reducer.iter().enumerate().for_each(|(j, _r)| {
             let id = get_rack_id(cluster, &reducer_name[j]);
             mapper.0.iter().enumerate().for_each(|(i, m)| {
                 let rack_m = get_rack_id(cluster, m);
@@ -289,6 +294,7 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
             mapper_id,
             shuffle: _,
             cluster,
+            mutate_rate,
         } = self.ctx;
 
         RNG.with(|rng| {
@@ -305,23 +311,24 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
             let set: HashSet<_> = result.iter().cloned().collect();
             for i in indices {
                 if !set.contains(&other.reducer[i]) {
-                    result[i] = other.reducer[i].clone();
+                    result[i] = other.reducer[i];
                 }
             }
 
             // 0.1 probability mutation
-            let p = rng.gen_range(0, 10);
-            if p < 1 {
+            let p = rng.gen_range(0., 1.);
+            if p < *mutate_rate {
                 let i = rng.gen_range(0, self.reducer.len());
-                (0..cluster.num_hosts()).map(|_| rng.gen_range(0, cluster.num_hosts()))
+                if let Some(y) = (0..cluster.num_hosts())
+                    .map(|_| rng.gen_range(0, cluster.num_hosts()))
                     .filter(|y| mapper_id.iter().find(|&x| x.eq(&y)).is_none())
                     .filter(|y| result.iter().find(|&x| x.eq(&y)).is_none())
                     .take(1)
                     .next()
-                    .map(|y| {
-                        result[i] = y;
-                        MUTATION.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
-                    });
+                {
+                    result[i] = y;
+                    MUTATION.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
+                }
             }
 
             // prune invalid result
@@ -339,7 +346,6 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
         })
     }
 }
-
 
 #[derive(Debug, Default)]
 struct GreedyReducerScheduler {}
@@ -548,7 +554,7 @@ impl<'c> MapReduceApp<'c> {
             let nums: Vec<usize> = std::iter::repeat_with(|| rng.gen_range(1, 5))
                 .take(self.job_spec.num_reduce)
                 .collect();
-            let sum: usize = nums.iter().map(|x| *x).sum();
+            let sum: usize = nums.iter().cloned().sum();
             let spreads: Vec<usize> = nums.into_iter().map(|x| x * data_size / sum).collect();
             pairs.push(spreads);
         }
@@ -574,10 +580,7 @@ fn run_map_reduce(
     let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
     app.finish_map_stage(seed);
 
-    let output = simulator.run_with_appliation(app);
-
-    // println!("{:#?}", output);
-    output
+    simulator.run_with_appliation(app)
 }
 
 fn main() {
