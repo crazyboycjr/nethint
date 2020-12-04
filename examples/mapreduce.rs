@@ -22,9 +22,6 @@ use std::sync::atomic::Ordering::SeqCst;
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
-    pub static CROSS: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
-    pub static SUCC: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
-    pub static MUTATION: Rc<RefCell<AtomicUsize>> = Rc::new(RefCell::new(AtomicUsize::new(0)));
 }
 
 fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
@@ -165,6 +162,9 @@ impl PlaceReducer for GeneticReducerScheduler {
             shuffle: shuffle_pairs,
             cluster,
             mutate_rate: ga_mutate_rate,
+            succ: AtomicUsize::new(0),
+            mutation: AtomicUsize::new(0),
+            cross: AtomicUsize::new(0),
         };
 
         let units = RNG.with(|rng| {
@@ -195,8 +195,13 @@ impl PlaceReducer for GeneticReducerScheduler {
 
         let job_placement = solutions.first().unwrap();
         debug!("fitness: {}", job_placement.fitness());
-        // let hosts = vec![1, 7, 12, 13].into_iter().map(|x| format!("host_{}", x)).collect();
-        // Placement(hosts)
+        debug!(
+            "success/mutation/crossover: {:?}/{:?}/{:?}",
+            ctx.succ.load(SeqCst),
+            ctx.mutation.load(SeqCst),
+            ctx.cross.load(SeqCst),
+        );
+
         Placement(
             job_placement
                 .reducer
@@ -214,6 +219,9 @@ struct GAContext<'a> {
     shuffle: &'a Shuffle,
     cluster: &'a Cluster,
     mutate_rate: f64,
+    succ: AtomicUsize,
+    mutation: AtomicUsize,
+    cross: AtomicUsize,
 }
 
 #[derive(Debug, Clone)]
@@ -290,13 +298,35 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
 
     fn breed_with(&self, other: &GAUnit) -> Self {
         let GAContext {
-            mapper: _,
-            mapper_id,
-            shuffle: _,
-            cluster,
-            mutate_rate,
+            succ,
+            cross,
+            ..
         } = self.ctx;
 
+        // crossover
+        let mut result = self.crossover(other);
+
+        // probabilitisc mutation
+        self.mutate(&mut result);
+
+        // prune invalid result
+        result.dedup();
+        if result.len() < other.reducer.len() {
+            result = other.reducer.clone();
+        } else {
+            succ.fetch_add(1, SeqCst);
+        }
+        cross.fetch_add(1, SeqCst);
+
+        GAUnit {
+            reducer: result,
+            ctx: self.ctx,
+        }
+    }
+}
+
+impl<'a, 'ctx> GAUnit<'a, 'ctx> {
+    fn crossover(&self, other: &GAUnit) -> Vec<usize> {
         RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
 
@@ -307,6 +337,7 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
                 .cloned()
                 .collect();
 
+            // crossover
             let mut result = self.reducer.clone();
             let set: HashSet<_> = result.iter().cloned().collect();
             for i in indices {
@@ -315,7 +346,21 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
                 }
             }
 
-            // 0.1 probability mutation
+            result
+        })
+    }
+
+    fn mutate(&self, result: &mut Vec<usize>) {
+        let GAContext {
+            mapper_id,
+            cluster,
+            mutate_rate,
+            mutation,
+            ..
+        } = self.ctx;
+
+        RNG.with(|rng| {
+            let mut rng = rng.borrow_mut();
             let p = rng.gen_range(0., 1.);
             if p < *mutate_rate {
                 let i = rng.gen_range(0, self.reducer.len());
@@ -327,23 +372,10 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
                     .next()
                 {
                     result[i] = y;
-                    MUTATION.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
+                    mutation.fetch_add(1, SeqCst);
                 }
             }
-
-            // prune invalid result
-            result.dedup();
-            if result.len() < other.reducer.len() {
-                result = other.reducer.clone();
-            } else {
-                SUCC.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
-            }
-            CROSS.with(|x| x.borrow_mut().fetch_add(1, SeqCst));
-            GAUnit {
-                reducer: result,
-                ctx: self.ctx,
-            }
-        })
+        });
     }
 }
 
@@ -637,13 +669,6 @@ fn main() {
         data.push(time2);
         data.push(time3);
     }
-
-    debug!(
-        "success/mutation/crossover: {:?}/{:?}/{:?}",
-        SUCC.with(|x| x.borrow().load(SeqCst)),
-        MUTATION.with(|x| x.borrow().load(SeqCst)),
-        CROSS.with(|x| x.borrow().load(SeqCst)),
-    );
 
     let l1: Vec<f64> = data
         .iter()
