@@ -14,3 +14,4 @@ gnuplot = "0.0.37"
 nethint = { path = "../nethint" }
 logging = { path = "../logging" }
 spiril = { path = "../../spiril" }
+structopt = "0.3.21"

@@ -169,19 +169,56 @@ fn run_map_reduce(
     simulator.run_with_appliation(app)
 }
 
+use structopt::StructOpt;
+
+#[derive(Debug, Clone, StructOpt)]
+#[structopt(name = "MapReduce", about = "MapReduce Application")]
+struct Opt {
+    /// Set the buffer size for tx/rx
+    #[structopt(short = "p", long = "nports", default_value = "4")]
+    nports: usize,
+
+    /// Oversubscription ratio
+    #[structopt(short = "o", long = "oversub", default_value = "1")]
+    oversub_ratio: f64,
+
+    /// Bandwidth of host, in Gbps
+    #[structopt(short = "b", long = "bandwidth", default_value = "100")]
+    bandwidth: f64,
+
+    /// Number of map tasks
+    #[structopt(short = "m", long = "map", default_value = "4")]
+    num_map: usize,
+
+    /// Number of reduce tasks
+    #[structopt(short = "r", long = "reduce", default_value = "4")]
+    num_reduce: usize,
+
+    /// Number of testcases
+    #[structopt(short = "n", long = "ncases", default_value = "10")]
+    ncases: usize,
+
+    /// Output path of the figure
+    #[structopt(short = "d", long = "directory", default_value = "figure/")]
+    directory: std::path::PathBuf,
+}
+
 fn main() {
     logging::init_log();
 
-    let nports = 8;
-    let oversub_ratio = 4.0;
-    let cluster = build_fatree_fake(nports, 100.gbps(), oversub_ratio);
+    let opt = Opt::from_args();
+    info!("Opts: {:#?}", opt);
+
+    let nports = opt.nports;
+    let oversub_ratio = opt.oversub_ratio;
+    let cluster = build_fatree_fake(nports, opt.bandwidth.gbps(), oversub_ratio);
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
     info!("cluster:\n{}", cluster.to_dot());
 
-    let job_spec = JobSpec::new(20, 20);
+    let job_spec = JobSpec::new(opt.num_map, opt.num_reduce);
 
     let mut data = Vec::new();
-    for i in 0..10 {
+    for i in 0..opt.ncases as u64 {
         info!("testcase: {}", i);
 
         let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::Random, i);
@@ -283,12 +320,16 @@ fn main() {
         );
 
     let fname = format!(
-        "figure/mapreduce_{}_{}_{}_{}.pdf",
+        "mapreduce_{}_{}_{}_{}.pdf",
         cluster.num_hosts(),
         oversub_ratio,
         job_spec.num_map,
         job_spec.num_reduce,
     );
-    fg.save_to_pdf(&fname, 12, 8).unwrap();
+
+    let mut output_path = opt.directory.clone();
+    output_path.push(fname);
+
+    fg.save_to_pdf(&output_path, 12, 8).unwrap();
     fg.show().unwrap();
 }
