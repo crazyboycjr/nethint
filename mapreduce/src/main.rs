@@ -1,5 +1,6 @@
 use log::info;
 use rand::{self, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+use structopt::StructOpt;
 
 use nethint::bandwidth::{Bandwidth, BandwidthTrait};
 use nethint::cluster::{Cluster, Node, NodeType, Topology};
@@ -9,8 +10,8 @@ use nethint::{
 
 extern crate mapreduce;
 use mapreduce::{
-    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
-    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    plot, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer,
+    Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
 };
 
 fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
@@ -169,8 +170,6 @@ fn run_map_reduce(
     simulator.run_with_appliation(app)
 }
 
-use structopt::StructOpt;
-
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce", about = "MapReduce Application")]
 struct Opt {
@@ -261,63 +260,10 @@ fn main() {
         data.push(time3);
     }
 
-    let l1: Vec<f64> = data
-        .iter()
-        .skip(0)
-        .step_by(3)
-        .map(|x| x.unwrap() as f64 / 1000.)
-        .collect();
-    let l2: Vec<f64> = data
-        .iter()
-        .skip(1)
-        .step_by(3)
-        .map(|x| x.unwrap() as f64 / 1000.)
-        .collect();
-    let l3: Vec<f64> = data
-        .iter()
-        .skip(2)
-        .step_by(3)
-        .map(|x| x.unwrap() as f64 / 1000.)
-        .collect();
+    let data: Option<Vec<u64>> = data.into_iter().collect();
 
-    use gnuplot::{Caption, Color, DashType, Figure, LineStyle, LineWidth, PointSymbol};
-
-    let x: Vec<usize> = (1..=l1.len()).collect();
-    let mut fg = Figure::new();
-    fg.axes2d()
-        .lines_points(
-            &x,
-            &l1,
-            &[
-                Caption("Random"),
-                Color("red"),
-                PointSymbol('+'),
-                LineWidth(2.),
-                LineStyle(DashType::DotDotDash),
-            ],
-        )
-        .lines_points(
-            &x,
-            &l2,
-            &[
-                Caption("GeneticAlgorithm"),
-                Color("forest-green"),
-                PointSymbol('x'),
-                LineWidth(2.),
-                LineStyle(DashType::DotDash),
-            ],
-        )
-        .lines_points(
-            &x,
-            &l3,
-            &[
-                Caption("HierarchicalGreedy"),
-                Color("blue"),
-                PointSymbol('*'),
-                LineWidth(2.),
-                LineStyle(DashType::Dash),
-            ],
-        );
+    let data = data.unwrap();
+    let mut fg = plot::plot(&data);
 
     let fname = format!(
         "mapreduce_{}_{}_{}_{}.pdf",
