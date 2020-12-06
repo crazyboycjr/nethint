@@ -198,8 +198,8 @@ struct Opt {
     ncases: usize,
 
     /// Output path of the figure
-    #[structopt(short = "d", long = "directory", default_value = "figure/")]
-    directory: std::path::PathBuf,
+    #[structopt(short = "d", long = "directory")]
+    directory: Option<std::path::PathBuf>,
 }
 
 fn main() {
@@ -260,22 +260,46 @@ fn main() {
         data.push(time3);
     }
 
-    let data: Option<Vec<u64>> = data.into_iter().collect();
+    if let Some(directory) = opt.directory {
+        let mut output_path = directory.clone();
+        let fname = format!(
+            "mapreduce_{}_{}_{}_{}.pdf",
+            cluster.num_hosts(),
+            oversub_ratio,
+            job_spec.num_map,
+            job_spec.num_reduce,
+        );
+        output_path.push(fname);
 
-    let data = data.unwrap();
-    let mut fg = plot::plot(&data);
+        let data: Option<Vec<u64>> = data.iter().cloned().collect();
+        let data1 = data.clone().unwrap();
 
-    let fname = format!(
-        "mapreduce_{}_{}_{}_{}.pdf",
-        cluster.num_hosts(),
-        oversub_ratio,
-        job_spec.num_map,
-        job_spec.num_reduce,
-    );
+        let handle1 = std::thread::spawn(move || {
+            let mut fg = plot::plot(&data1);
 
-    let mut output_path = opt.directory.clone();
-    output_path.push(fname);
+            fg.save_to_pdf(&output_path, 12, 8).unwrap();
+            fg.show().unwrap();
+        });
 
-    fg.save_to_pdf(&output_path, 12, 8).unwrap();
-    fg.show().unwrap();
+        let mut output_path = directory.clone();
+        let fname = format!(
+            "mapreduce_cdf_{}_{}_{}_{}.pdf",
+            cluster.num_hosts(),
+            oversub_ratio,
+            job_spec.num_map,
+            job_spec.num_reduce,
+        );
+        output_path.push(fname);
+
+        let data2 = data.clone().unwrap();
+        let handle2 = std::thread::spawn(move || {
+            let mut fg = plot::plot_cdf(&data2);
+
+            fg.save_to_pdf(&output_path, 12, 8).unwrap();
+            fg.show().unwrap();
+        });
+
+        handle1.join().unwrap();
+        handle2.join().unwrap();
+    }
 }

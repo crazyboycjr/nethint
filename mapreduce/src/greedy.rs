@@ -54,7 +54,7 @@ impl PlaceReducer for GreedyReducerScheduler {
         }
 
         use std::cmp::Reverse;
-        let mut rank: Vec<_> = (0..job_spec.num_map).collect();
+        let mut rank: Vec<_> = (0..job_spec.num_reduce).collect();
         rank.sort_by_key(|&r| Reverse(reducer_weight[r]));
 
         for j in rank {
