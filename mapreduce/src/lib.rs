@@ -42,7 +42,7 @@ pub trait PlaceMapper {
     fn place(&mut self, cluster: &Cluster, job_spec: &JobSpec) -> Placement;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ReducerPlacementPolicy {
     Random,
     GeneticAlgorithm,

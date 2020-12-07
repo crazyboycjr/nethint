@@ -60,12 +60,16 @@ pub fn plot(data: &Vec<u64>) -> Figure {
     fg
 }
 
-fn to_cdf(mut data: Vec<f64>, r: &std::ops::Range<f64>) -> (Vec<f64>, Vec<f64>) {
+fn to_cdf(mut data: Vec<f64>) -> (Vec<f64>, Vec<f64>) {
     data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let &start = data.first().unwrap_or(&0.);
+    let &end = data.last().unwrap_or(&0.);
+
     let n = data.len() as f64;
     let (mut xv, mut yv) = (Vec::new(), Vec::new());
 
-    xv.push(r.start);
+    xv.push(start);
     yv.push(0.);
 
     let mut y = 0;
@@ -77,7 +81,7 @@ fn to_cdf(mut data: Vec<f64>, r: &std::ops::Range<f64>) -> (Vec<f64>, Vec<f64>) 
         yv.push(y as f64 / n);
     }
 
-    xv.push(r.end);
+    xv.push(end);
     yv.push(1.0);
 
     (xv, yv)
@@ -85,23 +89,12 @@ fn to_cdf(mut data: Vec<f64>, r: &std::ops::Range<f64>) -> (Vec<f64>, Vec<f64>) 
 
 pub fn plot_cdf(data: &Vec<u64>) -> Figure {
     let data: Vec<f64> = data.into_iter().map(|&x| x as f64 / 1000.).collect();
-    let start = data
-        .iter()
-        .cloned()
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(0.);
-    let end = data
-        .iter()
-        .cloned()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(0.);
 
     let (d1, d2, d3) = decompose(&data);
 
-    let range = start..end;
-    let (x1, y1) = to_cdf(d1, &range);
-    let (x2, y2) = to_cdf(d2, &range);
-    let (x3, y3) = to_cdf(d3, &range);
+    let (x1, y1) = to_cdf(d1);
+    let (x2, y2) = to_cdf(d2);
+    let (x3, y3) = to_cdf(d3);
 
     let mut fg = Figure::new();
     fg.axes2d()

@@ -76,7 +76,7 @@ impl PlaceReducer for GeneticReducerScheduler {
             .set_size(ga_size)
             .set_breed_factor(ga_breed_factor)
             .set_survival_factor(ga_survival_factor)
-            .epochs_parallel(ga_epochs, 4) // 1 CPU cores
+            .epochs(ga_epochs) // do not use separate CPUs
             .finish();
 
         let job_placement = solutions.first().unwrap();

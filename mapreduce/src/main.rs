@@ -1,3 +1,8 @@
+use std::sync::Arc;
+
+use anyhow::{anyhow, Result};
+use async_std::task;
+use futures::stream::StreamExt;
 use log::info;
 use rand::{self, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 use structopt::StructOpt;
@@ -200,6 +205,10 @@ struct Opt {
     /// Output path of the figure
     #[structopt(short = "d", long = "directory")]
     directory: Option<std::path::PathBuf>,
+
+    /// Run simulation experiments in parallel
+    #[structopt(short = "P", long = "parallel")]
+    parallel: Option<usize>,
 }
 
 fn main() {
@@ -209,97 +218,109 @@ fn main() {
     info!("Opts: {:#?}", opt);
 
     let nports = opt.nports;
-    let oversub_ratio = opt.oversub_ratio;
-    let cluster = build_fatree_fake(nports, opt.bandwidth.gbps(), oversub_ratio);
+    let cluster = Arc::new(build_fatree_fake(
+        nports,
+        opt.bandwidth.gbps(),
+        opt.oversub_ratio,
+    ));
     assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
     info!("cluster:\n{}", cluster.to_dot());
 
-    let job_spec = JobSpec::new(opt.num_map, opt.num_reduce);
+    let job_spec = Arc::new(JobSpec::new(opt.num_map, opt.num_reduce));
 
-    let mut data = Vec::new();
-    for i in 0..opt.ncases as u64 {
-        info!("testcase: {}", i);
+    let policies = &[
+        ReducerPlacementPolicy::Random,
+        ReducerPlacementPolicy::GeneticAlgorithm,
+        ReducerPlacementPolicy::HierarchicalGreedy,
+    ];
 
-        let output = run_map_reduce(&cluster, &job_spec, ReducerPlacementPolicy::Random, i);
-        let time1 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+    let num_cpus = opt.parallel.unwrap_or(num_cpus::get());
 
-        let output = run_map_reduce(
-            &cluster,
-            &job_spec,
-            ReducerPlacementPolicy::GeneticAlgorithm,
-            i,
-        );
-        let time2 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+    let experiments: Option<Vec<(usize, u64)>> = task::block_on(async {
+        let experiments = futures::stream::iter({
+            (0..opt.ncases * 3).map(|i| {
+                let cluster = Arc::clone(&cluster);
+                let job_spec = Arc::clone(&job_spec);
+                let policy = policies[i % 3];
+                task::spawn(async move {
+                    info!("testcase: {}", i / 3);
+                    let output = run_map_reduce(&cluster, &job_spec, policy, (i / 3) as _);
+                    let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+                    info!(
+                        "{:?}, job_finish_time: {:?}",
+                        policy,
+                        time.unwrap().to_dura()
+                    );
+                    Some((i, time.unwrap()))
+                })
+            })
+        })
+        .buffer_unordered(num_cpus)
+        .collect::<Vec<Option<(usize, u64)>>>();
+        experiments.await.into_iter().collect()
+    });
 
-        let output = run_map_reduce(
-            &cluster,
-            &job_spec,
-            ReducerPlacementPolicy::HierarchicalGreedy,
-            i,
-        );
-        let time3 = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+    visualize(&opt, experiments, &cluster, &job_spec).unwrap();
+}
 
-        info!(
-            "{:?}, job_finish_time: {:?}",
-            ReducerPlacementPolicy::Random,
-            time1.unwrap().to_dura()
-        );
-        info!(
-            "{:?}, job_finish_time: {:?}",
-            ReducerPlacementPolicy::GeneticAlgorithm,
-            time2.unwrap().to_dura()
-        );
-        info!(
-            "{:?}, job_finish_time: {:?}",
-            ReducerPlacementPolicy::HierarchicalGreedy,
-            time3.unwrap().to_dura()
-        );
+fn visualize(
+    opt: &Opt,
+    experiments: Option<Vec<(usize, u64)>>,
+    cluster: &Cluster,
+    job_spec: &JobSpec,
+) -> Result<()> {
+    if let Some(directory) = opt.directory.as_ref() {
+        let data: Option<Vec<u64>> = experiments.map(|mut a| {
+            a.sort();
+            a.into_iter().map(|t| t.1).collect()
+        });
 
-        data.push(time1);
-        data.push(time2);
-        data.push(time3);
-    }
+        let data = Arc::new(data.ok_or(anyhow!("Empty experiment data"))?);
 
-    if let Some(directory) = opt.directory {
         let mut output_path = directory.clone();
         let fname = format!(
             "mapreduce_{}_{}_{}_{}.pdf",
             cluster.num_hosts(),
-            oversub_ratio,
+            opt.oversub_ratio,
             job_spec.num_map,
             job_spec.num_reduce,
         );
         output_path.push(fname);
 
-        let data: Option<Vec<u64>> = data.iter().cloned().collect();
-        let data1 = data.clone().unwrap();
+        let data1 = Arc::clone(&data);
 
-        let handle1 = std::thread::spawn(move || {
+        let future1: task::JoinHandle<Result<()>> = task::spawn(async move {
             let mut fg = plot::plot(&data1);
 
-            fg.save_to_pdf(&output_path, 12, 8).unwrap();
-            fg.show().unwrap();
+            fg.save_to_pdf(&output_path, 12, 8)
+                .map_err(|e| anyhow!("{}", e))?;
+            fg.show().map_err(|e| anyhow!("{}", e))?;
+            Ok(())
         });
 
         let mut output_path = directory.clone();
         let fname = format!(
             "mapreduce_cdf_{}_{}_{}_{}.pdf",
             cluster.num_hosts(),
-            oversub_ratio,
+            opt.oversub_ratio,
             job_spec.num_map,
             job_spec.num_reduce,
         );
         output_path.push(fname);
 
-        let data2 = data.clone().unwrap();
-        let handle2 = std::thread::spawn(move || {
+        let data2 = Arc::clone(&data);
+
+        let future2: task::JoinHandle<Result<()>> = task::spawn(async move {
             let mut fg = plot::plot_cdf(&data2);
 
-            fg.save_to_pdf(&output_path, 12, 8).unwrap();
-            fg.show().unwrap();
+            fg.save_to_pdf(&output_path, 12, 8)
+                .map_err(|e| anyhow!("{}", e))?;
+            fg.show().map_err(|e| anyhow!("{}", e))?;
+            Ok(())
         });
 
-        handle1.join().unwrap();
-        handle2.join().unwrap();
+        let _ = task::block_on(async { futures::join!(future1, future2) });
     }
+
+    Ok(())
 }
