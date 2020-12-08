@@ -139,6 +139,17 @@ impl<'c> MapReduceApp<'c> {
     }
 
     fn generate_shuffle_flows(&mut self, seed: u64) -> Shuffle {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let n = self.job_spec.num_map;
+        let m = self.job_spec.num_reduce;
+        let mut pairs = vec![vec![0; m]; n];
+        pairs.iter_mut().for_each(|v| {
+            v.iter_mut().for_each(|i| *i = rng.gen_range(0, 1_000_000));
+        });
+        Shuffle(pairs)
+    }
+
+    fn _generate_shuffle_flows_2(&mut self, seed: u64) -> Shuffle {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let mut pairs = Vec::new();
         for _i in 0..self.job_spec.num_map {
@@ -269,15 +280,15 @@ fn visualize(
     cluster: &Cluster,
     job_spec: &JobSpec,
 ) -> Result<()> {
-    if let Some(directory) = opt.directory.as_ref() {
-        let data: Option<Vec<u64>> = experiments.map(|mut a| {
-            a.sort();
-            a.into_iter().map(|t| t.1).collect()
-        });
+    let data: Option<Vec<u64>> = experiments.map(|mut a| {
+        a.sort();
+        a.into_iter().map(|t| t.1).collect()
+    });
 
-        let data = Arc::new(data.ok_or(anyhow!("Empty experiment data"))?);
+    let data = Arc::new(data.ok_or(anyhow!("Empty experiment data"))?);
 
-        let mut output_path = directory.clone();
+    let output_path = opt.directory.as_ref().map(|directory| {
+        let mut path = directory.clone();
         let fname = format!(
             "mapreduce_{}_{}_{}_{}.pdf",
             cluster.num_hosts(),
@@ -285,20 +296,25 @@ fn visualize(
             job_spec.num_map,
             job_spec.num_reduce,
         );
-        output_path.push(fname);
+        path.push(fname);
+        path
+    });
 
-        let data1 = Arc::clone(&data);
+    let data1 = Arc::clone(&data);
 
-        let future1: task::JoinHandle<Result<()>> = task::spawn(async move {
-            let mut fg = plot::plot(&data1);
+    let future1: task::JoinHandle<Result<()>> = task::spawn(async move {
+        let mut fg = plot::plot(&data1);
 
-            fg.save_to_pdf(&output_path, 12, 8)
-                .map_err(|e| anyhow!("{}", e))?;
-            fg.show().map_err(|e| anyhow!("{}", e))?;
-            Ok(())
-        });
+        if let Some(path) = output_path {
+            fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
+        }
 
-        let mut output_path = directory.clone();
+        fg.show().map_err(|e| anyhow!("{}", e))?;
+        Ok(())
+    });
+
+    let output_path = opt.directory.as_ref().map(|directory| {
+        let mut path = directory.clone();
         let fname = format!(
             "mapreduce_cdf_{}_{}_{}_{}.pdf",
             cluster.num_hosts(),
@@ -306,21 +322,24 @@ fn visualize(
             job_spec.num_map,
             job_spec.num_reduce,
         );
-        output_path.push(fname);
+        path.push(fname);
+        path
+    });
 
-        let data2 = Arc::clone(&data);
+    let data2 = Arc::clone(&data);
 
-        let future2: task::JoinHandle<Result<()>> = task::spawn(async move {
-            let mut fg = plot::plot_cdf(&data2);
+    let future2: task::JoinHandle<Result<()>> = task::spawn(async move {
+        let mut fg = plot::plot_cdf(&data2);
 
-            fg.save_to_pdf(&output_path, 12, 8)
-                .map_err(|e| anyhow!("{}", e))?;
-            fg.show().map_err(|e| anyhow!("{}", e))?;
-            Ok(())
-        });
+        if let Some(path) = output_path {
+            fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
+        }
 
-        let _ = task::block_on(async { futures::join!(future1, future2) });
-    }
+        fg.show().map_err(|e| anyhow!("{}", e))?;
+        Ok(())
+    });
+
+    let _ = task::block_on(async { futures::join!(future1, future2) });
 
     Ok(())
 }
