@@ -7,60 +7,17 @@ use log::info;
 use rand::{self, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 use structopt::StructOpt;
 
-use nethint::bandwidth::{Bandwidth, BandwidthTrait};
-use nethint::cluster::{Cluster, Node, NodeType, Topology};
+use nethint::bandwidth::BandwidthTrait;
+use nethint::cluster::{Cluster, Topology};
 use nethint::{
     AppEvent, Application, Event, Executor, Flow, Simulator, ToStdDuration, Trace, TraceRecord,
 };
 
 extern crate mapreduce;
 use mapreduce::{
-    plot, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer,
-    Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    plot, topology, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper,
+    PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
 };
-
-fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
-    assert!(
-        nports % 2 == 0,
-        "the number of ports of a switch is required to be even"
-    );
-    let k = nports;
-    let num_pods = k;
-    let _num_cores = k * k / 4;
-    let num_aggs_in_pod = k / 2;
-    let _num_aggs = num_pods * num_aggs_in_pod;
-    let num_edges_in_pod = k / 2;
-    let num_edges = num_pods * num_edges_in_pod;
-    let num_hosts_under_edge = k / 2;
-    let _num_hosts = num_edges * num_hosts_under_edge;
-
-    let mut cluster = Cluster::new();
-    let cloud = Node::new("cloud", 1, NodeType::Switch);
-    cluster.add_node(cloud);
-
-    let mut host_id = 0;
-    for i in 0..num_edges {
-        let tor_name = format!("tor_{}", i);
-        let tor = Node::new(&tor_name, 2, NodeType::Switch);
-        cluster.add_node(tor);
-        cluster.add_link_by_name(
-            "cloud",
-            &tor_name,
-            bw * num_hosts_under_edge / oversub_ratio,
-        );
-
-        for j in host_id..host_id + num_hosts_under_edge {
-            let host_name = format!("host_{}", j);
-            let host = Node::new(&host_name, 3, NodeType::Host);
-            cluster.add_node(host);
-            cluster.add_link_by_name(&tor_name, &host_name, bw);
-        }
-
-        host_id += num_hosts_under_edge;
-    }
-
-    cluster
-}
 
 #[derive(Debug, Default)]
 struct MapperScheduler {
@@ -189,17 +146,9 @@ fn run_map_reduce(
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce", about = "MapReduce Application")]
 struct Opt {
-    /// Set the buffer size for tx/rx
-    #[structopt(short = "p", long = "nports", default_value = "4")]
-    nports: usize,
-
-    /// Oversubscription ratio
-    #[structopt(short = "o", long = "oversub", default_value = "1")]
-    oversub_ratio: f64,
-
-    /// Bandwidth of host, in Gbps
-    #[structopt(short = "b", long = "bandwidth", default_value = "100")]
-    bandwidth: f64,
+    /// Specify the topology for simulation
+    #[structopt(subcommand)]
+    topo: Topo,
 
     /// Number of map tasks
     #[structopt(short = "m", long = "map", default_value = "4")]
@@ -222,19 +171,88 @@ struct Opt {
     parallel: Option<usize>,
 }
 
+#[derive(Debug, Clone, StructOpt)]
+enum Topo {
+    /// FatTree, parameters include the number of ports of each switch
+    FatTree {
+        /// Set the the number of ports
+        nports: usize,
+        /// Bandwidth of a host, in Gbps
+        bandwidth: f64,
+        /// Oversubscription ratio
+        oversub_ratio: f64,
+    },
+
+    /// Virtual cluster, parameters include the number of racks and rack_size
+    Virtual {
+        /// Specify the number of racks
+        nracks: usize,
+        /// Specify the number of hosts under one rack
+        rack_size: usize,
+        /// Bandwidth of a host, in Gbps
+        host_bw: f64,
+        /// Bandwidth of a ToR switch, in Gbps
+        rack_bw: f64,
+    },
+}
+
+impl std::fmt::Display for Topo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Topo::FatTree {
+                nports,
+                bandwidth,
+                oversub_ratio,
+            } => write!(
+                f,
+                "fattree_{}_{}g_{:.2}",
+                nports,
+                bandwidth,
+                oversub_ratio,
+            ),
+            Topo::Virtual {
+                nracks,
+                rack_size,
+                host_bw,
+                rack_bw,
+            } => write!(
+                f,
+                "virtual_{}_{}_{}g_{}g",
+                nracks,
+                rack_size,
+                host_bw,
+                rack_bw,
+            ),
+        }
+    }
+}
+
 fn main() {
     logging::init_log();
 
     let opt = Opt::from_args();
     info!("Opts: {:#?}", opt);
 
-    let nports = opt.nports;
-    let cluster = Arc::new(build_fatree_fake(
-        nports,
-        opt.bandwidth.gbps(),
-        opt.oversub_ratio,
-    ));
-    assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
+    let cluster = match opt.topo {
+        Topo::FatTree {
+            nports,
+            bandwidth,
+            oversub_ratio,
+        } => {
+            let cluster = topology::build_fatree_fake(nports, bandwidth.gbps(), oversub_ratio);
+            assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
+            cluster
+        }
+        Topo::Virtual {
+            nracks,
+            rack_size,
+            host_bw,
+            rack_bw,
+        } => topology::build_virtual_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
+    };
+
+    let cluster = Arc::new(cluster);
+
     info!("cluster:\n{}", cluster.to_dot());
 
     let job_spec = Arc::new(JobSpec::new(opt.num_map, opt.num_reduce));
@@ -277,7 +295,7 @@ fn main() {
 fn visualize(
     opt: &Opt,
     experiments: Option<Vec<(usize, u64)>>,
-    cluster: &Cluster,
+    _cluster: &Cluster,
     job_spec: &JobSpec,
 ) -> Result<()> {
     let data: Option<Vec<u64>> = experiments.map(|mut a| {
@@ -289,13 +307,7 @@ fn visualize(
 
     let output_path = opt.directory.as_ref().map(|directory| {
         let mut path = directory.clone();
-        let fname = format!(
-            "mapreduce_{}_{}_{}_{}.pdf",
-            cluster.num_hosts(),
-            opt.oversub_ratio,
-            job_spec.num_map,
-            job_spec.num_reduce,
-        );
+        let fname = format!("mapreduce_{}_{}.pdf", opt.topo, job_spec);
         path.push(fname);
         path
     });
@@ -307,6 +319,7 @@ fn visualize(
 
         if let Some(path) = output_path {
             fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
+            info!("save figure to {:?}", path);
         }
 
         fg.show().map_err(|e| anyhow!("{}", e))?;
@@ -315,13 +328,7 @@ fn visualize(
 
     let output_path = opt.directory.as_ref().map(|directory| {
         let mut path = directory.clone();
-        let fname = format!(
-            "mapreduce_cdf_{}_{}_{}_{}.pdf",
-            cluster.num_hosts(),
-            opt.oversub_ratio,
-            job_spec.num_map,
-            job_spec.num_reduce,
-        );
+        let fname = format!("mapreduce_cdf_{}_{}.pdf", opt.topo, job_spec);
         path.push(fname);
         path
     });
@@ -333,6 +340,7 @@ fn visualize(
 
         if let Some(path) = output_path {
             fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
+            info!("save figure to {:?}", path);
         }
 
         fg.show().map_err(|e| anyhow!("{}", e))?;

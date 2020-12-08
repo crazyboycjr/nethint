@@ -14,6 +14,7 @@ pub mod greedy;
 pub use greedy::GreedyReducerScheduler;
 
 pub mod plot;
+pub mod topology;
 
 const RAND_SEED: u64 = 0;
 thread_local! {
@@ -66,6 +67,12 @@ impl JobSpec {
             num_map,
             num_reduce,
         }
+    }
+}
+
+impl std::fmt::Display for JobSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "m{}_r{}", self.num_map, self.num_reduce)
     }
 }
 
