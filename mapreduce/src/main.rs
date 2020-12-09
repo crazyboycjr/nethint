@@ -18,6 +18,7 @@ use mapreduce::{
     plot, topology, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper,
     PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
 };
+use topology::make_asymmetric;
 
 #[derive(Debug, Default)]
 struct MapperScheduler {
@@ -150,6 +151,10 @@ struct Opt {
     #[structopt(subcommand)]
     topo: Topo,
 
+    /// Asymmetric bandwidth
+    #[structopt(short = "a", long = "asymmetric")]
+    asym: bool,
+
     /// Number of map tasks
     #[structopt(short = "m", long = "map", default_value = "4")]
     num_map: usize,
@@ -166,8 +171,8 @@ struct Opt {
     #[structopt(short = "d", long = "directory")]
     directory: Option<std::path::PathBuf>,
 
-    /// Run simulation experiments in parallel
-    #[structopt(short = "P", long = "parallel")]
+    /// Run simulation experiments in parallel, default using the hardware concurrency
+    #[structopt(short = "P", long = "parallel", name = "nthreads")]
     parallel: Option<usize>,
 }
 
@@ -203,13 +208,7 @@ impl std::fmt::Display for Topo {
                 nports,
                 bandwidth,
                 oversub_ratio,
-            } => write!(
-                f,
-                "fattree_{}_{}g_{:.2}",
-                nports,
-                bandwidth,
-                oversub_ratio,
-            ),
+            } => write!(f, "fattree_{}_{}g_{:.2}", nports, bandwidth, oversub_ratio),
             Topo::Virtual {
                 nracks,
                 rack_size,
@@ -218,10 +217,7 @@ impl std::fmt::Display for Topo {
             } => write!(
                 f,
                 "virtual_{}_{}_{}g_{}g",
-                nracks,
-                rack_size,
-                host_bw,
-                rack_bw,
+                nracks, rack_size, host_bw, rack_bw,
             ),
         }
     }
@@ -251,7 +247,11 @@ fn main() {
         } => topology::build_virtual_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
     };
 
-    let cluster = Arc::new(cluster);
+    let cluster = Arc::new(if opt.asym {
+        make_asymmetric(cluster)
+    } else {
+        cluster
+    });
 
     info!("cluster:\n{}", cluster.to_dot());
 

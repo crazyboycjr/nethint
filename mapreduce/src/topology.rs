@@ -1,5 +1,7 @@
 use nethint::bandwidth::Bandwidth;
-use nethint::cluster::{Cluster, Node, NodeType};
+use nethint::cluster::{Cluster, Node, NodeType, Topology, Link, LinkIx};
+use crate::RNG;
+use rand::{self, Rng};
 
 pub fn build_fatree_fake(nports: usize, bw: Bandwidth, oversub_ratio: f64) -> Cluster {
     assert!(
@@ -53,4 +55,18 @@ pub fn build_virtual_cluster(
     }
 
     cluster
+}
+
+pub fn make_asymmetric(mut cluster: Cluster) -> Cluster {
+    RNG.with(|rng| {
+        let mut rng = rng.borrow_mut();
+
+        for link_ix in cluster.all_links() {
+            let new_bw = cluster[link_ix].bandwidth * rng.gen_range(1, 101) / 100;
+            cluster[link_ix] = Link::new(new_bw);
+            cluster[LinkIx::new(link_ix.index() ^ 1)] = Link::new(new_bw);
+        }
+
+        cluster
+    })
 }

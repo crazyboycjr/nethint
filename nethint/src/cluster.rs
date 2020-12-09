@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use log::debug;
 use petgraph::{
     dot::Dot,
-    graph::{Graph, EdgeIndex, NodeIndex}
+    graph::{Graph, EdgeIndex, NodeIndex, EdgeIndices}
 };
 use lazy_static::lazy_static;
 
@@ -17,12 +17,14 @@ lazy_static! {
 
 pub type LinkIx = EdgeIndex;
 pub type NodeIx = NodeIndex;
+pub type LinkIxIter = EdgeIndices;
 
 pub trait Topology {
     fn get_node_index(&self, name: &str) -> NodeIx;
     fn get_target(&self, id: LinkIx) -> NodeIx;
     fn get_uplink(&self, id: NodeIx) -> LinkIx;
     fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx>;
+    fn all_links(&self) -> EdgeIndices;
     fn resolve_route(
         &self,
         src: &str,
@@ -113,6 +115,12 @@ impl std::ops::Index<LinkIx> for Cluster {
     }
 }
 
+impl std::ops::IndexMut<LinkIx> for Cluster {
+    fn index_mut(&mut self, index: LinkIx) -> &mut Self::Output {
+        &mut self.graph[index]
+    }
+}
+
 impl Topology for Cluster {
     #[inline]
     fn get_node_index(&self, name: &str) -> NodeIx {
@@ -135,6 +143,10 @@ impl Topology for Cluster {
     #[inline]
     fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx> {
         self.graph[id].children.iter()
+    }
+
+    fn all_links(&self) -> EdgeIndices {
+        self.graph.edge_indices()
     }
 
     fn resolve_route(
