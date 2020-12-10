@@ -1,3 +1,5 @@
+#![feature(str_split_once)]
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -53,19 +55,21 @@ pub enum ReducerPlacementPolicy {
 #[derive(Debug, Clone)]
 pub struct Placement(pub Vec<String>);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct JobSpec {
     pub num_map: usize,
     pub num_reduce: usize,
+    pub shuffle_dist: ShuffleDist,
     // cpu_slots: usize,
     // mem_slots: usize,
 }
 
 impl JobSpec {
-    pub fn new(num_map: usize, num_reduce: usize) -> Self {
+    pub fn new(num_map: usize, num_reduce: usize, dist: ShuffleDist) -> Self {
         JobSpec {
             num_map,
             num_reduce,
+            shuffle_dist: dist,
         }
     }
 }
@@ -89,4 +93,40 @@ pub fn get_rack_id(cluster: &Cluster, h: &str) -> usize {
         .parse()
         .unwrap();
     rack_id
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ShuffleDist {
+    Uniform(u64),
+    Zipf(u64, f64),
+}
+
+#[derive(Debug)]
+pub struct ParseDistributionError;
+
+impl std::fmt::Display for ParseDistributionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::str::FromStr for ShuffleDist {
+    type Err = ParseDistributionError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // uniform_{}
+        // zipf_{}_{}
+
+        s.split_once("_")
+            .and_then(|(name, args)| match name {
+                "uniform" => args.parse::<u64>().ok().map(|n| ShuffleDist::Uniform(n)),
+                "zipf" => args.split_once("_").and_then(|(n, s)| {
+                    n.parse::<u64>()
+                        .ok()
+                        .zip(s.parse::<f64>().ok())
+                        .map(|(n, s)| ShuffleDist::Zipf(n, s))
+                }),
+                _ => None,
+            })
+            .ok_or(ParseDistributionError)
+    }
 }

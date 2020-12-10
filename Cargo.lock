@@ -552,6 +552,7 @@ dependencies = [
  "rand 0.7.3",
  "spiril",
  "structopt",
+ "zipf",
 ]
 
 [[package]]
@@ -1104,3 +1105,12 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "zipf"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e12b8667a4fff63d236f8363be54392f93dbb13616be64a83e761a9319ab589"
+dependencies = [
+ "rand 0.7.3",
+]

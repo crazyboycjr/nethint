@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use async_std::task;
 use futures::stream::StreamExt;
 use log::info;
-use rand::{self, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+use rand::{self, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng, distributions::Distribution};
 use structopt::StructOpt;
 
 use nethint::bandwidth::BandwidthTrait;
@@ -16,7 +16,7 @@ use nethint::{
 extern crate mapreduce;
 use mapreduce::{
     plot, topology, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper,
-    PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShuffleDist
 };
 use topology::make_asymmetric;
 
@@ -69,6 +69,7 @@ impl<'c> MapReduceApp<'c> {
 
     fn finish_map_stage(&mut self, seed: u64) {
         let shuffle = self.generate_shuffle_flows(seed);
+        // let shuffle = self._generate_shuffle_flows_2(seed);
         info!("shuffle: {:?}", shuffle);
 
         let mut map_scheduler = MapperScheduler::new(seed);
@@ -101,9 +102,19 @@ impl<'c> MapReduceApp<'c> {
         let n = self.job_spec.num_map;
         let m = self.job_spec.num_reduce;
         let mut pairs = vec![vec![0; m]; n];
-        pairs.iter_mut().for_each(|v| {
-            v.iter_mut().for_each(|i| *i = rng.gen_range(0, 1_000_000));
-        });
+        match self.job_spec.shuffle_dist {
+            ShuffleDist::Uniform(n) => {
+                pairs.iter_mut().for_each(|v| {
+                    v.iter_mut().for_each(|i| *i = rng.gen_range(0, n as usize));
+                });
+            }
+            ShuffleDist::Zipf(n, s) => {
+                let zipf = zipf::ZipfDistribution::new(1000, s).unwrap();
+                pairs.iter_mut().for_each(|v| {
+                    v.iter_mut().for_each(|i| *i = n as usize * zipf.sample(&mut rng) / 10);
+                });
+            }
+        }
         Shuffle(pairs)
     }
 
@@ -155,6 +166,15 @@ struct Opt {
     #[structopt(short = "a", long = "asymmetric")]
     asym: bool,
 
+    /// Probability distribution of shuffle flows
+    #[structopt(
+        short = "s",
+        long = "shuffle",
+        name = "distribution",
+        default_value = "uniform_1000000",
+    )]
+    shuffle: ShuffleDist,
+
     /// Number of map tasks
     #[structopt(short = "m", long = "map", default_value = "4")]
     num_map: usize,
@@ -178,7 +198,7 @@ struct Opt {
 
 #[derive(Debug, Clone, StructOpt)]
 enum Topo {
-    /// FatTree, parameters include the number of ports of each switch
+    /// FatTree, parameters include the number of ports of each switch, bandwidth, and oversubscription ratio
     FatTree {
         /// Set the the number of ports
         nports: usize,
@@ -188,7 +208,7 @@ enum Topo {
         oversub_ratio: f64,
     },
 
-    /// Virtual cluster, parameters include the number of racks and rack_size
+    /// Virtual cluster, parameters include the number of racks and rack_size, host_bw, and rack_bw
     Virtual {
         /// Specify the number of racks
         nracks: usize,
@@ -255,7 +275,7 @@ fn main() {
 
     info!("cluster:\n{}", cluster.to_dot());
 
-    let job_spec = Arc::new(JobSpec::new(opt.num_map, opt.num_reduce));
+    let job_spec = Arc::new(JobSpec::new(opt.num_map, opt.num_reduce, opt.shuffle));
 
     let policies = &[
         ReducerPlacementPolicy::Random,
