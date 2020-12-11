@@ -16,10 +16,9 @@ use nethint::{
 
 extern crate mapreduce;
 use mapreduce::{
-    plot, topology,
-    trace::{self, JobTrace},
-    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
-    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShuffleDist,
+    plot, topology, trace::JobTrace, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec,
+    PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    ShuffleDist,
 };
 use topology::make_asymmetric;
 
@@ -362,14 +361,18 @@ fn run_experiments(
 
     let ngroups = policies.len();
 
-    let job_trace = opt.trace.as_ref().map(|p| JobTrace::from_path(p)
-        .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e)));
+    let job_trace = opt.trace.as_ref().map(|p| {
+        JobTrace::from_path(p)
+            .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e))
+    });
 
     task::block_on(async {
         let experiments = futures::stream::iter({
-            let ncases = std::cmp::min(opt.ncases, job_trace.as_ref().map(|v| v.count).unwrap_or(usize::MAX));
+            let ncases = std::cmp::min(
+                opt.ncases,
+                job_trace.as_ref().map(|v| v.count).unwrap_or(usize::MAX),
+            );
             (0..ncases * ngroups).map(|i| {
-
                 let id = i / ngroups;
                 let cluster = Arc::clone(&cluster);
 
@@ -382,11 +385,7 @@ fn run_experiments(
                         ShuffleDist::FromTrace(Box::new(record)),
                     )
                 } else {
-                    JobSpec::new(
-                        opt.num_map,
-                        opt.num_reduce,
-                        opt.shuffle.clone(),
-                    )
+                    JobSpec::new(opt.num_map, opt.num_reduce, opt.shuffle.clone())
                 };
 
                 let policy = policies[i % ngroups];
