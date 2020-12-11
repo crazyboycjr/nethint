@@ -18,6 +18,8 @@ pub use greedy::GreedyReducerScheduler;
 pub mod plot;
 pub mod topology;
 
+pub mod trace;
+
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
@@ -95,10 +97,11 @@ pub fn get_rack_id(cluster: &Cluster, h: &str) -> usize {
     rack_id
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ShuffleDist {
     Uniform(u64),
     Zipf(u64, f64),
+    FromTrace(Box<trace::Record>),
 }
 
 #[derive(Debug)]

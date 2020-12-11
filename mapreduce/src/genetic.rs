@@ -159,17 +159,23 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
 
             let r_ix = cluster.get_node_index(&reducer_name[j]);
             let tor_ix = cluster.get_target(cluster.get_uplink(r_ix));
+            let r_bw = cluster[cluster.get_uplink(r_ix)].bandwidth;
             let rack_bw = cluster[cluster.get_uplink(tor_ix)].bandwidth;
 
             for (i, m) in mapper.0.iter().enumerate() {
                 let m_ix = cluster.get_node_index(m);
                 let tor_m_ix = cluster.get_target(cluster.get_uplink(m_ix));
-                let m_bw = cluster[cluster.get_uplink(m_ix)].bandwidth;
+                // let m_bw = cluster[cluster.get_uplink(m_ix)].bandwidth;
 
                 if tor_ix == tor_m_ix {
-                    inner_est += shuffle.0[i][j] as f64 / m_bw.val() as f64;
+                    inner_est += shuffle.0[i][j] as f64 / r_bw.val() as f64;
                 } else {
-                    outer_est += traffic[i][rack_r] as f64 / rack_bw.val() as f64;
+                    // here only consider rack_bw is not accurate, consider that there's only one reducer,
+                    // and the reducer is in a rack with huge bandwidth, but the node has very small bandwidth
+                    // outer_est += traffic[i][rack_r] as f64 / rack_bw.val() as f64;
+                    let rack_bottleneck = traffic[i][rack_r] as f64 / rack_bw.val() as f64;
+                    let host_bottleneck = shuffle.0[i][j] as f64 / r_bw.val() as f64;
+                    outer_est += rack_bottleneck.max(host_bottleneck);
                 }
             }
 
@@ -212,7 +218,7 @@ impl<'a, 'ctx> GAUnit<'a, 'ctx> {
         RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
 
-            let num_intersect = rng.gen_range(0, other.reducer.len() / 2 + 1);
+            let num_intersect = rng.gen_range(0, other.reducer.len() / 2 + 2);
             let indices: Vec<usize> = (0..other.reducer.len())
                 .collect::<Vec<usize>>()
                 .choose_multiple(&mut *rng, num_intersect)

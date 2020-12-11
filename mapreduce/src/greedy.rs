@@ -67,8 +67,7 @@ impl PlaceReducer for GreedyReducerScheduler {
                 let mut traffic = 0;
                 let mut est = 0.;
                 let tor_ix = cluster.get_node_index(&format!("tor_{}", i));
-                let link_ix = cluster.get_uplink(tor_ix);
-                let rack_bw = cluster[link_ix].bandwidth;
+                let rack_bw = cluster[cluster.get_uplink(tor_ix)].bandwidth;
 
                 // exclude the case that the rack is full
                 // debug!("rack_taken[{}]: {} {}", i, rack_taken[i], cluster.get_downlinks(tor_ix).len());
@@ -76,13 +75,32 @@ impl PlaceReducer for GreedyReducerScheduler {
                     continue;
                 }
 
+                // Step 2. fix the rack, find the best node in the rack
+                let tor_ix = cluster.get_node_index(&format!("tor_{}", i));
+                let downlink = cluster
+                    .get_downlinks(tor_ix)
+                    .filter(|&&downlink| !taken.contains(&cluster.get_target(downlink)))
+                    .max_by_key(|&&downlink| cluster[downlink].bandwidth)
+                    .unwrap();
+                let best_node_ix = cluster.get_target(*downlink);
+                let r_bw = cluster[cluster.get_uplink(best_node_ix)].bandwidth;
+
                 for (mi, m) in mapper.0.iter().enumerate() {
                     let m = cluster.get_node_index(&m);
+                    // let m_bw = cluster[cluster.get_uplink(m)].bandwidth;
                     let rack_m = cluster.get_target(cluster.get_uplink(m));
                     if rack_m != tor_ix {
                         // est += (shuffle_pairs.0[mi][j] * (rack[i] + 1)) as f64 / rack_bw.val() as f64;
-                        est += (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
+                        // The same case as it happens in GeneticAlgorithm, we should also take
+                        // the case that the host becomes bottleneck into consideration
+                        // est += (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
+                        let rack_bottleneck = (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
+                        let host_bottleneck = shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64;
+                        est += rack_bottleneck.max(host_bottleneck);
                         traffic += shuffle_pairs.0[mi][j];
+                    } else {
+                        let host_bottleneck = shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64;
+                        est += host_bottleneck;
                     }
                 }
 

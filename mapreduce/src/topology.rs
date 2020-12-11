@@ -62,7 +62,7 @@ pub fn make_asymmetric(mut cluster: Cluster) -> Cluster {
         let mut rng = rng.borrow_mut();
 
         for link_ix in cluster.all_links() {
-            let new_bw = cluster[link_ix].bandwidth * rng.gen_range(1, 101) / 100;
+            let new_bw = cluster[link_ix].bandwidth * rng.gen_range(1, 11) / 10;
             cluster[link_ix] = Link::new(new_bw);
             cluster[LinkIx::new(link_ix.index() ^ 1)] = Link::new(new_bw);
         }
