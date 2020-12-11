@@ -249,6 +249,10 @@ struct Opt {
     /// Run simulation experiments in parallel, default using the hardware concurrency
     #[structopt(short = "P", long = "parallel", name = "nthreads")]
     parallel: Option<usize>,
+
+    /// Normalize, draw speed up instead of absolution job completion time
+    #[structopt(short = "N", long = "normalize")]
+    normalize: bool,
 }
 
 // impl Opt {
@@ -434,8 +438,9 @@ fn visualize(opt: &Opt, experiments: Option<Vec<(usize, u64)>>) -> Result<()> {
 
             let data1 = Arc::clone(&data);
 
+            let norm = opt.normalize;
             let future: task::JoinHandle<Result<()>> = task::spawn(async move {
-                let mut fg = $func(&data1);
+                let mut fg = $func(&data1, norm);
 
                 if let Some(path) = output_path {
                     fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;

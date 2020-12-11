@@ -16,9 +16,23 @@ fn decompose(data: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     (l1, l2, l3)
 }
 
-pub fn plot(data: &Vec<u64>) -> Figure {
+fn normalize(mut l1: Vec<f64>, mut l2: Vec<f64>, mut l3: Vec<f64>) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let minv: Vec<_> = l1.iter().zip(&l2).zip(&l3).map(|((&x, &y), &z)| x.min(y).min(z)).collect();
+    l1.iter_mut().zip(&minv).for_each(|(x, &m)| *x /= m);
+    l2.iter_mut().zip(&minv).for_each(|(x, &m)| *x /= m);
+    l3.iter_mut().zip(&minv).for_each(|(x, &m)| *x /= m);
+    (l1, l2, l3)
+}
+
+pub fn plot(data: &Vec<u64>, norm: bool) -> Figure {
     let data: Vec<f64> = data.into_iter().map(|&x| x as f64 / 1000.).collect();
-    let (l1, l2, l3) = decompose(&data);
+
+    let (l1, l2, l3) = if norm {
+        let (l1, l2, l3) = decompose(&data);
+        normalize(l1, l2, l3)
+    } else {
+        decompose(&data)
+    };
 
     let x: Vec<usize> = (1..=l1.len()).collect();
     let mut fg = Figure::new();
@@ -87,10 +101,15 @@ fn to_cdf(mut data: Vec<f64>) -> (Vec<f64>, Vec<f64>) {
     (xv, yv)
 }
 
-pub fn plot_cdf(data: &Vec<u64>) -> Figure {
+pub fn plot_cdf(data: &Vec<u64>, norm: bool) -> Figure {
     let data: Vec<f64> = data.into_iter().map(|&x| x as f64 / 1000.).collect();
 
-    let (d1, d2, d3) = decompose(&data);
+    let (d1, d2, d3) = if norm {
+        let (d1, d2, d3) = decompose(&data);
+        normalize(d1, d2, d3)
+    } else {
+        decompose(&data)
+    };
 
     let (x1, y1) = to_cdf(d1);
     let (x2, y2) = to_cdf(d2);

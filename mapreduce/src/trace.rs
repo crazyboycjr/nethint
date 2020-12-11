@@ -94,6 +94,9 @@ impl JobTrace {
         for _i in 0..count {
             let mut line = String::new();
             reader.read_line(&mut line)?;
+            if line.starts_with("#") {
+                continue;
+            }
             let r: Record = line
                 .parse()
                 .unwrap_or_else(|e| panic!("pare line failed: {}, line: {}", e, line));
