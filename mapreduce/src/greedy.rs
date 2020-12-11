@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use log::debug;
 
-use nethint::cluster::{Cluster, Topology};
+use nethint::cluster::{Cluster, Topology, NodeIx};
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle};
 
@@ -13,6 +13,18 @@ impl GreedyReducerScheduler {
     pub fn new() -> Self {
         Default::default()
     }
+}
+
+fn find_best_node(cluster: &Cluster, denylist: &HashSet<NodeIx>, rack: usize) -> NodeIx {
+    let tor_ix = cluster.get_node_index(&format!("tor_{}", rack));
+    let downlink = cluster
+        .get_downlinks(tor_ix)
+        .filter(|&&downlink| !denylist.contains(&cluster.get_target(downlink)))
+        .max_by_key(|&&downlink| cluster[downlink].bandwidth)
+        .unwrap();
+
+    let best_node_ix = cluster.get_target(*downlink);
+    best_node_ix
 }
 
 impl PlaceReducer for GreedyReducerScheduler {
@@ -76,13 +88,7 @@ impl PlaceReducer for GreedyReducerScheduler {
                 }
 
                 // Step 2. fix the rack, find the best node in the rack
-                let tor_ix = cluster.get_node_index(&format!("tor_{}", i));
-                let downlink = cluster
-                    .get_downlinks(tor_ix)
-                    .filter(|&&downlink| !taken.contains(&cluster.get_target(downlink)))
-                    .max_by_key(|&&downlink| cluster[downlink].bandwidth)
-                    .unwrap();
-                let best_node_ix = cluster.get_target(*downlink);
+                let best_node_ix = find_best_node(cluster, &taken, i);
                 let r_bw = cluster[cluster.get_uplink(best_node_ix)].bandwidth;
 
                 for (mi, m) in mapper.0.iter().enumerate() {
@@ -118,13 +124,7 @@ impl PlaceReducer for GreedyReducerScheduler {
             debug!("best_rack: {}, traffic: {}", best_rack, ingress[best_rack]);
 
             // Step 2. fix the rack, find the best node in the rack
-            let tor_ix = cluster.get_node_index(&format!("tor_{}", best_rack));
-            let downlink = cluster
-                .get_downlinks(tor_ix)
-                .filter(|&&downlink| !taken.contains(&cluster.get_target(downlink)))
-                .max_by_key(|&&downlink| cluster[downlink].bandwidth)
-                .unwrap();
-            let best_node_ix = cluster.get_target(*downlink);
+            let best_node_ix = find_best_node(cluster, &taken, best_rack);
             let best_node = cluster[best_node_ix].name.clone();
 
             // here we get the best node

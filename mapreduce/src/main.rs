@@ -257,6 +257,17 @@ struct Opt {
 //     }
 // }
 
+impl Opt {
+    fn to_filename(&self, prefix: &str) -> String {
+        if let Some(_f) = self.trace.as_ref() {
+            format!("{}_{}_from_trace.pdf", prefix, self.topo)
+        } else {
+            let job_spec = JobSpec::new(self.num_map, self.num_reduce, self.shuffle.clone());
+            format!("{}_{}_{}.pdf", prefix, self.topo, job_spec)
+        }
+    }
+}
+
 #[derive(Debug, Clone, StructOpt)]
 enum Topo {
     /// FatTree, parameters include the number of ports of each switch, bandwidth, and oversubscription ratio
@@ -344,12 +355,7 @@ fn main() {
 
     let results = run_experiments(&opt, Arc::clone(&cluster), policies);
 
-    let job_spec = Arc::new(JobSpec::new(
-        opt.num_map,
-        opt.num_reduce,
-        opt.shuffle.clone(),
-    ));
-    visualize(&opt, results, &cluster, &job_spec).unwrap();
+    visualize(&opt, results).unwrap();
 }
 
 fn run_experiments(
@@ -409,12 +415,7 @@ fn run_experiments(
     })
 }
 
-fn visualize(
-    opt: &Opt,
-    experiments: Option<Vec<(usize, u64)>>,
-    _cluster: &Cluster,
-    job_spec: &JobSpec,
-) -> Result<()> {
+fn visualize(opt: &Opt, experiments: Option<Vec<(usize, u64)>>) -> Result<()> {
     let data: Option<Vec<u64>> = experiments.map(|mut a| {
         a.sort();
         a.into_iter().map(|t| t.1).collect()
@@ -422,47 +423,38 @@ fn visualize(
 
     let data = Arc::new(data.ok_or(anyhow!("Empty experiment data"))?);
 
-    let output_path = opt.directory.as_ref().map(|directory| {
-        let mut path = directory.clone();
-        let fname = format!("mapreduce_{}_{}.pdf", opt.topo, job_spec);
-        path.push(fname);
-        path
-    });
+    macro_rules! async_plot {
+        ($fig_prefix:expr, $func:path) => {{
+            let output_path = opt.directory.as_ref().map(|directory| {
+                let mut path = directory.clone();
+                let fname = opt.to_filename($fig_prefix);
+                path.push(fname);
+                path
+            });
 
-    let data1 = Arc::clone(&data);
+            let data1 = Arc::clone(&data);
 
-    let future1: task::JoinHandle<Result<()>> = task::spawn(async move {
-        let mut fg = plot::plot(&data1);
+            let future: task::JoinHandle<Result<()>> = task::spawn(async move {
+                let mut fg = $func(&data1);
 
-        if let Some(path) = output_path {
-            fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
-            info!("save figure to {:?}", path);
-        }
+                if let Some(path) = output_path {
+                    fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
+                    info!("save figure to {:?}", path);
+                }
 
-        fg.show().map_err(|e| anyhow!("{}", e))?;
-        Ok(())
-    });
+                fg.show().map_err(|e| anyhow!("{}", e))?;
+                Ok(())
+            });
 
-    let output_path = opt.directory.as_ref().map(|directory| {
-        let mut path = directory.clone();
-        let fname = format!("mapreduce_cdf_{}_{}.pdf", opt.topo, job_spec);
-        path.push(fname);
-        path
-    });
+            future
+        }};
+    }
 
-    let data2 = Arc::clone(&data);
+    use plot::plot;
+    let future1 = async_plot!("mapreduce", plot);
 
-    let future2: task::JoinHandle<Result<()>> = task::spawn(async move {
-        let mut fg = plot::plot_cdf(&data2);
-
-        if let Some(path) = output_path {
-            fg.save_to_pdf(&path, 12, 8).map_err(|e| anyhow!("{}", e))?;
-            info!("save figure to {:?}", path);
-        }
-
-        fg.show().map_err(|e| anyhow!("{}", e))?;
-        Ok(())
-    });
+    use plot::plot_cdf;
+    let future2 = async_plot!("mapreduce_cdf", plot_cdf);
 
     let _ = task::block_on(async { futures::join!(future1, future2) });
 
