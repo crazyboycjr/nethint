@@ -39,8 +39,9 @@ impl PlaceMapper for MapperScheduler {
         let hosts = match &job_spec.shuffle_dist {
             ShuffleDist::FromTrace(record) => {
                 let mut used: HashSet<String> = HashSet::new();
-                let mut found = false;
                 let mut hosts = Vec::new();
+                assert_eq!(job_spec.num_map % record.num_map, 0);
+                let k = job_spec.num_map / record.num_map;
                 record.mappers.iter().for_each(|&rack_id| {
                     assert!(
                         rack_id < cluster.num_switches(),
@@ -50,6 +51,7 @@ impl PlaceMapper for MapperScheduler {
                             cluster.num_switches()
                         )
                     );
+                    let mut selected = 0;
                     let tor_ix = cluster.get_node_index(&format!("tor_{}", rack_id));
                     for &link_ix in cluster.get_downlinks(tor_ix) {
                         let host_ix = cluster.get_target(link_ix);
@@ -57,11 +59,13 @@ impl PlaceMapper for MapperScheduler {
                         if !used.contains(&name) {
                             hosts.push(name.clone());
                             used.insert(name);
-                            found = true;
-                            break;
+                            selected += 1;
+                            if selected == k {
+                                break;
+                            }
                         }
                     }
-                    assert!(found, "please increase the number of hosts within a rack");
+                    assert!(selected == k, "please increase the number of hosts within a rack");
                 });
                 hosts
             }
@@ -153,13 +157,13 @@ impl<'c> MapReduceApp<'c> {
                 });
             }
             ShuffleDist::FromTrace(record) => {
-                assert_eq!(n, record.num_map);
-                assert_eq!(m, record.num_reduce);
-                pairs.iter_mut().for_each(|v| {
-                    v.iter_mut().enumerate().for_each(|(i, x)| {
-                        *x = (record.reducers[i].1 / n as f64 * 1e6) as usize;
-                    });
-                });
+                assert_eq!(m % record.num_reduce, 0);
+                let k = m / record.num_reduce;
+                for i in 0..n {
+                    for j in 0..m {
+                        pairs[i][j] = (record.reducers[j / k].1 / n as f64 * 1e6) as usize;
+                    }
+                }
             }
         }
         Shuffle(pairs)
@@ -217,7 +221,7 @@ struct Opt {
     #[structopt(short = "a", long = "asymmetric")]
     asym: bool,
 
-    /// Probability distribution of shuffle flows
+    /// Probability distribution of shuffle flows, examples: uniform_1000000, zipf_1000000_0.5
     #[structopt(
         short = "s",
         long = "shuffle",
@@ -226,11 +230,11 @@ struct Opt {
     )]
     shuffle: ShuffleDist,
 
-    /// Number of map tasks
+    /// Number of map tasks. When using trace, this parameter means map scale factor
     #[structopt(short = "m", long = "map", default_value = "4")]
     num_map: usize,
 
-    /// Number of reduce tasks
+    /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
     #[structopt(short = "r", long = "reduce", default_value = "4")]
     num_reduce: usize,
 
@@ -264,7 +268,7 @@ struct Opt {
 impl Opt {
     fn to_filename(&self, prefix: &str) -> String {
         if let Some(_f) = self.trace.as_ref() {
-            format!("{}_{}_from_trace.pdf", prefix, self.topo)
+            format!("{}_{}_from_trace_m{}_r{}.pdf", prefix, self.topo, self.num_map, self.num_reduce)
         } else {
             let job_spec = JobSpec::new(self.num_map, self.num_reduce, self.shuffle.clone());
             format!("{}_{}_{}.pdf", prefix, self.topo, job_spec)
@@ -390,8 +394,8 @@ fn run_experiments(
                     let record = job_trace.records[id].clone();
                     debug!("record: {:?}", record);
                     JobSpec::new(
-                        record.num_map,
-                        record.num_reduce,
+                        record.num_map * opt.num_map,
+                        record.num_reduce * opt.num_reduce,
                         ShuffleDist::FromTrace(Box::new(record)),
                     )
                 } else {
