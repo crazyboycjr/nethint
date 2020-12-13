@@ -33,7 +33,7 @@ impl PlaceReducer for GeneticReducerScheduler {
         let ga_size = 1000;
         let ga_breed_factor = 0.5;
         let ga_survival_factor = 0.2;
-        let ga_epochs = 50;
+        let ga_epochs = 1;
         let ga_mutate_rate = 0.1;
 
         let mapper_id: Vec<usize> = mapper

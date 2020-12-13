@@ -1,10 +1,11 @@
+use fnv::FnvBuildHasher;
+use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::{trace, debug};
+use log::{debug, trace};
 
 pub mod bandwidth;
 use bandwidth::{Bandwidth, BandwidthTrait};
@@ -15,6 +16,7 @@ use crate::cluster::{Cluster, Link, Route, Topology};
 // nanoseconds
 pub type Timestamp = u64;
 pub type Duration = u64;
+type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 
 pub trait ToStdDuration {
     fn to_dura(self) -> std::time::Duration;
@@ -77,7 +79,7 @@ impl Simulator {
         comp_flows
     }
 
-    fn min_max_fairness_converge(&mut self) {
+    fn max_min_fairness_converge(&mut self) {
         let mut converged = 0;
         let active_flows = self.state.running_flows.len();
         self.state.running_flows.iter().for_each(|f| {
@@ -85,6 +87,7 @@ impl Simulator {
             f.borrow_mut().speed = 0.0;
         });
         while converged < active_flows {
+            // find the bottleneck link
             let res = self
                 .state
                 .flows
@@ -98,6 +101,7 @@ impl Simulator {
             let (l, fs) = res.expect("impossible");
             let speed_inc = Self::calc_delta(l, fs).val() as f64;
 
+            // update and converge flows pass through the bottleneck link
             for f in fs {
                 if !f.borrow().converged {
                     f.borrow_mut().speed += speed_inc;
@@ -106,6 +110,7 @@ impl Simulator {
                 }
             }
 
+            // increase the speed of all active flows
             for f in &self.state.running_flows {
                 if !f.borrow().converged {
                     f.borrow_mut().speed += speed_inc;
@@ -114,19 +119,19 @@ impl Simulator {
         }
     }
 
-    fn min_max_fairness(&mut self) -> Vec<TraceRecord> {
+    fn max_min_fairness(&mut self) -> Vec<TraceRecord> {
         loop {
-            self.min_max_fairness_converge();
+            // compute a fair share of bandwidth allocation
+            self.max_min_fairness_converge();
             trace!(
-                "after min_max_fairness converged, ts: {:?}, running flows: {:#?}\nnumber of ready flows: {}",
+                "after max_min_fairness converged, ts: {:?}, running flows: {:#?}\nnumber of ready flows: {}",
                 self.ts.to_dura(),
                 self.state.running_flows,
                 self.state.flow_bufs.len(),
             );
             // all FlowStates are converged
 
-            // find the first event
-            // get min from first_complete_time and first_ready_time, both could be None
+            // find the next flow to complete
             let first_complete_time = self
                 .state
                 .running_flows
@@ -134,16 +139,20 @@ impl Simulator {
                 .map(|f| f.borrow().time_to_complete() + self.ts)
                 .min();
 
+            // find the next flow to start
             let first_ready_time = self.state.flow_bufs.peek().map(|f| f.0.borrow().ts);
 
+            // get min from first_complete_time and first_ready_time, both could be None
             let ts_inc = first_complete_time
                 .into_iter()
                 .chain(first_ready_time)
                 .min()
-                .expect("running flows and ready flows are both empty") - self.ts;
+                .expect("running flows and ready flows are both empty")
+                - self.ts;
 
             assert!(ts_inc > 0);
 
+            // modify the network state to the time at ts + ts_inc
             let comp_flows = self.proceed(ts_inc);
             if !comp_flows.is_empty() {
                 break comp_flows;
@@ -164,6 +173,7 @@ impl<'a> Executor<'a> for Simulator {
         let mut output = Trace::new();
         let mut event = app.on_event(AppEvent::AppStart);
         assert!(matches!(event, Event::FlowArrive(_)));
+
         loop {
             trace!("simulator: on event {:?}", event);
             event = match event {
@@ -173,8 +183,8 @@ impl<'a> Executor<'a> for Simulator {
                     for r in recs {
                         self.state.add_flow(r, &self.cluster, self.ts);
                     }
-                    // 2. run min-max fairness to find the next completed flow
-                    let comp_flows = self.min_max_fairness();
+                    // 2. run max-min fairness to find the next completed flow
+                    let comp_flows = self.max_min_fairness();
                     trace!(
                         "ts: {:?}, completed flows: {:?}",
                         self.ts.to_dura(),
@@ -191,7 +201,7 @@ impl<'a> Executor<'a> for Simulator {
                     break;
                 }
                 Event::Continue => {
-                    let comp_flows = self.min_max_fairness();
+                    let comp_flows = self.max_min_fairness();
                     trace!(
                         "ts: {:?}, completed flows: {:?}",
                         self.ts.to_dura(),

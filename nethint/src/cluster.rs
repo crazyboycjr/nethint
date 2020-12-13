@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fnv::FnvHashMap as HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use log::debug;
@@ -50,7 +50,7 @@ impl Cluster {
 
     pub fn from_nodes(nodes: Vec<Node>) -> Self {
         let mut g = Graph::new();
-        let mut node_map = HashMap::new();
+        let mut node_map = HashMap::default();
         let num_hosts = nodes.iter().filter(|n| n.is_host()).count();
         nodes.into_iter().for_each(|n| {
             let name = n.name.clone();
