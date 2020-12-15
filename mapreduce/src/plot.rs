@@ -1,4 +1,5 @@
-use gnuplot::{Caption, Color, DashType, Figure, LineStyle, LineWidth, PointSymbol};
+use crate::inspect::JobLifetime;
+use gnuplot::{Caption, Color, Coordinate, DashType, Figure, LineStyle, LineWidth, PointSymbol};
 
 fn decompose(data: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     macro_rules! decompose_i {
@@ -16,8 +17,17 @@ fn decompose(data: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     (l1, l2, l3)
 }
 
-fn normalize(mut l1: Vec<f64>, mut l2: Vec<f64>, mut l3: Vec<f64>) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let minv: Vec<_> = l1.iter().zip(&l2).zip(&l3).map(|((&x, &y), &z)| x.min(y).min(z)).collect();
+fn normalize(
+    mut l1: Vec<f64>,
+    mut l2: Vec<f64>,
+    mut l3: Vec<f64>,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let minv: Vec<_> = l1
+        .iter()
+        .zip(&l2)
+        .zip(&l3)
+        .map(|((&x, &y), &z)| x.min(y).min(z))
+        .collect();
     l1.iter_mut().zip(&minv).for_each(|(x, &m)| *x /= m);
     l2.iter_mut().zip(&minv).for_each(|(x, &m)| *x /= m);
     l3.iter_mut().zip(&minv).for_each(|(x, &m)| *x /= m);
@@ -150,6 +160,34 @@ pub fn plot_cdf(data: &Vec<u64>, norm: bool) -> Figure {
                 LineStyle(DashType::Dash),
             ],
         );
+
+    fg
+}
+
+pub fn plot_segments(data: &Vec<JobLifetime>) -> Figure {
+    let mut fg = Figure::new();
+    let ax = fg.axes2d();
+
+    let mut h = 0;
+    for s in data {
+        h += 1;
+        let x = &[s.start, s.start + s.dura];
+        let y = &[h, h];
+        ax.lines_points(
+            // Coordinate::Axis(x[0] as _),
+            // Coordinate::Axis(y[0] as _),
+            // Coordinate::Axis(x[1] as _),
+            // Coordinate::Axis(y[1] as _),
+            x,
+            y,
+            &[
+                Color("red"),
+                PointSymbol('+'),
+                LineWidth(2.),
+                LineStyle(DashType::DotDotDash),
+            ],
+        );
+    }
 
     fg
 }
