@@ -1,8 +1,8 @@
 #[cfg(test)]
-
 use nethint::bandwidth::BandwidthTrait;
 use nethint::cluster::{Cluster, Node, NodeType};
-use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
+use nethint::simulator::{Executor, Simulator};
+use nethint::{Flow, Trace, TraceRecord};
 
 #[test]
 fn toy1() {

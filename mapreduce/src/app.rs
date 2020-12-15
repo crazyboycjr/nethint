@@ -4,7 +4,10 @@ use crate::{
 };
 use log::info;
 use nethint::{
-    cluster::Cluster, AppEvent, Application, Event, Executor, Flow, Simulator, Trace, TraceRecord,
+    app::{AppEvent, Application, Replayer},
+    cluster::Cluster,
+    simulator::{Event, Executor, Simulator},
+    Flow, Trace, TraceRecord,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 
@@ -12,7 +15,7 @@ pub struct MapReduceApp<'c> {
     job_spec: &'c JobSpec,
     cluster: &'c Cluster,
     reducer_place_policy: ReducerPlacementPolicy,
-    replayer: nethint::Replayer,
+    replayer: Replayer,
 }
 
 impl<'c> MapReduceApp<'c> {
@@ -26,7 +29,7 @@ impl<'c> MapReduceApp<'c> {
             job_spec,
             cluster,
             reducer_place_policy,
-            replayer: nethint::Replayer::new(trace),
+            replayer: Replayer::new(trace),
         }
     }
 
@@ -60,7 +63,7 @@ impl<'c> MapReduceApp<'c> {
             }
         }
 
-        self.replayer = nethint::Replayer::new(trace);
+        self.replayer = Replayer::new(trace);
     }
 
     fn generate_shuffle(&mut self, seed: u64) -> Shuffle {

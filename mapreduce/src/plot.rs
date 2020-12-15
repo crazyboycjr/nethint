@@ -1,5 +1,5 @@
 use crate::inspect::JobLifetime;
-use gnuplot::{Caption, Color, Coordinate, DashType, Figure, LineStyle, LineWidth, PointSymbol};
+use gnuplot::{Caption, Color, DashType, Figure, LineStyle, LineWidth, PointSymbol};
 
 fn decompose(data: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     macro_rules! decompose_i {
@@ -174,10 +174,6 @@ pub fn plot_segments(data: &Vec<JobLifetime>) -> Figure {
         let x = &[s.start, s.start + s.dura];
         let y = &[h, h];
         ax.lines_points(
-            // Coordinate::Axis(x[0] as _),
-            // Coordinate::Axis(y[0] as _),
-            // Coordinate::Axis(x[1] as _),
-            // Coordinate::Axis(y[1] as _),
             x,
             y,
             &[
