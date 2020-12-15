@@ -38,7 +38,7 @@ impl PlaceReducer for GreedyReducerScheduler {
         // two-level allocation
         // first, find a best rack to place the reducer
         // second, find the best node in that rack
-        let mut placement = Vec::new();
+        let mut placement = vec![String::new(); job_spec.num_reduce];
         let num_racks = cluster.num_switches() - 1;
 
         // number of nodes has been taken in a rack
@@ -129,7 +129,7 @@ impl PlaceReducer for GreedyReducerScheduler {
 
             // here we get the best node
             taken.insert(best_node_ix);
-            placement.push(best_node);
+            placement[j] = best_node;
         }
 
         Placement(placement)
