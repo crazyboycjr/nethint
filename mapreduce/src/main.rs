@@ -1,327 +1,27 @@
 #![feature(box_patterns)]
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_std::task;
 use futures::stream::StreamExt;
 use log::{debug, info};
-use rand::{self, distributions::Distribution, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 use structopt::StructOpt;
 
-use nethint::bandwidth::BandwidthTrait;
-use nethint::cluster::{Cluster, Topology};
 use nethint::{
-    AppEvent, Application, Event, Executor, Flow, Simulator, ToStdDuration, Trace, TraceRecord,
+    bandwidth::BandwidthTrait,
+    cluster::{Cluster, Topology},
+    ToStdDuration,
 };
 
 extern crate mapreduce;
 use mapreduce::{
-    plot, topology, trace::JobTrace, GeneticReducerScheduler, GreedyReducerScheduler, JobSpec,
-    PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
-    ShuffleDist,
+    app::run_map_reduce,
+    argument::{Opt, Topo},
+    inspect, plot, topology,
+    topology::make_asymmetric,
+    trace::JobTrace,
+    JobSpec, ReducerPlacementPolicy, ShuffleDist,
 };
-use topology::make_asymmetric;
-
-#[derive(Debug, Default)]
-struct MapperScheduler {
-    seed: u64,
-}
-
-impl MapperScheduler {
-    fn new(seed: u64) -> Self {
-        MapperScheduler { seed }
-    }
-}
-
-impl PlaceMapper for MapperScheduler {
-    fn place(&mut self, cluster: &Cluster, job_spec: &JobSpec) -> Placement {
-        // here we just consider the case where there is only one single job
-        let hosts = match &job_spec.shuffle_dist {
-            ShuffleDist::FromTrace(record) => {
-                let mut used: HashSet<String> = HashSet::new();
-                let mut hosts = Vec::new();
-                assert_eq!(job_spec.num_map % record.num_map, 0);
-                let k = job_spec.num_map / record.num_map;
-                record.mappers.iter().for_each(|&rack_id| {
-                    assert!(
-                        rack_id < cluster.num_switches(),
-                        format!(
-                            "rack_id: {}, number of switches: {}",
-                            rack_id,
-                            cluster.num_switches()
-                        )
-                    );
-                    let mut selected = 0;
-                    let tor_ix = cluster.get_node_index(&format!("tor_{}", rack_id));
-                    for &link_ix in cluster.get_downlinks(tor_ix) {
-                        let host_ix = cluster.get_target(link_ix);
-                        let name = cluster[host_ix].name.clone();
-                        if !used.contains(&name) {
-                            hosts.push(name.clone());
-                            used.insert(name);
-                            selected += 1;
-                            if selected == k {
-                                break;
-                            }
-                        }
-                    }
-                    assert!(selected == k, "please increase the number of hosts within a rack");
-                });
-                hosts
-            }
-            _ => {
-                let mut rng = StdRng::seed_from_u64(self.seed);
-                let num_hosts = cluster.num_hosts();
-                (0..num_hosts)
-                    .collect::<Vec<_>>()
-                    .choose_multiple(&mut rng, job_spec.num_map)
-                    .map(|x| format!("host_{}", x))
-                    .collect()
-            }
-        };
-        Placement(hosts)
-    }
-}
-
-struct MapReduceApp<'c> {
-    job_spec: &'c JobSpec,
-    cluster: &'c Cluster,
-    reducer_place_policy: ReducerPlacementPolicy,
-    replayer: nethint::Replayer,
-}
-
-impl<'c> MapReduceApp<'c> {
-    fn new(
-        job_spec: &'c JobSpec,
-        cluster: &'c Cluster,
-        reducer_place_policy: ReducerPlacementPolicy,
-    ) -> Self {
-        let trace = Trace::new();
-        MapReduceApp {
-            job_spec,
-            cluster,
-            reducer_place_policy,
-            replayer: nethint::Replayer::new(trace),
-        }
-    }
-
-    fn place_map(&self, seed: u64) -> Placement {
-        let mut map_scheduler = MapperScheduler::new(seed);
-        let mappers = map_scheduler.place(self.cluster, &self.job_spec);
-        info!("mappers: {:?}", mappers);
-        mappers
-    }
-
-    fn place_reduce(&self, mappers: &Placement, shuffle: &Shuffle) -> Placement {
-        let mut reduce_scheduler: Box<dyn PlaceReducer> = match self.reducer_place_policy {
-            ReducerPlacementPolicy::Random => Box::new(RandomReducerScheduler::new()),
-            ReducerPlacementPolicy::GeneticAlgorithm => Box::new(GeneticReducerScheduler::new()),
-            ReducerPlacementPolicy::HierarchicalGreedy => Box::new(GreedyReducerScheduler::new()),
-        };
-
-        let reducers = reduce_scheduler.place(self.cluster, &self.job_spec, &mappers, &shuffle);
-        info!("reducers: {:?}", reducers);
-        reducers
-    }
-
-    fn start(&mut self, shuffle: Shuffle, mappers: Placement, reducers: Placement) {
-        // reinitialize replayer with new trace
-        let mut trace = Trace::new();
-        for i in 0..self.job_spec.num_map {
-            for j in 0..self.job_spec.num_reduce {
-                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
-                let rec = TraceRecord::new(0, flow, None);
-                trace.add_record(rec);
-            }
-        }
-
-        self.replayer = nethint::Replayer::new(trace);
-    }
-
-    fn generate_shuffle(&mut self, seed: u64) -> Shuffle {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let n = self.job_spec.num_map;
-        let m = self.job_spec.num_reduce;
-        let mut pairs = vec![vec![0; m]; n];
-        match &self.job_spec.shuffle_dist {
-            &ShuffleDist::Uniform(n) => {
-                pairs.iter_mut().for_each(|v| {
-                    v.iter_mut().for_each(|i| *i = rng.gen_range(0, n as usize));
-                });
-            }
-            &ShuffleDist::Zipf(n, s) => {
-                let zipf = zipf::ZipfDistribution::new(1000, s).unwrap();
-                pairs.iter_mut().for_each(|v| {
-                    v.iter_mut()
-                        .for_each(|i| *i = n as usize * zipf.sample(&mut rng) / 10);
-                });
-            }
-            ShuffleDist::FromTrace(record) => {
-                assert_eq!(m % record.num_reduce, 0);
-                let k = m / record.num_reduce;
-                for i in 0..n {
-                    for j in 0..m {
-                        pairs[i][j] = (record.reducers[j / k].1 / n as f64 * 1e6) as usize;
-                    }
-                }
-            }
-        }
-        Shuffle(pairs)
-    }
-
-    fn _generate_shuffle_flows_2(&mut self, seed: u64) -> Shuffle {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        let mut pairs = Vec::new();
-        for _i in 0..self.job_spec.num_map {
-            let data_size = 1_000_000 * rng.gen_range(1, 5);
-            let nums: Vec<usize> = std::iter::repeat_with(|| rng.gen_range(1, 5))
-                .take(self.job_spec.num_reduce)
-                .collect();
-            let sum: usize = nums.iter().cloned().sum();
-            let spreads: Vec<usize> = nums.into_iter().map(|x| x * data_size / sum).collect();
-            pairs.push(spreads);
-        }
-
-        Shuffle(pairs)
-    }
-}
-
-impl<'c> Application for MapReduceApp<'c> {
-    fn on_event(&mut self, event: AppEvent) -> Event {
-        self.replayer.on_event(event)
-    }
-}
-
-fn run_map_reduce(
-    cluster: &Cluster,
-    job_spec: &JobSpec,
-    reduce_place_policy: ReducerPlacementPolicy,
-    seed: u64,
-) -> Trace {
-    let mut simulator = Simulator::new(cluster.clone());
-
-    let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
-    let shuffle = app.generate_shuffle(seed);
-    info!("shuffle: {:?}", shuffle);
-    let mappers = app.place_map(seed);
-    let reducers = app.place_reduce(&mappers, &shuffle);
-    app.start(shuffle, mappers, reducers);
-
-    simulator.run_with_appliation(app)
-}
-
-#[derive(Debug, Clone, StructOpt)]
-#[structopt(name = "MapReduce", about = "MapReduce Application")]
-struct Opt {
-    /// Specify the topology for simulation
-    #[structopt(subcommand)]
-    topo: Topo,
-
-    /// Asymmetric bandwidth
-    #[structopt(short = "a", long = "asymmetric")]
-    asym: bool,
-
-    /// Probability distribution of shuffle flows, examples: uniform_1000000, zipf_1000000_0.5
-    #[structopt(
-        short = "s",
-        long = "shuffle",
-        name = "distribution",
-        default_value = "uniform_1000000"
-    )]
-    shuffle: ShuffleDist,
-
-    /// Number of map tasks. When using trace, this parameter means map scale factor
-    #[structopt(short = "m", long = "map", default_value = "4")]
-    num_map: usize,
-
-    /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
-    #[structopt(short = "r", long = "reduce", default_value = "4")]
-    num_reduce: usize,
-
-    /// Number of testcases
-    #[structopt(short = "n", long = "ncases", default_value = "10")]
-    ncases: usize,
-
-    /// Run experiments from trace file
-    #[structopt(short = "f", long = "file")]
-    trace: Option<std::path::PathBuf>,
-
-    /// Output path of the figure
-    #[structopt(short = "d", long = "directory")]
-    directory: Option<std::path::PathBuf>,
-
-    /// Run simulation experiments in parallel, default using the hardware concurrency
-    #[structopt(short = "P", long = "parallel", name = "nthreads")]
-    parallel: Option<usize>,
-
-    /// Normalize, draw speed up instead of absolution job completion time
-    #[structopt(short = "N", long = "normalize")]
-    normalize: bool,
-}
-
-// impl Opt {
-//     fn to_title(&self, prefix: &str) -> String {
-//         format!("MapReduce CDF ")
-//     }
-// }
-
-impl Opt {
-    fn to_filename(&self, prefix: &str) -> String {
-        if let Some(_f) = self.trace.as_ref() {
-            format!("{}_{}_from_trace_m{}_r{}.pdf", prefix, self.topo, self.num_map, self.num_reduce)
-        } else {
-            let job_spec = JobSpec::new(self.num_map, self.num_reduce, self.shuffle.clone());
-            format!("{}_{}_{}.pdf", prefix, self.topo, job_spec)
-        }
-    }
-}
-
-#[derive(Debug, Clone, StructOpt)]
-enum Topo {
-    /// FatTree, parameters include the number of ports of each switch, bandwidth, and oversubscription ratio
-    FatTree {
-        /// Set the the number of ports
-        nports: usize,
-        /// Bandwidth of a host, in Gbps
-        bandwidth: f64,
-        /// Oversubscription ratio
-        oversub_ratio: f64,
-    },
-
-    /// Virtual cluster, parameters include the number of racks and rack_size, host_bw, and rack_bw
-    Virtual {
-        /// Specify the number of racks
-        nracks: usize,
-        /// Specify the number of hosts under one rack
-        rack_size: usize,
-        /// Bandwidth of a host, in Gbps
-        host_bw: f64,
-        /// Bandwidth of a ToR switch, in Gbps
-        rack_bw: f64,
-    },
-}
-
-impl std::fmt::Display for Topo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Topo::FatTree {
-                nports,
-                bandwidth,
-                oversub_ratio,
-            } => write!(f, "fattree_{}_{}g_{:.2}", nports, bandwidth, oversub_ratio),
-            Topo::Virtual {
-                nracks,
-                rack_size,
-                host_bw,
-                rack_bw,
-            } => write!(
-                f,
-                "virtual_{}_{}_{}g_{}g",
-                nracks, rack_size, host_bw, rack_bw,
-            ),
-        }
-    }
-}
 
 fn main() {
     logging::init_log();
@@ -360,6 +60,19 @@ fn main() {
         ReducerPlacementPolicy::GeneticAlgorithm,
         ReducerPlacementPolicy::HierarchicalGreedy,
     ];
+
+    if opt.inspect {
+        let results = inspect::run_experiments(&opt, Arc::clone(&cluster));
+        let mut segments = results.unwrap();
+        segments.sort_by_key(|x| x.0);
+        info!("inspect results: {:?}", segments);
+
+        let data = segments.into_iter().map(|x| x.1).collect();
+        use plot::plot_segments;
+        let mut fg = plot_segments(&data);
+        fg.show().unwrap();
+        return;
+    }
 
     let results = run_experiments(&opt, Arc::clone(&cluster), policies);
 
