@@ -20,6 +20,15 @@ pub mod topology;
 
 pub mod trace;
 
+pub mod argument;
+
+pub mod mapper;
+pub use mapper::MapperScheduler;
+
+pub mod app;
+
+pub mod inspect;
+
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
