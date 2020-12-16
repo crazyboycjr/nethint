@@ -1,12 +1,12 @@
 use fnv::FnvHashMap as HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+use lazy_static::lazy_static;
 use log::debug;
 use petgraph::{
     dot::Dot,
-    graph::{Graph, EdgeIndex, NodeIndex, EdgeIndices}
+    graph::{EdgeIndex, EdgeIndices, Graph, NodeIndex},
 };
-use lazy_static::lazy_static;
 
 use crate::bandwidth::Bandwidth;
 use crate::LoadBalancer;
@@ -19,7 +19,9 @@ pub type LinkIx = EdgeIndex;
 pub type NodeIx = NodeIndex;
 pub type LinkIxIter = EdgeIndices;
 
-pub trait Topology {
+use std::ops::{Index, IndexMut};
+
+pub trait Topology: Index<NodeIx> + Index<LinkIx> + IndexMut<LinkIx> {
     fn get_node_index(&self, name: &str) -> NodeIx;
     fn get_target(&self, id: LinkIx) -> NodeIx;
     fn get_uplink(&self, id: NodeIx) -> LinkIx;
@@ -33,6 +35,15 @@ pub trait Topology {
     ) -> Route;
     fn num_hosts(&self) -> usize;
     fn num_switches(&self) -> usize;
+}
+
+#[derive(Debug, Clone)]
+pub struct VirtCluster<'c> {
+    pub(crate) inner: Cluster,
+    pub(crate) phys_cluster: &'c Cluster,
+}
+
+impl<'c> VirtCluster<'c> {
 }
 
 /// The network topology and hardware configuration of the cluster.
@@ -56,10 +67,7 @@ impl Cluster {
             let name = n.name.clone();
             let node_idx = g.add_node(n);
             let old = node_map.insert(name.clone(), node_idx);
-            assert!(
-                old.is_none(),
-                format!("repeated key: {}", name)
-            );
+            assert!(old.is_none(), format!("repeated key: {}", name));
         });
         Cluster {
             graph: g,
@@ -76,17 +84,20 @@ impl Cluster {
         let name = node.name.clone();
         let node_idx = self.graph.add_node(node);
         let old = self.node_map.insert(name.clone(), node_idx);
-        assert!(
-            old.is_none(),
-            format!("repeated key: {}", name)
-        );
+        assert!(old.is_none(), format!("repeated key: {}", name));
         node_idx
     }
 
     #[inline]
     pub fn add_link_by_name(&mut self, parent: &str, child: &str, bw: Bandwidth) {
-        let &pnode = self.node_map.get(parent).unwrap_or_else(|| panic!("cannot find node with name: {}", parent));
-        let &cnode = self.node_map.get(child).unwrap_or_else(|| panic!("cannot find node with name: {}", child));
+        let &pnode = self
+            .node_map
+            .get(parent)
+            .unwrap_or_else(|| panic!("cannot find node with name: {}", parent));
+        let &cnode = self
+            .node_map
+            .get(child)
+            .unwrap_or_else(|| panic!("cannot find node with name: {}", child));
 
         let l1 = self.graph.add_edge(pnode, cnode, Link::new(bw));
         let l2 = self.graph.add_edge(cnode, pnode, Link::new(bw));
@@ -124,7 +135,8 @@ impl std::ops::IndexMut<LinkIx> for Cluster {
 impl Topology for Cluster {
     #[inline]
     fn get_node_index(&self, name: &str) -> NodeIx {
-        let &id = self.node_map
+        let &id = self
+            .node_map
             .get(name)
             .unwrap_or_else(|| panic!("cannot find node with name: {}", name));
         id
@@ -137,7 +149,9 @@ impl Topology for Cluster {
 
     #[inline]
     fn get_uplink(&self, id: NodeIx) -> LinkIx {
-        self.graph[id].parent.unwrap_or_else(|| panic!("invalid index: {:?}", id))
+        self.graph[id]
+            .parent
+            .unwrap_or_else(|| panic!("invalid index: {:?}", id))
     }
 
     #[inline]
@@ -241,7 +255,7 @@ impl std::hash::Hash for Link {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum NodeType {
     Host,
     Switch,

@@ -1,3 +1,12 @@
+use std::rc::Rc;
+use std::cell::RefCell;
+use rand::{SeedableRng, rngs::StdRng};
+
+const RAND_SEED: u64 = 0;
+thread_local! {
+    pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
+}
+
 pub mod bandwidth;
 
 pub mod cluster;
@@ -6,6 +15,9 @@ use cluster::Route;
 pub mod app;
 
 pub mod simulator;
+
+pub mod architecture;
+pub mod brain;
 
 // nanoseconds
 pub type Timestamp = u64;

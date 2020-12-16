@@ -1,18 +1,19 @@
 Here's the plan
 
-- Flow
-- Trace
-- VTopo
-- Event
-- Simulator
-- Application
-- NetHint
+- Brain -> Cloud controller, VM allocator
+- VirtCluster
 - Sampler
+- NetHint
+-[o] Flow
+-[o] Trace
+-[o] Event
+-[o] Simulator
+-[o] Application
+-[o] Topology trait
+-[o] Cluster, physical topology
 - BackgroundFlow
 - MapReduce Example
 - Allreduce Example
-
-dot visualization topology
 
 
 

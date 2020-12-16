@@ -16,7 +16,6 @@ pub mod greedy;
 pub use greedy::GreedyReducerScheduler;
 
 pub mod plot;
-pub mod topology;
 
 pub mod trace;
 

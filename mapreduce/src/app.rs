@@ -96,22 +96,6 @@ impl<'c> MapReduceApp<'c> {
         }
         Shuffle(pairs)
     }
-
-    fn _generate_shuffle_flows_2(&mut self, seed: u64) -> Shuffle {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        let mut pairs = Vec::new();
-        for _i in 0..self.job_spec.num_map {
-            let data_size = 1_000_000 * rng.gen_range(1, 5);
-            let nums: Vec<usize> = std::iter::repeat_with(|| rng.gen_range(1, 5))
-                .take(self.job_spec.num_reduce)
-                .collect();
-            let sum: usize = nums.iter().cloned().sum();
-            let spreads: Vec<usize> = nums.into_iter().map(|x| x * data_size / sum).collect();
-            pairs.push(spreads);
-        }
-
-        Shuffle(pairs)
-    }
 }
 
 impl<'c> Application for MapReduceApp<'c> {

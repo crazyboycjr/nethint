@@ -12,6 +12,9 @@ log = "0.4.11"
 petgraph = "0.5.1"
 fnv = "1.0.7"
 indexmap = "1.6.0"
+structopt = "0.3.21"
+thiserror = "1.0.22"
+rand = "0.7.3"
 
 [dev-dependencies]
 logging = { path = "../logging" }

@@ -7,20 +7,12 @@ use futures::stream::StreamExt;
 use log::{debug, info};
 use structopt::StructOpt;
 
-use nethint::{
-    bandwidth::BandwidthTrait,
-    cluster::{Cluster, Topology},
-    ToStdDuration,
-};
+use nethint::{brain::Brain, cluster::Cluster, ToStdDuration};
 
 extern crate mapreduce;
 use mapreduce::{
-    app::run_map_reduce,
-    argument::{Opt, Topo},
-    inspect, plot, topology,
-    topology::make_asymmetric,
-    trace::JobTrace,
-    JobSpec, ReducerPlacementPolicy, ShuffleDist,
+    app::run_map_reduce, argument::Opt, inspect, plot, trace::JobTrace, JobSpec,
+    ReducerPlacementPolicy, ShuffleDist,
 };
 
 fn main() {
@@ -29,31 +21,13 @@ fn main() {
     let opt = Opt::from_args();
     info!("Opts: {:#?}", opt);
 
-    let cluster = match opt.topo {
-        Topo::FatTree {
-            nports,
-            bandwidth,
-            oversub_ratio,
-        } => {
-            let cluster = topology::build_fatree_fake(nports, bandwidth.gbps(), oversub_ratio);
-            assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
-            cluster
-        }
-        Topo::Virtual {
-            nracks,
-            rack_size,
-            host_bw,
-            rack_bw,
-        } => topology::build_virtual_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
-    };
+    let mut brain = Brain::build_cloud(opt.topo.clone());
 
-    let cluster = Arc::new(if opt.asym {
-        make_asymmetric(cluster)
-    } else {
-        cluster
-    });
+    if opt.asym {
+        brain.make_asymmetric(0);
+    }
 
-    info!("cluster:\n{}", cluster.to_dot());
+    info!("cluster:\n{}", brain.cluster().to_dot());
 
     let policies = &[
         ReducerPlacementPolicy::Random,
@@ -62,7 +36,7 @@ fn main() {
     ];
 
     if opt.inspect {
-        let results = inspect::run_experiments(&opt, Arc::clone(&cluster));
+        let results = inspect::run_experiments(&opt, Arc::clone(&brain.cluster()));
         let mut segments = results.unwrap();
         segments.sort_by_key(|x| x.0);
         info!("inspect results: {:?}", segments);
@@ -74,7 +48,7 @@ fn main() {
         return;
     }
 
-    let results = run_experiments(&opt, Arc::clone(&cluster), policies);
+    let results = run_experiments(&opt, Arc::clone(&brain.cluster()), policies);
 
     visualize(&opt, results).unwrap();
 }
