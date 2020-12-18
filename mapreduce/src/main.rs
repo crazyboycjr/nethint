@@ -7,12 +7,22 @@ use futures::stream::StreamExt;
 use log::{debug, info};
 use structopt::StructOpt;
 
-use nethint::{brain::Brain, cluster::Cluster, ToStdDuration};
+use nethint::{
+    app::AppGroup,
+    brain::{Brain, PlacementStrategy},
+    cluster::Cluster,
+    simulator::{Simulator, Executor},
+    ToStdDuration,
+};
 
 extern crate mapreduce;
 use mapreduce::{
-    app::run_map_reduce, argument::Opt, inspect, plot, trace::JobTrace, JobSpec,
-    ReducerPlacementPolicy, ShuffleDist,
+    app::{run_map_reduce, MapReduceApp},
+    mapper::MapperPlacementPolicy,
+    argument::Opt,
+    inspect, plot,
+    trace::JobTrace,
+    JobSpec, ReducerPlacementPolicy, ShufflePattern,
 };
 
 fn main() {
@@ -48,9 +58,78 @@ fn main() {
         return;
     }
 
+    if opt.multitenant {
+        run_experiments_multitenant(&opt, &mut brain);
+        return;
+    }
+
     let results = run_experiments(&opt, Arc::clone(&brain.cluster()), policies);
 
     visualize(&opt, results).unwrap();
+}
+
+fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
+    let job_trace = opt.trace.as_ref().map(|p| {
+        JobTrace::from_path(p)
+            .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e))
+    });
+
+    let policy = ReducerPlacementPolicy::HierarchicalGreedy;
+
+    let ncases = std::cmp::min(
+        opt.ncases,
+        job_trace.as_ref().map(|v| v.count).unwrap_or(usize::MAX),
+    );
+
+    // values in a scope are dropped in the opposite order they are defined
+    let mut vc_container = Vec::new();
+    let mut job = Vec::new();
+    let mut app_group = AppGroup::new();
+    for i in 0..ncases {
+        let id = i;
+        let (start_ts, job_spec) = job_trace
+            .as_ref()
+            .map(|job_trace| {
+                let record = job_trace.records[id].clone();
+                let start_ts = record.ts * 1_000_000;
+                debug!("record: {:?}", record);
+                let job_spec = JobSpec::new(
+                    record.num_map * opt.num_map,
+                    record.num_reduce * opt.num_reduce,
+                    ShufflePattern::FromTrace(Box::new(record)),
+                );
+                (start_ts, job_spec)
+            })
+            .unwrap();
+
+        let vcluster = brain
+            .provision(
+                job_spec.num_map + job_spec.num_reduce,
+                PlacementStrategy::Random,
+            )
+            .unwrap();
+
+        vc_container.push(vcluster);
+        job.push((start_ts, job_spec));
+    }
+
+    for i in 0..ncases {
+        let seed = i as _;
+        let (start_ts, job_spec) = job.get(i).unwrap();
+        let mut app = Box::new(MapReduceApp::new(
+            job_spec,
+            vc_container.get(i).unwrap(),
+            MapperPlacementPolicy::Greedy,
+            policy,
+        ));
+        app.start(seed);
+        app_group.add(*start_ts, app);
+    }
+
+    let mut simulator = Simulator::new((**brain.cluster()).clone());
+    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    info!("all job completion time: {:?}", all_jct.unwrap().to_dura());
 }
 
 fn run_experiments(
@@ -83,7 +162,7 @@ fn run_experiments(
                     JobSpec::new(
                         record.num_map * opt.num_map,
                         record.num_reduce * opt.num_reduce,
-                        ShuffleDist::FromTrace(Box::new(record)),
+                        ShufflePattern::FromTrace(Box::new(record)),
                     )
                 } else {
                     JobSpec::new(opt.num_map, opt.num_reduce, opt.shuffle.clone())
@@ -93,14 +172,14 @@ fn run_experiments(
 
                 task::spawn(async move {
                     info!("testcase: {}", id);
-                    let output = run_map_reduce(&cluster, &job_spec, policy, id as _);
-                    let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+                    let jct = run_map_reduce(&cluster, &job_spec, policy, id as _);
+                    // let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
                     info!(
                         "{:?}, job_finish_time: {:?}",
                         policy,
-                        time.unwrap().to_dura()
+                        jct.unwrap().to_dura()
                     );
-                    Some((i, time.unwrap()))
+                    Some((i, jct.unwrap()))
                 })
             })
         })

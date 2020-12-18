@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
 use crate::bandwidth::BandwidthTrait;
 use crate::cluster::{Cluster, Node, NodeIx, NodeType, Topology, VirtCluster};
+use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
 use thiserror::Error;
 
@@ -29,8 +30,10 @@ pub enum PlacementStrategy {
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("not enough empty host available, cannot allocate")]
-    NoHost,
+    #[error("not enough empty host available, available: {0}, requested: {1}")]
+    NoHost(usize, usize),
+    #[error("invalid host name: {0}")]
+    InvalidHostName(String),
 }
 
 impl Brain {
@@ -84,10 +87,10 @@ impl Brain {
         strategy: PlacementStrategy,
     ) -> Result<VirtCluster, Error> {
         if self.used.len() + nhosts >= self.cluster.num_hosts() {
-            return Err(Error::NoHost);
+            return Err(Error::NoHost(self.cluster.num_hosts(), nhosts));
         }
 
-        let inner = match strategy {
+        let (inner, virt_to_phys) = match strategy {
             PlacementStrategy::Compact => self.place_compact(nhosts),
             PlacementStrategy::Spread => unimplemented!(),
             PlacementStrategy::Random => self.place_random(nhosts),
@@ -95,13 +98,16 @@ impl Brain {
 
         Ok(VirtCluster {
             inner,
-            phys_cluster: &self.cluster,
+            virt_to_phys,
         })
     }
 
-    fn place_random(&self, nhosts: usize) -> Cluster {
+    fn place_random(&self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         use crate::RNG;
         use rand::seq::IteratorRandom;
+
+        let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
+        let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
 
         let mut inner = Cluster::new();
         let root = "virtual_cloud";
@@ -118,29 +124,39 @@ impl Brain {
 
         assert_eq!(alloced_hosts.len(), nhosts);
 
-        let mut selected_tor: HashSet<NodeIx> = HashSet::default();
+        // let mut selected_tor: HashSet<NodeIx> = HashSet::default();
         for host_ix in alloced_hosts {
-            let n = &self.cluster[host_ix];
             let uplink_ix = self.cluster.get_uplink(host_ix);
             let tor_ix = self.cluster.get_target(uplink_ix);
-            let tor = &self.cluster[tor_ix];
 
-            if !selected_tor.contains(&tor_ix) {
+            if !tor_alloc.contains_key(&tor_ix) {
                 // new ToR in virtual cluster
-                inner.add_node(Node::new(&tor.name, 2, NodeType::Switch));
-                inner.add_link_by_name(root, &tor.name, 0.gbps());
-                selected_tor.insert(tor_ix);
+                let tor_name = format!("tor_{}", tor_alloc.len());
+                inner.add_node(Node::new(&tor_name, 2, NodeType::Switch));
+                inner.add_link_by_name(root, &tor_name, 0.gbps());
+                tor_alloc.insert(tor_ix, tor_name);
             }
 
+            let host_len = host_alloc.len();
+            let host_name = host_alloc
+                .entry(host_ix)
+                .or_insert(format!("host_{}", host_len));
+
             // connect the host to the ToR
-            inner.add_node(Node::new(&n.name, 3, NodeType::Host));
-            inner.add_link_by_name(&tor.name, &n.name, 0.gbps());
+            inner.add_node(Node::new(host_name, 3, NodeType::Host));
+            inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
         }
 
-        inner
+        let virt_to_phys = host_alloc
+            .into_iter()
+            .chain(tor_alloc)
+            .map(|(k, v)| (v, self.cluster[k].name.clone()))
+            .collect();
+
+        (inner, virt_to_phys)
     }
 
-    fn place_compact(&self, nhosts: usize) -> Cluster {
+    fn place_compact(&self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         // Vec<(slots, tor_ix)>
         let root = "virtual_cloud";
 
@@ -161,15 +177,21 @@ impl Brain {
             .collect();
         tors.sort_by_key(|x| x.0);
 
+        let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
+        let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
+
         let mut allocated = 0;
         let mut inner = Cluster::new();
         inner.add_node(Node::new(root, 1, NodeType::Switch));
 
         for (w, tor_ix) in tors.into_iter().rev() {
-            let tor = &self.cluster[tor_ix];
-            assert_eq!(tor.depth, 2); // this doesn't have to be true
-            inner.add_node(Node::new(&tor.name, 2, NodeType::Switch));
-            inner.add_link_by_name(root, &tor.name, 0.gbps());
+            let tor_len = tor_alloc.len();
+            let tor_name = tor_alloc
+                .entry(tor_ix)
+                .or_insert(format!("tor_{}", tor_len));
+
+            inner.add_node(Node::new(tor_name, 2, NodeType::Switch));
+            inner.add_link_by_name(root, tor_name, 0.gbps());
             let mut to_pick = w.min(nhosts - allocated);
 
             // traverse the tor and pick up w.min(nhosts) nodes
@@ -181,8 +203,15 @@ impl Brain {
                 if !self.used.contains(&host_ix) {
                     let n = &self.cluster[host_ix];
                     assert_eq!(n.depth, 3); // this doesn't have to be true
-                    inner.add_node(Node::new(&n.name, 3, NodeType::Host));
-                    inner.add_link_by_name(&tor.name, &n.name, 0.gbps());
+
+                    // allocate a new name, make sure host_id is continuous and start from 0
+                    let host_len = host_alloc.len();
+                    let host_name = host_alloc
+                        .entry(host_ix)
+                        .or_insert(format!("host_{}", host_len));
+
+                    inner.add_node(Node::new(host_name, 3, NodeType::Host));
+                    inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
                     to_pick -= 1;
                     allocated += 1;
                 }
@@ -193,6 +222,12 @@ impl Brain {
             }
         }
 
-        inner
+        let virt_to_phys = host_alloc
+            .into_iter()
+            .chain(tor_alloc)
+            .map(|(k, v)| (v, self.cluster[k].name.clone()))
+            .collect();
+
+        (inner, virt_to_phys)
     }
 }

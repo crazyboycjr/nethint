@@ -3,7 +3,9 @@ Here's the plan
 - Brain -> Cloud controller, VM allocator
 - VirtCluster
 - Sampler
-- NetHint
+- NetHint (3-level)
+- Allreduce Example
+- Plink
 -[o] Flow
 -[o] Trace
 -[o] Event
@@ -13,8 +15,6 @@ Here's the plan
 -[o] Cluster, physical topology
 - BackgroundFlow
 - MapReduce Example
-- Allreduce Example
-
 
 
 ```

@@ -1,6 +1,6 @@
 use crate::{
     app::run_map_reduce, argument::Opt, trace::JobTrace, JobSpec, ReducerPlacementPolicy,
-    ShuffleDist,
+    ShufflePattern,
 };
 use async_std::task;
 use futures::stream::StreamExt;
@@ -47,7 +47,7 @@ pub fn run_experiments(opt: &Opt, cluster: Arc<Cluster>) -> Option<Vec<(usize, J
                         let job_spec = JobSpec::new(
                             record.num_map * opt.num_map,
                             record.num_reduce * opt.num_reduce,
-                            ShuffleDist::FromTrace(Box::new(record)),
+                            ShufflePattern::FromTrace(Box::new(record)),
                         );
                         (ts, job_spec)
                     })
@@ -58,7 +58,8 @@ pub fn run_experiments(opt: &Opt, cluster: Arc<Cluster>) -> Option<Vec<(usize, J
                 task::spawn(async move {
                     info!("testcase: {}", id);
                     let output = run_map_reduce(&cluster, &job_spec, policy, id as _);
-                    let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+                    // let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+                    let time = Some(0);
                     info!(
                         "{:?}, job_finish_time: {:?}",
                         policy,

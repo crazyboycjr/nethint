@@ -1,40 +1,60 @@
 use crate::{
-    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, MapperScheduler, PlaceMapper,
-    PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShuffleDist,
+    mapper::{MapperPlacementPolicy, RandomMapperScheduler, TraceMapperScheduler},
+    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
+    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
 };
 use log::info;
 use nethint::{
     app::{AppEvent, Application, Replayer},
-    cluster::Cluster,
+    cluster::{Cluster, Topology},
     simulator::{Event, Executor, Simulator},
-    Flow, Trace, TraceRecord,
+    Duration, Flow, Trace, TraceRecord,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 
 pub struct MapReduceApp<'c> {
     job_spec: &'c JobSpec,
-    cluster: &'c Cluster,
+    cluster: &'c dyn Topology,
+    mapper_place_policy: MapperPlacementPolicy,
     reducer_place_policy: ReducerPlacementPolicy,
     replayer: Replayer,
+    jct: Option<Duration>,
 }
 
 impl<'c> MapReduceApp<'c> {
-    fn new(
+    pub fn new(
         job_spec: &'c JobSpec,
-        cluster: &'c Cluster,
+        cluster: &'c dyn Topology,
+        mapper_place_policy: MapperPlacementPolicy,
         reducer_place_policy: ReducerPlacementPolicy,
     ) -> Self {
         let trace = Trace::new();
         MapReduceApp {
             job_spec,
             cluster,
+            mapper_place_policy,
             reducer_place_policy,
             replayer: Replayer::new(trace),
+            jct: None,
         }
     }
 
-    fn place_map(&self, seed: u64) -> Placement {
-        let mut map_scheduler = MapperScheduler::new(seed);
+    pub fn start(&mut self, seed: u64) {
+        let shuffle = self.generate_shuffle(seed);
+        info!("shuffle: {:?}", shuffle);
+        let mappers = self.place_map();
+        let reducers = self.place_reduce(&mappers, &shuffle);
+        self.shuffle(shuffle, mappers, reducers);
+    }
+
+    fn place_map(&self) -> Placement {
+        let mut map_scheduler: Box<dyn PlaceMapper> = match self.mapper_place_policy {
+            MapperPlacementPolicy::Random(seed) => Box::new(RandomMapperScheduler::new(seed)),
+            MapperPlacementPolicy::FromTrace(ref record) => {
+                Box::new(TraceMapperScheduler::new(record.clone()))
+            }
+            MapperPlacementPolicy::Greedy => unimplemented!(),
+        };
         let mappers = map_scheduler.place(self.cluster, &self.job_spec);
         info!("mappers: {:?}", mappers);
         mappers
@@ -52,7 +72,7 @@ impl<'c> MapReduceApp<'c> {
         reducers
     }
 
-    fn start(&mut self, shuffle: Shuffle, mappers: Placement, reducers: Placement) {
+    fn shuffle(&mut self, shuffle: Shuffle, mappers: Placement, reducers: Placement) {
         // reinitialize replayer with new trace
         let mut trace = Trace::new();
         for i in 0..self.job_spec.num_map {
@@ -71,20 +91,20 @@ impl<'c> MapReduceApp<'c> {
         let n = self.job_spec.num_map;
         let m = self.job_spec.num_reduce;
         let mut pairs = vec![vec![0; m]; n];
-        match &self.job_spec.shuffle_dist {
-            &ShuffleDist::Uniform(n) => {
+        match &self.job_spec.shuffle_pat {
+            &ShufflePattern::Uniform(n) => {
                 pairs.iter_mut().for_each(|v| {
                     v.iter_mut().for_each(|i| *i = rng.gen_range(0, n as usize));
                 });
             }
-            &ShuffleDist::Zipf(n, s) => {
+            &ShufflePattern::Zipf(n, s) => {
                 let zipf = zipf::ZipfDistribution::new(1000, s).unwrap();
                 pairs.iter_mut().for_each(|v| {
                     v.iter_mut()
                         .for_each(|i| *i = n as usize * zipf.sample(&mut rng) / 10);
                 });
             }
-            ShuffleDist::FromTrace(record) => {
+            ShufflePattern::FromTrace(record) => {
                 assert_eq!(m % record.num_reduce, 0);
                 let k = m / record.num_reduce;
                 for i in 0..n {
@@ -99,8 +119,16 @@ impl<'c> MapReduceApp<'c> {
 }
 
 impl<'c> Application for MapReduceApp<'c> {
+    type Output = Option<Duration>;
     fn on_event(&mut self, event: AppEvent) -> Event {
+        if let AppEvent::FlowComplete(ref flows) = &event {
+            let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
+            self.jct = self.jct.iter().cloned().chain(fct_cur).max();
+        }
         self.replayer.on_event(event)
+    }
+    fn answer(&mut self) -> Self::Output {
+        self.jct
     }
 }
 
@@ -109,15 +137,21 @@ pub fn run_map_reduce(
     job_spec: &JobSpec,
     reduce_place_policy: ReducerPlacementPolicy,
     seed: u64,
-) -> Trace {
+) -> Option<Duration> {
     let mut simulator = Simulator::new(cluster.clone());
 
-    let mut app = Box::new(MapReduceApp::new(job_spec, cluster, reduce_place_policy));
-    let shuffle = app.generate_shuffle(seed);
-    info!("shuffle: {:?}", shuffle);
-    let mappers = app.place_map(seed);
-    let reducers = app.place_reduce(&mappers, &shuffle);
-    app.start(shuffle, mappers, reducers);
+    let map_place_policy = if let ShufflePattern::FromTrace(ref record) = job_spec.shuffle_pat {
+        MapperPlacementPolicy::FromTrace((**record).clone())
+    } else {
+        MapperPlacementPolicy::Random(seed)
+    };
+    let mut app = Box::new(MapReduceApp::new(
+        job_spec,
+        cluster,
+        map_place_policy,
+        reduce_place_policy,
+    ));
+    app.start(seed);
 
     simulator.run_with_appliation(app)
 }

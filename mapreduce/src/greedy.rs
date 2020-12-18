@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use log::debug;
 
-use nethint::cluster::{Cluster, Topology, NodeIx};
+use nethint::cluster::{Topology, NodeIx};
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle};
 
@@ -15,7 +15,7 @@ impl GreedyReducerScheduler {
     }
 }
 
-fn find_best_node(cluster: &Cluster, denylist: &HashSet<NodeIx>, rack: usize) -> NodeIx {
+fn find_best_node(cluster: &dyn Topology, denylist: &HashSet<NodeIx>, rack: usize) -> NodeIx {
     let tor_ix = cluster.get_node_index(&format!("tor_{}", rack));
     let downlink = cluster
         .get_downlinks(tor_ix)
@@ -30,7 +30,7 @@ fn find_best_node(cluster: &Cluster, denylist: &HashSet<NodeIx>, rack: usize) ->
 impl PlaceReducer for GreedyReducerScheduler {
     fn place(
         &mut self,
-        cluster: &Cluster,
+        cluster: &dyn Topology,
         job_spec: &JobSpec,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,

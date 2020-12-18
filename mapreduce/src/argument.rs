@@ -1,7 +1,7 @@
 use structopt::StructOpt;
 use nethint::architecture::TopoArgs;
 
-use crate::{JobSpec, ShuffleDist};
+use crate::{JobSpec, ShufflePattern};
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce", about = "MapReduce Application")]
@@ -17,11 +17,11 @@ pub struct Opt {
     /// Probability distribution of shuffle flows, examples: uniform_1000000, zipf_1000000_0.5
     #[structopt(
         short = "s",
-        long = "shuffle",
+        long = "shuffle-pattern",
         name = "distribution",
         default_value = "uniform_1000000"
     )]
-    pub shuffle: ShuffleDist,
+    pub shuffle: ShufflePattern,
 
     /// Number of map tasks. When using trace, this parameter means map scale factor
     #[structopt(short = "m", long = "map", default_value = "4")]
@@ -54,6 +54,10 @@ pub struct Opt {
     /// Inspect the trace file, see the overlap among multiple jobs
     #[structopt(long = "inspect")]
     pub inspect: bool,
+
+    /// Multi-tenant
+    #[structopt(long = "multitenant")]
+    pub multitenant: bool,
 }
 
 // impl Opt {

@@ -21,11 +21,13 @@ pub type LinkIxIter = EdgeIndices;
 
 use std::ops::{Index, IndexMut};
 
-pub trait Topology: Index<NodeIx> + Index<LinkIx> + IndexMut<LinkIx> {
+pub trait Topology:
+    Index<NodeIx, Output = Node> + Index<LinkIx, Output = Link> + IndexMut<LinkIx>
+{
     fn get_node_index(&self, name: &str) -> NodeIx;
-    fn get_target(&self, id: LinkIx) -> NodeIx;
-    fn get_uplink(&self, id: NodeIx) -> LinkIx;
-    fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx>;
+    fn get_target(&self, ix: LinkIx) -> NodeIx;
+    fn get_uplink(&self, ix: NodeIx) -> LinkIx;
+    fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx>;
     fn all_links(&self) -> EdgeIndices;
     fn resolve_route(
         &self,
@@ -37,13 +39,79 @@ pub trait Topology: Index<NodeIx> + Index<LinkIx> + IndexMut<LinkIx> {
     fn num_switches(&self) -> usize;
 }
 
+/// A VirtCluster is a subgraph of the original physical cluster.
+/// It works just as a Cluster.
+/// Ideally, it should be able to translate the virtual node to a physical node in the physical cluster.
+/// In our implementation, we just maintain the mapping of node name for the translation.
 #[derive(Debug, Clone)]
-pub struct VirtCluster<'c> {
+pub struct VirtCluster {
     pub(crate) inner: Cluster,
-    pub(crate) phys_cluster: &'c Cluster,
+    pub(crate) virt_to_phys: HashMap<String, String>,
 }
 
-impl<'c> VirtCluster<'c> {
+impl Index<LinkIx> for VirtCluster {
+    type Output = Link;
+    fn index(&self, index: LinkIx) -> &Self::Output {
+        &self.inner[index]
+    }
+}
+
+impl Index<NodeIx> for VirtCluster {
+    type Output = Node;
+    fn index(&self, index: NodeIx) -> &Self::Output {
+        &self.inner[index]
+    }
+}
+
+impl IndexMut<LinkIx> for VirtCluster {
+    fn index_mut(&mut self, index: LinkIx) -> &mut Self::Output {
+        &mut self.inner[index]
+    }
+}
+
+impl Topology for VirtCluster {
+    #[inline]
+    fn get_node_index(&self, name: &str) -> NodeIx {
+        self.inner.get_node_index(name)
+    }
+
+    #[inline]
+    fn get_target(&self, ix: LinkIx) -> NodeIx {
+        self.inner.get_target(ix)
+    }
+
+    #[inline]
+    fn get_uplink(&self, ix: NodeIx) -> LinkIx {
+        self.inner.get_uplink(ix)
+    }
+
+    #[inline]
+    fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx> {
+        self.inner.get_downlinks(ix)
+    }
+
+    fn all_links(&self) -> EdgeIndices {
+        self.inner.all_links()
+    }
+
+    fn resolve_route(
+        &self,
+        src: &str,
+        dst: &str,
+        load_balancer: Option<Box<dyn LoadBalancer>>,
+    ) -> Route {
+        self.inner.resolve_route(src, dst, load_balancer)
+    }
+
+    #[inline]
+    fn num_hosts(&self) -> usize {
+        self.inner.num_hosts()
+    }
+
+    #[inline]
+    fn num_switches(&self) -> usize {
+        self.inner.num_switches()
+    }
 }
 
 /// The network topology and hardware configuration of the cluster.
@@ -143,20 +211,20 @@ impl Topology for Cluster {
     }
 
     #[inline]
-    fn get_target(&self, id: LinkIx) -> NodeIx {
-        self.graph.raw_edges()[id.index()].target()
+    fn get_target(&self, ix: LinkIx) -> NodeIx {
+        self.graph.raw_edges()[ix.index()].target()
     }
 
     #[inline]
-    fn get_uplink(&self, id: NodeIx) -> LinkIx {
-        self.graph[id]
+    fn get_uplink(&self, ix: NodeIx) -> LinkIx {
+        self.graph[ix]
             .parent
-            .unwrap_or_else(|| panic!("invalid index: {:?}", id))
+            .unwrap_or_else(|| panic!("invalid index: {:?}", ix))
     }
 
     #[inline]
-    fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx> {
-        self.graph[id].children.iter()
+    fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx> {
+        self.graph[ix].children.iter()
     }
 
     fn all_links(&self) -> EdgeIndices {
@@ -208,10 +276,12 @@ impl Topology for Cluster {
         route
     }
 
+    #[inline]
     fn num_hosts(&self) -> usize {
         self.num_hosts
     }
 
+    #[inline]
     fn num_switches(&self) -> usize {
         self.graph.node_count() - self.num_hosts
     }

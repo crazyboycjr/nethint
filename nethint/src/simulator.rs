@@ -17,7 +17,7 @@ type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 /// The simulator driver API
 pub trait Executor<'a> {
     fn run_with_trace(&mut self, trace: Trace) -> Trace;
-    fn run_with_appliation(&mut self, app: Box<dyn Application + 'a>) -> Trace;
+    fn run_with_appliation<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
 }
 
 /// The flow-level simulator.
@@ -152,10 +152,9 @@ impl<'a> Executor<'a> for Simulator {
         self.run_with_appliation(app)
     }
 
-    fn run_with_appliation(&mut self, mut app: Box<dyn Application + 'a>) -> Trace {
+    fn run_with_appliation<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
         // let's write some conceptual code
         let start = std::time::Instant::now();
-        let mut output = Trace::new();
         let mut event = app.on_event(AppEvent::AppStart);
         assert!(matches!(event, Event::FlowArrive(_)));
 
@@ -176,10 +175,7 @@ impl<'a> Executor<'a> for Simulator {
                         comp_flows
                     );
 
-                    // 3. add completed flows to trace output
-                    output.recs.append(&mut comp_flows.clone());
-
-                    // 4. nofity the application with this flow
+                    // 3. nofity the application with this flow
                     app.on_event(AppEvent::FlowComplete(comp_flows))
                 }
                 Event::AppFinish => {
@@ -193,8 +189,6 @@ impl<'a> Executor<'a> for Simulator {
                         comp_flows
                     );
 
-                    output.recs.append(&mut comp_flows.clone());
-
                     app.on_event(AppEvent::FlowComplete(comp_flows))
                 }
             }
@@ -203,7 +197,8 @@ impl<'a> Executor<'a> for Simulator {
         let end = std::time::Instant::now();
 
         debug!("sim_time: {:?}", end - start);
-        output
+        // output
+        app.answer()
     }
 }
 
