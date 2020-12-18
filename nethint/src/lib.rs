@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use rand::{rngs::StdRng, SeedableRng};
 use std::cell::RefCell;
-use rand::{SeedableRng, rngs::StdRng};
+use std::rc::Rc;
 
 const RAND_SEED: u64 = 0;
 thread_local! {
@@ -18,6 +18,8 @@ pub mod simulator;
 
 pub mod architecture;
 pub mod brain;
+
+pub mod hint;
 
 // nanoseconds
 pub type Timestamp = u64;

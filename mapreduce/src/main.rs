@@ -11,16 +11,17 @@ use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
     cluster::Cluster,
-    simulator::{Simulator, Executor},
+    simulator::{Executor, Simulator},
     ToStdDuration,
 };
 
 extern crate mapreduce;
 use mapreduce::{
     app::{run_map_reduce, MapReduceApp},
-    mapper::MapperPlacementPolicy,
     argument::Opt,
-    inspect, plot,
+    inspect,
+    mapper::MapperPlacementPolicy,
+    plot,
     trace::JobTrace,
     JobSpec, ReducerPlacementPolicy, ShufflePattern,
 };

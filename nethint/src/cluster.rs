@@ -37,6 +37,7 @@ pub trait Topology:
     ) -> Route;
     fn num_hosts(&self) -> usize;
     fn num_switches(&self) -> usize;
+    fn translate(&self, vname: &str) -> String;
 }
 
 /// A VirtCluster is a subgraph of the original physical cluster.
@@ -111,6 +112,11 @@ impl Topology for VirtCluster {
     #[inline]
     fn num_switches(&self) -> usize {
         self.inner.num_switches()
+    }
+
+    #[inline]
+    fn translate(&self, vname: &str) -> String {
+        self.virt_to_phys[vname].clone()
     }
 }
 
@@ -284,6 +290,11 @@ impl Topology for Cluster {
     #[inline]
     fn num_switches(&self) -> usize {
         self.graph.node_count() - self.num_hosts
+    }
+
+    #[inline]
+    fn translate(&self, vname: &str) -> String {
+        vname.to_owned()
     }
 }
 

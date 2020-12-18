@@ -28,8 +28,7 @@ pub struct Bandwidth {
     unit: BandwidthUnit,
 }
 
-impl Bandwidth
-{
+impl Bandwidth {
     #[inline]
     pub fn val(&self) -> u64 {
         self.val
@@ -59,7 +58,12 @@ impl BandwidthTrait for Bandwidth {
 
 impl std::fmt::Display for Bandwidth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.val as f64 / self.unit as u64 as f64, self.unit)
+        write!(
+            f,
+            "{} {}",
+            self.val as f64 / self.unit as u64 as f64,
+            self.unit
+        )
     }
 }
 
@@ -173,7 +177,10 @@ mod tests {
         assert_eq!(format!("{}", c.kbps()), "9500000 Kb/s");
         assert_eq!(format!("{}", (c - b).mbps()), "9489.8445 Mb/s");
         assert_eq!(format!("{}", (c + b).mbps() / 1000), "9.510155 Mb/s");
-        assert_eq!(format!("{}", (c - b).gbps() * 1000 + a * 1000), "9490.8445 Gb/s");
+        assert_eq!(
+            format!("{}", (c - b).gbps() * 1000 + a * 1000),
+            "9490.8445 Gb/s"
+        );
 
         let d: Bandwidth = c / 1000;
         assert_eq!(format!("{}", d.mbps()), "9.5 Mb/s");

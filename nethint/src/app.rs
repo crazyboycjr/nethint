@@ -97,7 +97,7 @@ where
                     let app_id: usize = r.flow.token.unwrap().into();
                     assert!(app_id < self.apps.len());
                     let mut f = r.clone();
-                    f.ts -= self.apps[app_id].0;  // f.ts -= start_off;
+                    f.ts -= self.apps[app_id].0; // f.ts -= start_off;
                     flows[app_id].push(f);
                 }
                 let mut new_flows = Vec::new();

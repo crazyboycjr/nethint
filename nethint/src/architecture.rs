@@ -1,6 +1,6 @@
-use structopt::StructOpt;
 use crate::bandwidth::Bandwidth;
 use crate::cluster::{Cluster, Node, NodeType};
+use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
 pub enum TopoArgs {

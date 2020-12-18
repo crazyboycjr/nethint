@@ -1,5 +1,5 @@
-use crate::{GreedyReducerScheduler, JobSpec, PlaceMapper, Placement, ShufflePattern, trace::Record};
-use nethint::cluster::Topology;
+use crate::{trace::Record, JobSpec, PlaceMapper, Placement, ShufflePattern};
+use nethint::{bandwidth::Bandwidth, cluster::Topology};
 use rand::{self, rngs::StdRng, seq::SliceRandom, SeedableRng};
 use std::collections::HashSet;
 
@@ -86,11 +86,34 @@ impl PlaceMapper for TraceMapperScheduler {
     }
 }
 
-pub struct GreedyMapperScheduler {
+#[derive(Debug, Default)]
+pub struct GreedyMapperScheduler {}
+
+impl GreedyMapperScheduler {
+    pub fn new() -> Self {
+        Default::default()
+    }
 }
 
-impl PlaceMapper for GreedyReducerScheduler {
+impl PlaceMapper for GreedyMapperScheduler {
     fn place(&mut self, vcluster: &dyn Topology, job_spec: &JobSpec) -> Placement {
-        Placement(Vec::new())
+        let mut bw_host: Vec<(Bandwidth, String)> = (0..vcluster.num_hosts())
+            .map(|i| {
+                let host_name = format!("host_{}", i);
+                let host_ix = vcluster.get_node_index(&host_name);
+                let bw = vcluster[vcluster.get_uplink(host_ix)].bandwidth;
+                (bw, host_name)
+            })
+            .collect();
+
+        bw_host.sort_by_key(|x| std::cmp::Reverse(x.0));
+
+        let hosts: Vec<_> = bw_host
+            .into_iter()
+            .map(|x| x.1)
+            .take(job_spec.num_map)
+            .collect();
+
+        Placement(hosts)
     }
 }

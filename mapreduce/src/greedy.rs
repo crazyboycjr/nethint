@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use log::debug;
 
-use nethint::cluster::{Topology, NodeIx};
+use nethint::cluster::{NodeIx, Topology};
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle};
 
@@ -100,7 +100,8 @@ impl PlaceReducer for GreedyReducerScheduler {
                         // The same case as it happens in GeneticAlgorithm, we should also take
                         // the case that the host becomes bottleneck into consideration
                         // est += (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
-                        let rack_bottleneck = (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
+                        let rack_bottleneck =
+                            (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
                         let host_bottleneck = shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64;
                         est += rack_bottleneck.max(host_bottleneck);
                         traffic += shuffle_pairs.0[mi][j];

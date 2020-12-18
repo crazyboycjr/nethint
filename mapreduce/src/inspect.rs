@@ -57,19 +57,18 @@ pub fn run_experiments(opt: &Opt, cluster: Arc<Cluster>) -> Option<Vec<(usize, J
 
                 task::spawn(async move {
                     info!("testcase: {}", id);
-                    let output = run_map_reduce(&cluster, &job_spec, policy, id as _);
+                    let jct = run_map_reduce(&cluster, &job_spec, policy, id as _);
                     // let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
-                    let time = Some(0);
                     info!(
                         "{:?}, job_finish_time: {:?}",
                         policy,
-                        time.unwrap().to_dura()
+                        jct.unwrap().to_dura()
                     );
                     Some((
                         i,
                         JobLifetime {
                             start: start_ts * 1_000_000,
-                            dura: time.unwrap(),
+                            dura: jct.unwrap(),
                         },
                     ))
                 })

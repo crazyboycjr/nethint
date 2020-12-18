@@ -1,5 +1,5 @@
-use structopt::StructOpt;
 use nethint::architecture::TopoArgs;
+use structopt::StructOpt;
 
 use crate::{JobSpec, ShufflePattern};
 

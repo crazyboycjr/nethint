@@ -1,5 +1,7 @@
 use crate::{
-    mapper::{MapperPlacementPolicy, RandomMapperScheduler, TraceMapperScheduler},
+    mapper::{
+        GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, TraceMapperScheduler,
+    },
     GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
     RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
 };
@@ -53,7 +55,7 @@ impl<'c> MapReduceApp<'c> {
             MapperPlacementPolicy::FromTrace(ref record) => {
                 Box::new(TraceMapperScheduler::new(record.clone()))
             }
-            MapperPlacementPolicy::Greedy => unimplemented!(),
+            MapperPlacementPolicy::Greedy => Box::new(GreedyMapperScheduler::new()),
         };
         let mappers = map_scheduler.place(self.cluster, &self.job_spec);
         info!("mappers: {:?}", mappers);
@@ -77,7 +79,9 @@ impl<'c> MapReduceApp<'c> {
         let mut trace = Trace::new();
         for i in 0..self.job_spec.num_map {
             for j in 0..self.job_spec.num_reduce {
-                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
+                let phys_map = self.cluster.translate(&mappers.0[i]);
+                let phys_reduce = self.cluster.translate(&reducers.0[j]);
+                let flow = Flow::new(shuffle.0[i][j], &phys_map, &phys_reduce, None);
                 let rec = TraceRecord::new(0, flow, None);
                 trace.add_record(rec);
             }

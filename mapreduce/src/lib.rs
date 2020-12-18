@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use nethint::cluster::{Cluster, Topology};
+use nethint::cluster::Topology;
 use rand::{self, rngs::StdRng, SeedableRng};
 
 pub mod random;
