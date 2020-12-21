@@ -1,2 +1,2 @@
 [workspace]
-members = ["nethint", "logging", "mapreduce"]
+members = ["nethint", "logging", "allreduce"]
