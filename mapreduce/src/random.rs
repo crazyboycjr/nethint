@@ -1,6 +1,6 @@
 use rand::{self, seq::SliceRandom};
 
-use nethint::cluster::{Cluster, Topology};
+use nethint::cluster::Topology;
 
 use crate::{JobSpec, PlaceReducer, Placement, Shuffle, RNG};
 
@@ -16,7 +16,7 @@ impl RandomReducerScheduler {
 impl PlaceReducer for RandomReducerScheduler {
     fn place(
         &mut self,
-        cluster: &Cluster,
+        cluster: &dyn Topology,
         job_spec: &JobSpec,
         mapper: &Placement,
         _shuffle_pairs: &Shuffle,

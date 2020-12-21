@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use log::debug;
 
-use nethint::cluster::{Cluster, Topology, NodeIx};
+use nethint::cluster::{NodeIx, Topology};
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle};
 
@@ -15,7 +15,7 @@ impl GreedyReducerScheduler {
     }
 }
 
-fn find_best_node(cluster: &Cluster, denylist: &HashSet<NodeIx>, rack: usize) -> NodeIx {
+fn find_best_node(cluster: &dyn Topology, denylist: &HashSet<NodeIx>, rack: usize) -> NodeIx {
     let tor_ix = cluster.get_node_index(&format!("tor_{}", rack));
     let downlink = cluster
         .get_downlinks(tor_ix)
@@ -30,7 +30,7 @@ fn find_best_node(cluster: &Cluster, denylist: &HashSet<NodeIx>, rack: usize) ->
 impl PlaceReducer for GreedyReducerScheduler {
     fn place(
         &mut self,
-        cluster: &Cluster,
+        cluster: &dyn Topology,
         job_spec: &JobSpec,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
@@ -100,7 +100,8 @@ impl PlaceReducer for GreedyReducerScheduler {
                         // The same case as it happens in GeneticAlgorithm, we should also take
                         // the case that the host becomes bottleneck into consideration
                         // est += (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
-                        let rack_bottleneck = (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
+                        let rack_bottleneck =
+                            (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
                         let host_bottleneck = shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64;
                         est += rack_bottleneck.max(host_bottleneck);
                         traffic += shuffle_pairs.0[mi][j];

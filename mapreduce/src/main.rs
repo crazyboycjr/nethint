@@ -8,19 +8,22 @@ use log::{debug, info};
 use structopt::StructOpt;
 
 use nethint::{
-    bandwidth::BandwidthTrait,
-    cluster::{Cluster, Topology},
+    app::AppGroup,
+    brain::{Brain, PlacementStrategy},
+    cluster::Cluster,
+    simulator::{Executor, Simulator},
     ToStdDuration,
 };
 
 extern crate mapreduce;
 use mapreduce::{
-    app::run_map_reduce,
-    argument::{Opt, Topo},
-    inspect, plot, topology,
-    topology::make_asymmetric,
+    app::{run_map_reduce, MapReduceApp},
+    argument::Opt,
+    inspect,
+    mapper::MapperPlacementPolicy,
+    plot,
     trace::JobTrace,
-    JobSpec, ReducerPlacementPolicy, ShuffleDist,
+    JobSpec, ReducerPlacementPolicy, ShufflePattern,
 };
 
 fn main() {
@@ -29,31 +32,13 @@ fn main() {
     let opt = Opt::from_args();
     info!("Opts: {:#?}", opt);
 
-    let cluster = match opt.topo {
-        Topo::FatTree {
-            nports,
-            bandwidth,
-            oversub_ratio,
-        } => {
-            let cluster = topology::build_fatree_fake(nports, bandwidth.gbps(), oversub_ratio);
-            assert_eq!(cluster.num_hosts(), nports * nports * nports / 4);
-            cluster
-        }
-        Topo::Virtual {
-            nracks,
-            rack_size,
-            host_bw,
-            rack_bw,
-        } => topology::build_virtual_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
-    };
+    let mut brain = Brain::build_cloud(opt.topo.clone());
 
-    let cluster = Arc::new(if opt.asym {
-        make_asymmetric(cluster)
-    } else {
-        cluster
-    });
+    if opt.asym {
+        brain.make_asymmetric(0);
+    }
 
-    info!("cluster:\n{}", cluster.to_dot());
+    info!("cluster:\n{}", brain.cluster().to_dot());
 
     let policies = &[
         ReducerPlacementPolicy::Random,
@@ -62,7 +47,7 @@ fn main() {
     ];
 
     if opt.inspect {
-        let results = inspect::run_experiments(&opt, Arc::clone(&cluster));
+        let results = inspect::run_experiments(&opt, Arc::clone(&brain.cluster()));
         let mut segments = results.unwrap();
         segments.sort_by_key(|x| x.0);
         info!("inspect results: {:?}", segments);
@@ -74,9 +59,78 @@ fn main() {
         return;
     }
 
-    let results = run_experiments(&opt, Arc::clone(&cluster), policies);
+    if opt.multitenant {
+        run_experiments_multitenant(&opt, &mut brain);
+        return;
+    }
+
+    let results = run_experiments(&opt, Arc::clone(&brain.cluster()), policies);
 
     visualize(&opt, results).unwrap();
+}
+
+fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
+    let job_trace = opt.trace.as_ref().map(|p| {
+        JobTrace::from_path(p)
+            .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e))
+    });
+
+    let policy = ReducerPlacementPolicy::HierarchicalGreedy;
+
+    let ncases = std::cmp::min(
+        opt.ncases,
+        job_trace.as_ref().map(|v| v.count).unwrap_or(usize::MAX),
+    );
+
+    // values in a scope are dropped in the opposite order they are defined
+    let mut vc_container = Vec::new();
+    let mut job = Vec::new();
+    let mut app_group = AppGroup::new();
+    for i in 0..ncases {
+        let id = i;
+        let (start_ts, job_spec) = job_trace
+            .as_ref()
+            .map(|job_trace| {
+                let record = job_trace.records[id].clone();
+                let start_ts = record.ts * 1_000_000;
+                debug!("record: {:?}", record);
+                let job_spec = JobSpec::new(
+                    record.num_map * opt.num_map,
+                    record.num_reduce * opt.num_reduce,
+                    ShufflePattern::FromTrace(Box::new(record)),
+                );
+                (start_ts, job_spec)
+            })
+            .unwrap();
+
+        let vcluster = brain
+            .provision(
+                job_spec.num_map + job_spec.num_reduce,
+                PlacementStrategy::Random,
+            )
+            .unwrap();
+
+        vc_container.push(vcluster);
+        job.push((start_ts, job_spec));
+    }
+
+    for i in 0..ncases {
+        let seed = i as _;
+        let (start_ts, job_spec) = job.get(i).unwrap();
+        let mut app = Box::new(MapReduceApp::new(
+            job_spec,
+            vc_container.get(i).unwrap(),
+            MapperPlacementPolicy::Greedy,
+            policy,
+        ));
+        app.start(seed);
+        app_group.add(*start_ts, app);
+    }
+
+    let mut simulator = Simulator::new((**brain.cluster()).clone());
+    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    info!("all job completion time: {:?}", all_jct.unwrap().to_dura());
 }
 
 fn run_experiments(
@@ -109,7 +163,7 @@ fn run_experiments(
                     JobSpec::new(
                         record.num_map * opt.num_map,
                         record.num_reduce * opt.num_reduce,
-                        ShuffleDist::FromTrace(Box::new(record)),
+                        ShufflePattern::FromTrace(Box::new(record)),
                     )
                 } else {
                     JobSpec::new(opt.num_map, opt.num_reduce, opt.shuffle.clone())
@@ -119,14 +173,14 @@ fn run_experiments(
 
                 task::spawn(async move {
                     info!("testcase: {}", id);
-                    let output = run_map_reduce(&cluster, &job_spec, policy, id as _);
-                    let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
+                    let jct = run_map_reduce(&cluster, &job_spec, policy, id as _);
+                    // let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
                     info!(
                         "{:?}, job_finish_time: {:?}",
                         policy,
-                        time.unwrap().to_dura()
+                        jct.unwrap().to_dura()
                     );
-                    Some((i, time.unwrap()))
+                    Some((i, jct.unwrap()))
                 })
             })
         })

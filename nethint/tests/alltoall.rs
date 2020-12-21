@@ -1,8 +1,8 @@
 #[cfg(test)]
-
 use nethint::bandwidth::{Bandwidth, BandwidthTrait};
 use nethint::cluster::{Cluster, Node, NodeType};
-use nethint::{Executor, Flow, Simulator, Trace, TraceRecord};
+use nethint::simulator::{Executor, Simulator};
+use nethint::{Flow, Trace, TraceRecord};
 
 type Layer<'a> = &'a [Node];
 

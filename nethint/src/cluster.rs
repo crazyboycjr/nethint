@@ -1,12 +1,12 @@
 use fnv::FnvHashMap as HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+use lazy_static::lazy_static;
 use log::debug;
 use petgraph::{
     dot::Dot,
-    graph::{Graph, EdgeIndex, NodeIndex, EdgeIndices}
+    graph::{EdgeIndex, EdgeIndices, Graph, NodeIndex},
 };
-use lazy_static::lazy_static;
 
 use crate::bandwidth::Bandwidth;
 use crate::LoadBalancer;
@@ -19,11 +19,15 @@ pub type LinkIx = EdgeIndex;
 pub type NodeIx = NodeIndex;
 pub type LinkIxIter = EdgeIndices;
 
-pub trait Topology {
+use std::ops::{Index, IndexMut};
+
+pub trait Topology:
+    Index<NodeIx, Output = Node> + Index<LinkIx, Output = Link> + IndexMut<LinkIx>
+{
     fn get_node_index(&self, name: &str) -> NodeIx;
-    fn get_target(&self, id: LinkIx) -> NodeIx;
-    fn get_uplink(&self, id: NodeIx) -> LinkIx;
-    fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx>;
+    fn get_target(&self, ix: LinkIx) -> NodeIx;
+    fn get_uplink(&self, ix: NodeIx) -> LinkIx;
+    fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx>;
     fn all_links(&self) -> EdgeIndices;
     fn resolve_route(
         &self,
@@ -33,6 +37,87 @@ pub trait Topology {
     ) -> Route;
     fn num_hosts(&self) -> usize;
     fn num_switches(&self) -> usize;
+    fn translate(&self, vname: &str) -> String;
+}
+
+/// A VirtCluster is a subgraph of the original physical cluster.
+/// It works just as a Cluster.
+/// Ideally, it should be able to translate the virtual node to a physical node in the physical cluster.
+/// In our implementation, we just maintain the mapping of node name for the translation.
+#[derive(Debug, Clone)]
+pub struct VirtCluster {
+    pub(crate) inner: Cluster,
+    pub(crate) virt_to_phys: HashMap<String, String>,
+}
+
+impl Index<LinkIx> for VirtCluster {
+    type Output = Link;
+    fn index(&self, index: LinkIx) -> &Self::Output {
+        &self.inner[index]
+    }
+}
+
+impl Index<NodeIx> for VirtCluster {
+    type Output = Node;
+    fn index(&self, index: NodeIx) -> &Self::Output {
+        &self.inner[index]
+    }
+}
+
+impl IndexMut<LinkIx> for VirtCluster {
+    fn index_mut(&mut self, index: LinkIx) -> &mut Self::Output {
+        &mut self.inner[index]
+    }
+}
+
+impl Topology for VirtCluster {
+    #[inline]
+    fn get_node_index(&self, name: &str) -> NodeIx {
+        self.inner.get_node_index(name)
+    }
+
+    #[inline]
+    fn get_target(&self, ix: LinkIx) -> NodeIx {
+        self.inner.get_target(ix)
+    }
+
+    #[inline]
+    fn get_uplink(&self, ix: NodeIx) -> LinkIx {
+        self.inner.get_uplink(ix)
+    }
+
+    #[inline]
+    fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx> {
+        self.inner.get_downlinks(ix)
+    }
+
+    fn all_links(&self) -> EdgeIndices {
+        self.inner.all_links()
+    }
+
+    fn resolve_route(
+        &self,
+        src: &str,
+        dst: &str,
+        load_balancer: Option<Box<dyn LoadBalancer>>,
+    ) -> Route {
+        self.inner.resolve_route(src, dst, load_balancer)
+    }
+
+    #[inline]
+    fn num_hosts(&self) -> usize {
+        self.inner.num_hosts()
+    }
+
+    #[inline]
+    fn num_switches(&self) -> usize {
+        self.inner.num_switches()
+    }
+
+    #[inline]
+    fn translate(&self, vname: &str) -> String {
+        self.virt_to_phys[vname].clone()
+    }
 }
 
 /// The network topology and hardware configuration of the cluster.
@@ -56,10 +141,7 @@ impl Cluster {
             let name = n.name.clone();
             let node_idx = g.add_node(n);
             let old = node_map.insert(name.clone(), node_idx);
-            assert!(
-                old.is_none(),
-                format!("repeated key: {}", name)
-            );
+            assert!(old.is_none(), format!("repeated key: {}", name));
         });
         Cluster {
             graph: g,
@@ -76,17 +158,20 @@ impl Cluster {
         let name = node.name.clone();
         let node_idx = self.graph.add_node(node);
         let old = self.node_map.insert(name.clone(), node_idx);
-        assert!(
-            old.is_none(),
-            format!("repeated key: {}", name)
-        );
+        assert!(old.is_none(), format!("repeated key: {}", name));
         node_idx
     }
 
     #[inline]
     pub fn add_link_by_name(&mut self, parent: &str, child: &str, bw: Bandwidth) {
-        let &pnode = self.node_map.get(parent).unwrap_or_else(|| panic!("cannot find node with name: {}", parent));
-        let &cnode = self.node_map.get(child).unwrap_or_else(|| panic!("cannot find node with name: {}", child));
+        let &pnode = self
+            .node_map
+            .get(parent)
+            .unwrap_or_else(|| panic!("cannot find node with name: {}", parent));
+        let &cnode = self
+            .node_map
+            .get(child)
+            .unwrap_or_else(|| panic!("cannot find node with name: {}", child));
 
         let l1 = self.graph.add_edge(pnode, cnode, Link::new(bw));
         let l2 = self.graph.add_edge(cnode, pnode, Link::new(bw));
@@ -124,25 +209,28 @@ impl std::ops::IndexMut<LinkIx> for Cluster {
 impl Topology for Cluster {
     #[inline]
     fn get_node_index(&self, name: &str) -> NodeIx {
-        let &id = self.node_map
+        let &id = self
+            .node_map
             .get(name)
             .unwrap_or_else(|| panic!("cannot find node with name: {}", name));
         id
     }
 
     #[inline]
-    fn get_target(&self, id: LinkIx) -> NodeIx {
-        self.graph.raw_edges()[id.index()].target()
+    fn get_target(&self, ix: LinkIx) -> NodeIx {
+        self.graph.raw_edges()[ix.index()].target()
     }
 
     #[inline]
-    fn get_uplink(&self, id: NodeIx) -> LinkIx {
-        self.graph[id].parent.unwrap_or_else(|| panic!("invalid index: {:?}", id))
+    fn get_uplink(&self, ix: NodeIx) -> LinkIx {
+        self.graph[ix]
+            .parent
+            .unwrap_or_else(|| panic!("invalid index: {:?}", ix))
     }
 
     #[inline]
-    fn get_downlinks(&self, id: NodeIx) -> std::slice::Iter<LinkIx> {
-        self.graph[id].children.iter()
+    fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx> {
+        self.graph[ix].children.iter()
     }
 
     fn all_links(&self) -> EdgeIndices {
@@ -194,12 +282,19 @@ impl Topology for Cluster {
         route
     }
 
+    #[inline]
     fn num_hosts(&self) -> usize {
         self.num_hosts
     }
 
+    #[inline]
     fn num_switches(&self) -> usize {
         self.graph.node_count() - self.num_hosts
+    }
+
+    #[inline]
+    fn translate(&self, vname: &str) -> String {
+        vname.to_owned()
     }
 }
 
@@ -241,7 +336,7 @@ impl std::hash::Hash for Link {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum NodeType {
     Host,
     Switch,

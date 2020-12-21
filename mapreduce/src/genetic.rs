@@ -9,7 +9,7 @@ use rand::{self, seq::SliceRandom, Rng};
 use spiril::population::Population;
 use spiril::unit::Unit;
 
-use nethint::cluster::{Cluster, Topology};
+use nethint::cluster::Topology;
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle, RNG};
 
@@ -25,7 +25,7 @@ impl GeneticReducerScheduler {
 impl PlaceReducer for GeneticReducerScheduler {
     fn place(
         &mut self,
-        cluster: &Cluster,
+        cluster: &dyn Topology,
         job_spec: &JobSpec,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
@@ -98,19 +98,20 @@ impl PlaceReducer for GeneticReducerScheduler {
     }
 }
 
-#[derive(Debug)]
 struct GAContext<'a> {
     mapper: Placement,
     mapper_id: Vec<usize>,
     shuffle: &'a Shuffle,
-    cluster: &'a Cluster,
+    cluster: &'a dyn Topology,
     mutate_rate: f64,
     succ: AtomicUsize,
     mutation: AtomicUsize,
     cross: AtomicUsize,
 }
 
-#[derive(Debug, Clone)]
+unsafe impl<'a> Sync for GAContext<'a> {}
+
+#[derive(Clone)]
 struct GAUnit<'a, 'ctx> {
     reducer: Vec<usize>,
     ctx: &'ctx GAContext<'a>,
@@ -125,6 +126,8 @@ impl<'a, 'ctx> Unit for GAUnit<'a, 'ctx> {
             cluster,
             ..
         } = self.ctx;
+
+        let cluster = *cluster;
 
         let num_racks = cluster.num_switches() - 1;
         let mut rack = vec![0; num_racks];
