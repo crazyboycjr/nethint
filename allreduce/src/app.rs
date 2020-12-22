@@ -1,10 +1,14 @@
-use log::info;
-
 use nethint::{
     app::{AppEvent, Application, Replayer},
     cluster::Topology,
     simulator::Event,
-    Duration, Flow, Trace, TraceRecord,
+    Duration, Trace, TraceRecord,
+};
+
+use crate::{
+  AllReducePolicy, AllReduceAlgorithm,
+  random_ring::RandomRingAllReduce,
+  topology_aware::TopologyAwareRingAllReduce,
 };
 
 pub struct AllReduceApp<'c> {
@@ -12,43 +16,36 @@ pub struct AllReduceApp<'c> {
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
+    allreduce_policy: AllReducePolicy,
 }
 
 impl<'c> AllReduceApp<'c> {
-    pub fn new(cluster: &'c dyn Topology, seed: u64) -> Self {
+    pub fn new(cluster: &'c dyn Topology, seed: u64, allreduce_policy: AllReducePolicy) -> Self {
         let trace = Trace::new();
         AllReduceApp {
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
             seed,
+            allreduce_policy,
         }
     }
 
     pub fn start(&mut self) {
-        self.ringallreduce();
+        self.allreduce();
     }
 
-    pub fn ringallreduce(&mut self) {
+    pub fn allreduce(&mut self) {
         let mut trace = Trace::new();
-        use rand::prelude::SliceRandom;
-        use rand::{rngs::StdRng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(self.seed);
 
-        let mut alloced_hosts: Vec<usize> = (0..self.cluster.num_hosts()).into_iter().collect();
-        alloced_hosts.shuffle(&mut rng);
+        let mut allreduce_algorithm: Box<dyn AllReduceAlgorithm> = match self.allreduce_policy {
+          AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
+          AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
+        };
 
-        info!("{:?}", alloced_hosts);
+        let flows = allreduce_algorithm.allreduce(1000000, self.cluster);
 
-        for i in 0..self.cluster.num_hosts() {
-            let sender = format!("host_{}", alloced_hosts.get(i).unwrap());
-            let receiver = format!(
-                "host_{}",
-                alloced_hosts
-                    .get((i + 1) % self.cluster.num_hosts())
-                    .unwrap()
-            );
-            let flow = Flow::new(1000000, &sender, &receiver, None);
+        for flow in flows {
             let rec = TraceRecord::new(0, flow, None);
             trace.add_record(rec);
         }

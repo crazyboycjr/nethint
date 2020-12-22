@@ -10,7 +10,7 @@ use nethint::{
 };
 
 extern crate allreduce;
-use allreduce::{app::AllReduceApp, argument::Opt, JobSpec};
+use allreduce::{app::AllReduceApp, argument::Opt, JobSpec, AllReducePolicy};
 
 fn main() {
     logging::init_log();
@@ -22,7 +22,9 @@ fn main() {
 
     info!("cluster:\n{}", brain.cluster().to_dot());
 
-    run_experiments(&opt, &mut brain, 0);
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    info!("seed = {}", seed);
+    run_experiments(&opt, &mut brain, seed);
 }
 
 fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
@@ -43,6 +45,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
         let mut app = Box::new(AllReduceApp::new(
             vc_container.get(i).unwrap(),
             seed,
+            AllReducePolicy::TopologyAware,
         ));
         app.start();
         app_group.add(0, app);
