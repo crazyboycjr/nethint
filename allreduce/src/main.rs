@@ -1,13 +1,11 @@
 #![feature(box_patterns)]
-use std::sync::Arc;
 
-use log::{debug, info};
+use log::info;
 use structopt::StructOpt;
 
 use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
-    cluster::Cluster,
     simulator::{Executor, Simulator},
 };
 
@@ -32,7 +30,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
 
-    for i in 0..opt.ncases {
+    for _i in 0..opt.ncases {
         let job_spec = JobSpec::new(opt.num_workers);
         let vcluster = brain
             .provision(job_spec.num_workers, PlacementStrategy::Random)
@@ -43,7 +41,6 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
 
     for i in 0..opt.ncases {
         let mut app = Box::new(AllReduceApp::new(
-            job.get(i).unwrap(),
             vc_container.get(i).unwrap(),
             seed,
         ));

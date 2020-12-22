@@ -1,16 +1,15 @@
-use log::{debug, info};
+use log::info;
 
 use crate::JobSpec;
 
 use nethint::{
     app::{AppEvent, Application, Replayer},
-    cluster::{Cluster, Topology},
-    simulator::{Event, Executor, Simulator},
+    cluster::Topology,
+    simulator::Event,
     Duration, Flow, Trace, TraceRecord,
 };
 
 pub struct AllReduceApp<'c> {
-    job_spec: &'c JobSpec,
     cluster: &'c dyn Topology,
     replayer: Replayer,
     jct: Option<Duration>,
@@ -18,10 +17,9 @@ pub struct AllReduceApp<'c> {
 }
 
 impl<'c> AllReduceApp<'c> {
-    pub fn new(job_spec: &'c JobSpec, cluster: &'c dyn Topology, seed: u64) -> Self {
+    pub fn new(cluster: &'c dyn Topology, seed: u64) -> Self {
         let trace = Trace::new();
         AllReduceApp {
-            job_spec,
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
@@ -36,7 +34,7 @@ impl<'c> AllReduceApp<'c> {
     pub fn ringallreduce(&mut self) {
         let mut trace = Trace::new();
         use rand::prelude::SliceRandom;
-        use rand::{rngs::StdRng, Rng, SeedableRng};
+        use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(self.seed);
 
         let mut alloced_hosts: Vec<usize> = (0..self.cluster.num_hosts()).into_iter().collect();
