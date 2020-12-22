@@ -8,12 +8,14 @@ use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
     cluster::Cluster,
+    simulator::{Executor, Simulator},
 };
 
 extern crate allreduce;
 use allreduce::{
-    app::{run_allreduce, AllReduceApp},
+    app::{AllReduceApp},
     argument::Opt,
+    JobSpec,
 };
 
 fn main() {
@@ -26,15 +28,31 @@ fn main() {
 
     info!("cluster:\n{}", brain.cluster().to_dot());
 
-    run_experiments(&opt, Arc::clone(&brain.cluster()));
+    run_experiments(&opt, &mut brain);
 }
 
 fn run_experiments(
-    opt: &Opt,
-    cluster: Arc<Cluster>,
+    opt: &Opt, brain: &mut Brain,
 ) {
-    let jct = run_allreduce(&cluster);
-    info!(
-        "job_finish_time: {:?}", jct.unwrap()
-    );
+    let mut vc_container = Vec::new();
+    let mut job = Vec::new();
+    let mut app_group = AppGroup::new();
+
+    for i in 0..opt.ncases {
+        let job_spec = JobSpec::new(opt.num_workers);
+        let vcluster = brain.provision(job_spec.num_workers, PlacementStrategy::Random).unwrap();
+        vc_container.push(vcluster);
+        job.push(job_spec);
+    }
+
+    for i in 0..opt.ncases {
+        let mut app = Box::new(AllReduceApp::new(job.get(i).unwrap(), vc_container.get(i).unwrap()));
+        app.start();
+        app_group.add(0, app);
+    }
+
+    let mut simulator = Simulator::new((**brain.cluster()).clone());
+    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    info!("all job completion time: {:?}", all_jct.unwrap());
 }

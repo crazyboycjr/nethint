@@ -1,3 +1,9 @@
+use log::{debug, info};
+
+use crate::{
+  JobSpec,
+};
+
 use nethint::{
   app::{AppEvent, Application, Replayer},
   cluster::{Cluster, Topology},
@@ -6,6 +12,7 @@ use nethint::{
 };
 
 pub struct AllReduceApp<'c> {
+  job_spec: &'c JobSpec,
   cluster: &'c dyn Topology,
   replayer: Replayer,
   jct: Option<Duration>,
@@ -13,10 +20,12 @@ pub struct AllReduceApp<'c> {
 
 impl<'c> AllReduceApp<'c> {
   pub fn new(
+      job_spec: &'c JobSpec,
       cluster: &'c dyn Topology,
   ) -> Self {
       let trace = Trace::new();
       AllReduceApp {
+          job_spec,
           cluster,
           replayer: Replayer::new(trace),
           jct: None,
@@ -29,11 +38,16 @@ impl<'c> AllReduceApp<'c> {
 
   pub fn ringallreduce(&mut self) {
     let mut trace = Trace::new();
-    let server1 = format!("host_{}", 0);
-    let server2 = format!("host_{}", 1);
-    let flow = Flow::new(1000000, &server1, &server2, None);
-    let rec = TraceRecord::new(0, flow, None);
-    trace.add_record(rec);
+    
+    // for simplicity, let's construct a ring based on server id
+    let num_hosts = self.cluster.num_hosts();
+    for i in 0..num_hosts {
+        let sender = format!("host_{}", i);
+        let receiver = format!("host_{}", (i + 1) % num_hosts);
+        let flow = Flow::new(1000000, &sender, &receiver, None);
+        let rec = TraceRecord::new(0, flow, None);
+        trace.add_record(rec);
+    }
 
     self.replayer = Replayer::new(trace);
   }
@@ -51,17 +65,4 @@ impl<'c> Application for AllReduceApp<'c> {
   fn answer(&mut self) -> Self::Output {
       self.jct
   }
-}
-
-pub fn run_allreduce(
-  cluster: &Cluster,
-) -> Option<Duration> {
-  let mut simulator = Simulator::new(cluster.clone());
-
-  let mut app = Box::new(AllReduceApp::new(
-      cluster,
-  ));
-  app.start();
-
-  simulator.run_with_appliation(app)
 }
