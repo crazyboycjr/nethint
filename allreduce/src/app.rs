@@ -1,7 +1,5 @@
 use log::info;
 
-use crate::JobSpec;
-
 use nethint::{
     app::{AppEvent, Application, Replayer},
     cluster::Topology,

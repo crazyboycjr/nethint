@@ -1,4 +1,3 @@
-use log::{debug, info};
 use crate::simulator::Event;
 use crate::{Timestamp, Trace, TraceRecord};
 
