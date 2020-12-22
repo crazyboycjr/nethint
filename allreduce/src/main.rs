@@ -12,11 +12,7 @@ use nethint::{
 };
 
 extern crate allreduce;
-use allreduce::{
-    app::{AllReduceApp},
-    argument::Opt,
-    JobSpec,
-};
+use allreduce::{app::AllReduceApp, argument::Opt, JobSpec};
 
 fn main() {
     logging::init_log();
@@ -28,25 +24,29 @@ fn main() {
 
     info!("cluster:\n{}", brain.cluster().to_dot());
 
-    run_experiments(&opt, &mut brain);
+    run_experiments(&opt, &mut brain, 0);
 }
 
-fn run_experiments(
-    opt: &Opt, brain: &mut Brain,
-) {
+fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
     let mut vc_container = Vec::new();
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
 
     for i in 0..opt.ncases {
         let job_spec = JobSpec::new(opt.num_workers);
-        let vcluster = brain.provision(job_spec.num_workers, PlacementStrategy::Random).unwrap();
+        let vcluster = brain
+            .provision(job_spec.num_workers, PlacementStrategy::Random)
+            .unwrap();
         vc_container.push(vcluster);
         job.push(job_spec);
     }
 
     for i in 0..opt.ncases {
-        let mut app = Box::new(AllReduceApp::new(job.get(i).unwrap(), vc_container.get(i).unwrap()));
+        let mut app = Box::new(AllReduceApp::new(
+            job.get(i).unwrap(),
+            vc_container.get(i).unwrap(),
+            seed,
+        ));
         app.start();
         app_group.add(0, app);
     }
