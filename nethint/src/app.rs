@@ -106,7 +106,9 @@ where
                         self.forward(app_id, AppEvent::FlowComplete(recs), &mut new_flows);
                     }
                 }
-                if new_flows.is_empty() {
+                if self.apps.len() == self.output.len() {
+                    Event::AppFinish
+                } else if new_flows.is_empty() {
                     Event::Continue
                 } else {
                     Event::FlowArrive(new_flows)

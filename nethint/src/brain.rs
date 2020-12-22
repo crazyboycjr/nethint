@@ -86,7 +86,7 @@ impl Brain {
         nhosts: usize,
         strategy: PlacementStrategy,
     ) -> Result<VirtCluster, Error> {
-        if self.used.len() + nhosts >= self.cluster.num_hosts() {
+        if self.used.len() + nhosts > self.cluster.num_hosts() {
             return Err(Error::NoHost(self.cluster.num_hosts(), nhosts));
         }
 
