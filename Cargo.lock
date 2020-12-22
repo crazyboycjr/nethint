@@ -18,6 +18,7 @@ dependencies = [
  "logging",
  "nethint",
  "rand",
+ "structopt",
 ]
 
 [[package]]
