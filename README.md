@@ -19,5 +19,5 @@ Here's the plan
 
 ```
 RUST_LOG=debug,nethint::cluster=info cargo run --release -- help
-RUST_LOG=debug,nethint::cluster=info cargo run --release -- -a -m 20 -r 4 -s uniform_1000000 -n 10 virtual 150 4 100 100
+RUST_LOG=debug,nethint::cluster=info cargo run --release -- -a -m 20 -r 4 -s uniform_1000000 -n 10 arbitrary 150 4 100 100
 ```

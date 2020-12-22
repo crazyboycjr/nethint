@@ -29,6 +29,12 @@ impl<'c> AllReduceApp<'c> {
 
   pub fn ringallreduce(&mut self) {
     let mut trace = Trace::new();
+    let server1 = format!("host_{}", 0);
+    let server2 = format!("host_{}", 1);
+    let flow = Flow::new(1000000, &server1, &server2, None);
+    let rec = TraceRecord::new(0, flow, None);
+    trace.add_record(rec);
+
     self.replayer = Replayer::new(trace);
   }
 }
