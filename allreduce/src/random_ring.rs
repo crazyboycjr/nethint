@@ -18,7 +18,7 @@ impl RandomRingAllReduce {
 }
 
 impl AllReduceAlgorithm for RandomRingAllReduce {
-    fn allreduce(&mut self, _size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+    fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
         use rand::prelude::SliceRandom;
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(self.seed);
@@ -34,7 +34,7 @@ impl AllReduceAlgorithm for RandomRingAllReduce {
                 "host_{}",
                 alloced_hosts.get((i + 1) % vcluster.num_hosts()).unwrap()
             );
-            let flow = Flow::new(1000000, &sender, &receiver, None);
+            let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
         }
         flows

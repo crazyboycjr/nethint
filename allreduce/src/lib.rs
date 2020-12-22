@@ -4,6 +4,8 @@ pub mod app;
 
 pub mod random_ring;
 
+pub mod topology_aware;
+
 use nethint:: {
   cluster::Topology,
   Flow,

@@ -43,7 +43,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
         let mut app = Box::new(AllReduceApp::new(
             vc_container.get(i).unwrap(),
             seed,
-            AllReducePolicy::Random,
+            AllReducePolicy::TopologyAware,
         ));
         app.start();
         app_group.add(0, app);

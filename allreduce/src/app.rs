@@ -1,15 +1,14 @@
-use log::info;
-
 use nethint::{
     app::{AppEvent, Application, Replayer},
     cluster::Topology,
     simulator::Event,
-    Duration, Flow, Trace, TraceRecord,
+    Duration, Trace, TraceRecord,
 };
 
 use crate::{
   AllReducePolicy, AllReduceAlgorithm,
   random_ring::RandomRingAllReduce,
+  topology_aware::TopologyAwareRingAllReduce,
 };
 
 pub struct AllReduceApp<'c> {
@@ -41,7 +40,7 @@ impl<'c> AllReduceApp<'c> {
 
         let mut allreduce_algorithm: Box<dyn AllReduceAlgorithm> = match self.allreduce_policy {
           AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
-          AllReducePolicy::TopologyAware => Box::new(RandomRingAllReduce::new(self.seed)),
+          AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
         };
 
         let flows = allreduce_algorithm.allreduce(1000000, self.cluster);
