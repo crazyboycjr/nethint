@@ -38,12 +38,19 @@ impl<'c> AllReduceApp<'c> {
 
   pub fn ringallreduce(&mut self) {
     let mut trace = Trace::new();
-    
-    // for simplicity, let's construct a ring based on server id
-    let num_hosts = self.cluster.num_hosts();
-    for i in 0..num_hosts {
-        let sender = format!("host_{}", i);
-        let receiver = format!("host_{}", (i + 1) % num_hosts);
+    use rand::prelude::SliceRandom;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(0);
+
+    let mut alloced_hosts:Vec<usize> = (0..self.cluster.num_hosts())
+          .into_iter().collect();
+    alloced_hosts.shuffle(&mut rng);
+
+    info! ("{:?}", alloced_hosts);
+
+    for i in 0..self.cluster.num_hosts(){
+        let sender = format!("host_{}", alloced_hosts.get(i).unwrap());
+        let receiver = format!("host_{}", alloced_hosts.get((i + 1) % self.cluster.num_hosts()).unwrap());
         let flow = Flow::new(1000000, &sender, &receiver, None);
         let rec = TraceRecord::new(0, flow, None);
         trace.add_record(rec);
