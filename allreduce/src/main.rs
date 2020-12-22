@@ -22,7 +22,9 @@ fn main() {
 
     info!("cluster:\n{}", brain.cluster().to_dot());
 
-    run_experiments(&opt, &mut brain, 0);
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    info!("seed = {}", seed);
+    run_experiments(&opt, &mut brain, seed);
 }
 
 fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
