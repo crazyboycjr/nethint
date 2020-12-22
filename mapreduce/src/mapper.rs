@@ -26,11 +26,12 @@ impl PlaceMapper for RandomMapperScheduler {
         // here we just consider the case where there is only one single job
         let mut rng = StdRng::seed_from_u64(self.seed);
         let num_hosts = cluster.num_hosts();
-        let hosts = (0..num_hosts)
+        let mut hosts: Vec<String> = (0..num_hosts)
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, job_spec.num_map)
             .map(|x| format!("host_{}", x))
             .collect();
+        hosts.shuffle(&mut rng);
         Placement(hosts)
     }
 }
