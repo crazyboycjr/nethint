@@ -10,7 +10,7 @@ use nethint::{
 };
 
 extern crate allreduce;
-use allreduce::{app::AllReduceApp, argument::Opt, JobSpec};
+use allreduce::{app::AllReduceApp, argument::Opt, JobSpec, AllReducePolicy};
 
 fn main() {
     logging::init_log();
@@ -43,6 +43,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
         let mut app = Box::new(AllReduceApp::new(
             vc_container.get(i).unwrap(),
             seed,
+            AllReducePolicy::Random,
         ));
         app.start();
         app_group.add(0, app);
