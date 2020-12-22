@@ -104,7 +104,7 @@ impl Brain {
 
     fn place_random(&self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         use crate::RNG;
-        use rand::seq::IteratorRandom;
+        use rand::seq::{IteratorRandom, SliceRandom};
 
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
@@ -119,12 +119,13 @@ impl Brain {
                 .into_iter()
                 .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
                 .filter(|node_ix| !self.used.contains(&node_ix));
-            avail_hosts.choose_multiple(&mut *rng, nhosts)
+            let mut choosed: Vec<NodeIx> = avail_hosts.choose_multiple(&mut *rng, nhosts);
+            choosed.shuffle(&mut *rng);
+            choosed
         });
 
         assert_eq!(alloced_hosts.len(), nhosts);
 
-        // let mut selected_tor: HashSet<NodeIx> = HashSet::default();
         for host_ix in alloced_hosts {
             let uplink_ix = self.cluster.get_uplink(host_ix);
             let tor_ix = self.cluster.get_target(uplink_ix);

@@ -26,10 +26,11 @@ impl PlaceReducer for RandomReducerScheduler {
             let num_hosts = cluster.num_hosts();
             let mut hosts: Vec<String> = (0..num_hosts).map(|x| format!("host_{}", x)).collect();
             hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
-            let hosts = hosts
+            let mut hosts: Vec<String> = hosts
                 .choose_multiple(&mut *rng, job_spec.num_reduce)
                 .cloned()
                 .collect();
+            hosts.shuffle(&mut *rng);
             Placement(hosts)
         })
     }
