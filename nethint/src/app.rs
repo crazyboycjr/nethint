@@ -1,10 +1,12 @@
-use crate::simulator::Event;
+use crate::{hint::NetHintV2, simulator::Event};
 use crate::{Timestamp, Trace, TraceRecord};
+use crate::brain::TenantId;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     /// On start, an application returns all flows it can start, whatever the timestamps are.
     AppStart,
+    NetHintResponse(usize, TenantId, NetHintV2),
     FlowComplete(Vec<TraceRecord>),
 }
 
@@ -37,6 +39,7 @@ impl Application for Replayer {
                     Event::Continue
                 }
             }
+            AppEvent::NetHintResponse(_, _, _) => Event::Continue,
         }
     }
     fn answer(&mut self) -> Self::Output {
@@ -55,9 +58,9 @@ impl Replayer {
     }
 }
 
-/// AppGroup is nn application created by combining multiple applications start at different timestamp.
-/// It marks flows in each individual application.
-/// It works like an proxy, intercepting, modifying, and forwarding simulator event to and from corresponding apps
+/// AppGroup is an application created by combining multiple applications started at different timestamps.
+/// It marks flows from each individual application.
+/// It works like a proxy, intercepting, modifying, and forwarding simulator events to and from corresponding apps.
 #[derive(Default)]
 pub struct AppGroup<'a, T> {
     // Vec<(start time offset, application)>
@@ -77,17 +80,16 @@ where
             return Event::AppFinish;
         }
 
+        let mut new_flows = Vec::new();
         match event {
             AppEvent::AppStart => {
                 // start all apps, modify the start time of flow, gather all flows
-                let mut new_flows = Vec::new();
+                // xs >>= f = concat $ map f xs
+                // (>>=) :: m a -> (a -> m b) -> m b
+                // and_then
+                // concat a set of Event::FlowArraive 
                 for app_id in 0..self.apps.len() {
                     self.forward(app_id, AppEvent::AppStart, &mut new_flows);
-                }
-                if new_flows.is_empty() {
-                    Event::Continue
-                } else {
-                    Event::FlowArrive(new_flows)
                 }
             }
             AppEvent::FlowComplete(recs) => {
@@ -100,18 +102,24 @@ where
                     f.ts -= self.apps[app_id].0; // f.ts -= start_off;
                     flows[app_id].push(f);
                 }
-                let mut new_flows = Vec::new();
                 for (app_id, recs) in flows.into_iter().enumerate() {
                     if !recs.is_empty() {
                         self.forward(app_id, AppEvent::FlowComplete(recs), &mut new_flows);
                     }
                 }
-                if new_flows.is_empty() {
-                    Event::Continue
-                } else {
-                    Event::FlowArrive(new_flows)
-                }
             }
+            AppEvent::NetHintResponse(app_id, tenant_id, vc) => {
+                let app_event = AppEvent::NetHintResponse(app_id, tenant_id, vc);
+                self.forward(app_id, app_event, &mut new_flows);
+            }
+        }
+
+        if self.apps.len() == self.output.len() {
+            Event::AppFinish
+        } else if new_flows.is_empty() {
+            Event::Continue
+        } else {
+            Event::FlowArrive(new_flows)
         }
     }
 
@@ -161,6 +169,10 @@ where
                 self.output.push((app_id, app.answer()));
             }
             Event::Continue => {}
+            Event::NetHintRequest(app_id, tenant_id) => {
+                assert_eq!(app_id, 0);
+                Event::NetHintRequest(app_id, tenant_id)
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ use petgraph::{
 
 use crate::bandwidth::Bandwidth;
 use crate::LoadBalancer;
+use crate::brain::TenantId;
 
 lazy_static! {
     static ref LINK_ID: AtomicUsize = AtomicUsize::new(0);
@@ -37,6 +38,7 @@ pub trait Topology:
     ) -> Route;
     fn num_hosts(&self) -> usize;
     fn num_switches(&self) -> usize;
+    /// do network translation
     fn translate(&self, vname: &str) -> String;
 }
 
@@ -48,6 +50,7 @@ pub trait Topology:
 pub struct VirtCluster {
     pub(crate) inner: Cluster,
     pub(crate) virt_to_phys: HashMap<String, String>,
+    pub(crate) tenant_id: TenantId,
 }
 
 impl Index<LinkIx> for VirtCluster {

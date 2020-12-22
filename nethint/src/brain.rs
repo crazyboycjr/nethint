@@ -1,3 +1,5 @@
+use std::rc::Rc;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
@@ -7,14 +9,18 @@ use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
 use thiserror::Error;
 
+pub type TenantId = usize;
+
 /// Brain is the cloud controller. It knows the underlay physical
 /// topology and decides how to provision VMs for tenants.
 #[derive(Debug)]
 pub struct Brain {
     /// physical clsuter
     cluster: Arc<Cluster>,
-    /// used list
+    /// used set of nodes in phycisal cluster
     used: HashSet<NodeIx>,
+    /// now we only support each tenant owns a single VirtCluster
+    pub(crate) vclusters: HashMap<TenantId, Rc<VirtCluster>>,
 }
 
 /// Similar to AWS Placement Groups.
@@ -37,7 +43,7 @@ pub enum Error {
 }
 
 impl Brain {
-    pub fn build_cloud(topo: TopoArgs) -> Self {
+    pub fn build_cloud(topo: TopoArgs) -> Rc<RefCell<Self>> {
         let cluster = match topo {
             TopoArgs::FatTree {
                 nports,
@@ -56,10 +62,11 @@ impl Brain {
             } => build_arbitrary_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
         };
 
-        Brain {
+        Rc::new(RefCell::new(Brain {
             cluster: Arc::new(cluster),
             used: Default::default(),
-        }
+            vclusters: Default::default(),
+        }))
     }
 
     pub fn cluster(&self) -> &Arc<Cluster> {
@@ -83,10 +90,11 @@ impl Brain {
 
     pub fn provision(
         &mut self,
+        tenant_id: TenantId,
         nhosts: usize,
         strategy: PlacementStrategy,
-    ) -> Result<VirtCluster, Error> {
-        if self.used.len() + nhosts >= self.cluster.num_hosts() {
+    ) -> Result<Rc<VirtCluster>, Error> {
+        if self.used.len() + nhosts > self.cluster.num_hosts() {
             return Err(Error::NoHost(self.cluster.num_hosts(), nhosts));
         }
 
@@ -96,10 +104,14 @@ impl Brain {
             PlacementStrategy::Random => self.place_random(nhosts),
         };
 
-        Ok(VirtCluster {
+        let vcluster = Rc::new(VirtCluster {
             inner,
             virt_to_phys,
-        })
+            tenant_id,
+        });
+        let ret = self.vclusters.insert(tenant_id, Rc::clone(&vcluster));
+        assert!(ret.is_none());
+        Ok(vcluster)
     }
 
     fn place_random(&self, nhosts: usize) -> (Cluster, HashMap<String, String>) {

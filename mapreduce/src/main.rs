@@ -1,4 +1,6 @@
 #![feature(box_patterns)]
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -32,13 +34,13 @@ fn main() {
     let opt = Opt::from_args();
     info!("Opts: {:#?}", opt);
 
-    let mut brain = Brain::build_cloud(opt.topo.clone());
+    let brain = Brain::build_cloud(opt.topo.clone());
 
     if opt.asym {
-        brain.make_asymmetric(0);
+        brain.borrow_mut().make_asymmetric(0);
     }
 
-    info!("cluster:\n{}", brain.cluster().to_dot());
+    info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     let policies = &[
         ReducerPlacementPolicy::Random,
@@ -47,7 +49,7 @@ fn main() {
     ];
 
     if opt.inspect {
-        let results = inspect::run_experiments(&opt, Arc::clone(&brain.cluster()));
+        let results = inspect::run_experiments(&opt, Arc::clone(&brain.borrow().cluster()));
         let mut segments = results.unwrap();
         segments.sort_by_key(|x| x.0);
         info!("inspect results: {:?}", segments);
@@ -60,16 +62,16 @@ fn main() {
     }
 
     if opt.multitenant {
-        run_experiments_multitenant(&opt, &mut brain);
+        run_experiments_multitenant(&opt, brain);
         return;
     }
 
-    let results = run_experiments(&opt, Arc::clone(&brain.cluster()), policies);
+    let results = run_experiments(&opt, Arc::clone(&brain.borrow().cluster()), policies);
 
     visualize(&opt, results).unwrap();
 }
 
-fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
+fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)
             .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e))
@@ -83,7 +85,7 @@ fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
     );
 
     // values in a scope are dropped in the opposite order they are defined
-    let mut vc_container = Vec::new();
+    // let mut vc_container = Vec::new();
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
     for i in 0..ncases {
@@ -103,31 +105,39 @@ fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
             })
             .unwrap();
 
+        // assmue we have a tenant: i
+        let tenant_id = i;
         let vcluster = brain
+            .borrow_mut()
             .provision(
+                tenant_id,
                 job_spec.num_map + job_spec.num_reduce,
                 PlacementStrategy::Random,
             )
             .unwrap();
 
-        vc_container.push(vcluster);
+        // vc_container.push(vcluster);
         job.push((start_ts, job_spec));
     }
 
     for i in 0..ncases {
         let seed = i as _;
+        let tenant_id = i;
         let (start_ts, job_spec) = job.get(i).unwrap();
         let mut app = Box::new(MapReduceApp::new(
+            tenant_id,
+            seed,
             job_spec,
-            vc_container.get(i).unwrap(),
+            None,
             MapperPlacementPolicy::Greedy,
             policy,
         ));
-        app.start(seed);
+        // app.start();
         app_group.add(*start_ts, app);
     }
 
-    let mut simulator = Simulator::new((**brain.cluster()).clone());
+    // let mut simulator = Simulator::new((**brain.cluster()).clone());
+    let mut simulator = Simulator::with_brain(brain);
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
     let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     info!("all job completion time: {:?}", all_jct.unwrap().to_dura());

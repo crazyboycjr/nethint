@@ -7,9 +7,13 @@ use std::rc::Rc;
 
 use log::{debug, trace};
 
-use crate::app::{AppEvent, Application, Replayer};
 use crate::bandwidth::{Bandwidth, BandwidthTrait};
+use crate::brain::{Brain, TenantId};
 use crate::cluster::{Cluster, Link, Route, Topology};
+use crate::{
+    app::{AppEvent, Application, Replayer},
+    hint::{SimpleEstimator, Estimator},
+};
 use crate::{Duration, Flow, Timestamp, ToStdDuration, Trace, TraceRecord};
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
@@ -25,6 +29,11 @@ pub struct Simulator {
     cluster: Cluster,
     ts: Timestamp,
     state: NetState,
+
+    // nethint
+    enable_nethint: bool,
+    brain: Option<Rc<RefCell<Brain>>>,
+    estimator: Option<Box<dyn Estimator>>,
 }
 
 impl Simulator {
@@ -33,15 +42,33 @@ impl Simulator {
             cluster,
             ts: 0,
             state: Default::default(),
+            enable_nethint: false,
+            brain: None,
+            estimator: None,
         }
     }
 
-    pub fn suspend(&mut self, path: &std::path::Path) {
-        // dump all running states of the simulator
+    pub fn with_brain(brain: Rc<RefCell<Brain>>) -> Self {
+        let cluster = (**brain.borrow().cluster()).clone();
+        let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain)));
+        Simulator {
+            cluster,
+            ts: 0,
+            state: Default::default(),
+            enable_nethint: true,
+            brain: Some(brain),
+            estimator: Some(estimator),
+        }
     }
 
-    pub fn resume(&mut self, path: &std::path::Path) {
+    pub fn suspend(&mut self, _path: &std::path::Path) {
+        // dump all running states of the simulator
+        unimplemented!();
+    }
+
+    pub fn resume(&mut self, _path: &std::path::Path) {
         // resume from the previous saved state
+        unimplemented!();
     }
 
     #[inline]
@@ -208,7 +235,6 @@ struct NetState {
     flow_bufs: BinaryHeap<Reverse<FlowStateRef>>,
     // emitted flows
     running_flows: Vec<FlowStateRef>,
-    // TODO(cjr): maybe change to BTreeMap later?
     flows: HashMap<Link, Vec<FlowStateRef>>,
     resolve_route_time: std::time::Duration,
 }
@@ -358,4 +384,6 @@ pub enum Event {
     AppFinish,
     /// Application does not take any action.
     Continue,
+    /// Request NetHint information, (app_id, tenant_id)
+    NetHintRequest(usize, TenantId),
 }
