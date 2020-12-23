@@ -8,11 +8,19 @@ pub struct Opt {
     #[structopt(subcommand)]
     pub topo: TopoArgs,
 
-    /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
+    /// Number of workers.
     #[structopt(short = "w", long = "num_workers", default_value = "16")]
     pub num_workers: usize,
-    
-    /// Number of testcases
+
+    /// Buffer size of allreduce.
+    #[structopt(short = "s", long = "buffer_size", default_value = "1000000")]
+    pub buffer_size: usize,
+
+    /// Number of allreduce iterations.
+    #[structopt(short = "i", long = "num_iterations", default_value = "1000000")]
+    pub num_iterations: usize,
+
+    /// Number of jobs.
     #[structopt(short = "n", long = "ncases", default_value = "1")]
     pub ncases: usize,
 }
