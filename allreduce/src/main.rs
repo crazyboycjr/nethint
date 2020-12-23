@@ -30,20 +30,21 @@ fn main() {
 
 fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
     let mut vc_container = Vec::new();
-    let mut job = Vec::new();
+    let mut jobs = Vec::new();
     let mut app_group = AppGroup::new();
 
     for _i in 0..opt.ncases {
-        let job_spec = JobSpec::new(opt.num_workers);
+        let job_spec = JobSpec::new(opt.num_workers, opt.buffer_size, opt.num_iterations);
         let vcluster = brain
             .provision(job_spec.num_workers, PlacementStrategy::Random)
             .unwrap();
         vc_container.push(vcluster);
-        job.push(job_spec);
+        jobs.push(job_spec);
     }
 
     for i in 0..opt.ncases {
         let mut app = Box::new(AllReduceApp::new(
+            jobs.get(i).unwrap(),
             vc_container.get(i).unwrap(),
             seed,
             AllReducePolicy::TopologyAware,
