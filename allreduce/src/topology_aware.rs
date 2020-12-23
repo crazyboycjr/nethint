@@ -1,4 +1,3 @@
-use log::info;
 use crate::AllReduceAlgorithm;
 use nethint::{cluster::Topology, Flow};
 
@@ -32,7 +31,6 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
             }
             ringlet.shuffle(&mut rng);
             for node_idx in ringlet {
-                info!("{}", node_idx);
                 ring.push(node_idx);
             }
         }

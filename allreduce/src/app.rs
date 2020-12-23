@@ -1,4 +1,3 @@
-use log::info;
 use nethint::{
     app::{AppEvent, Application, Replayer},
     cluster::Topology,
@@ -37,8 +36,6 @@ impl<'c> AllReduceApp<'c> {
     }
 
     pub fn allreduce(&mut self) {
-        info!("{}", self.cluster.to_dot());
-
         let mut trace = Trace::new();
 
         let mut allreduce_algorithm: Box<dyn AllReduceAlgorithm> = match self.allreduce_policy {

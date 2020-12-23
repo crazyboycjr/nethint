@@ -9,7 +9,7 @@ pub struct Opt {
     pub topo: TopoArgs,
 
     /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
-    #[structopt(short = "w", long = "num_workers", default_value = "4")]
+    #[structopt(short = "w", long = "num_workers", default_value = "16")]
     pub num_workers: usize,
     
     /// Number of testcases

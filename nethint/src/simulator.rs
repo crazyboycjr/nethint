@@ -5,7 +5,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::rc::Rc;
 
-use log::{debug, trace, info};
+use log::{debug, trace};
 
 use crate::app::{AppEvent, Application, Replayer};
 use crate::bandwidth::{Bandwidth, BandwidthTrait};
@@ -156,7 +156,6 @@ impl<'a> Executor<'a> for Simulator {
         // let's write some conceptual code
         let start = std::time::Instant::now();
         let mut event = app.on_event(AppEvent::AppStart);
-        info! ("{:?}", event);
         assert!(matches!(event, Event::FlowArrive(_)));
 
         loop {
