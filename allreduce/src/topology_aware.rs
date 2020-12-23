@@ -1,3 +1,4 @@
+use log::info;
 use crate::AllReduceAlgorithm;
 use nethint::{cluster::Topology, Flow};
 
@@ -31,6 +32,7 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
             }
             ringlet.shuffle(&mut rng);
             for node_idx in ringlet {
+                info!("{}", node_idx);
                 ring.push(node_idx);
             }
         }
@@ -40,7 +42,9 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
         for i in 0..vcluster.num_hosts() {
             let sender = format!("host_{}", ring.get(i).unwrap());
             let receiver = format!("host_{}", ring.get((i + 1) % vcluster.num_hosts()).unwrap());
-            let flow = Flow::new(size as usize, &sender, &receiver, None);
+            let phy_sender = vcluster.translate(&sender);
+            let phy_receiver = vcluster.translate(&receiver);
+            let flow = Flow::new(size as usize, &phy_sender, &phy_receiver, None);
             flows.push(flow);
         }
         flows

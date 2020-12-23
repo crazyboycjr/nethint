@@ -161,7 +161,7 @@ impl Brain {
         // Vec<(slots, tor_ix)>
         let root = "virtual_cloud";
 
-        let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches())
+        let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches()-1)
             .map(|i| {
                 let name = format!("tor_{}", i);
                 let tor_ix = self.cluster.get_node_index(&name);
@@ -170,7 +170,7 @@ impl Brain {
                     .get_downlinks(tor_ix)
                     .filter(|&link_ix| {
                         let host_ix = self.cluster.get_target(*link_ix);
-                        self.used.contains(&host_ix)
+                        !self.used.contains(&host_ix)
                     })
                     .count();
                 (cap, tor_ix)

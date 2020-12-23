@@ -84,7 +84,9 @@ where
                 for app_id in 0..self.apps.len() {
                     self.forward(app_id, AppEvent::AppStart, &mut new_flows);
                 }
-                if new_flows.is_empty() {
+                if self.apps.len() == self.output.len() {
+                    Event::AppFinish
+                } else if new_flows.is_empty() {
                     Event::Continue
                 } else {
                     Event::FlowArrive(new_flows)
