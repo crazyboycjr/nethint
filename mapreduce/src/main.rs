@@ -10,7 +10,7 @@ use structopt::StructOpt;
 use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
-    cluster::Cluster,
+    cluster::{Cluster, Topology},
     simulator::{Executor, Simulator},
     ToStdDuration,
 };

@@ -38,6 +38,7 @@ pub trait Topology:
     fn num_hosts(&self) -> usize;
     fn num_switches(&self) -> usize;
     fn translate(&self, vname: &str) -> String;
+    fn to_dot(&self) -> Dot<&Graph<Node, Link>>;
 }
 
 /// A VirtCluster is a subgraph of the original physical cluster.
@@ -118,6 +119,10 @@ impl Topology for VirtCluster {
     fn translate(&self, vname: &str) -> String {
         self.virt_to_phys[vname].clone()
     }
+
+    fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
+        self.inner.to_dot()
+    }
 }
 
 /// The network topology and hardware configuration of the cluster.
@@ -179,10 +184,6 @@ impl Cluster {
         self.graph[pnode].children.push(l1);
         assert!(self.graph[cnode].parent.is_none());
         self.graph[cnode].parent = Some(l2);
-    }
-
-    pub fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
-        Dot::with_config(&self.graph, &[])
     }
 }
 
@@ -295,6 +296,10 @@ impl Topology for Cluster {
     #[inline]
     fn translate(&self, vname: &str) -> String {
         vname.to_owned()
+    }
+
+    fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
+        Dot::with_config(&self.graph, &[])
     }
 }
 
