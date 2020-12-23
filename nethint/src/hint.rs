@@ -1,11 +1,12 @@
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use log::warn;
 
 use crate::{
+    bandwidth::BandwidthTrait,
     brain::{Brain, TenantId},
-    cluster::VirtCluster,
+    cluster::{Topology, VirtCluster},
     Duration, Timestamp,
 };
 
@@ -44,6 +45,7 @@ impl Sampler {
 
 pub trait Estimator {
     fn estimate(&self, tenant_id: TenantId) -> NetHintV2;
+    fn sample(&mut self);
 }
 
 pub struct SimpleEstimator {
@@ -52,9 +54,9 @@ pub struct SimpleEstimator {
 }
 
 impl SimpleEstimator {
-    pub fn new(brain: Rc<RefCell<Brain>>) -> Self {
+    pub fn new(brain: Rc<RefCell<Brain>>, sample_interval_ns: Duration) -> Self {
         SimpleEstimator {
-            sampler: Sampler::new(1_000_000),
+            sampler: Sampler::new(sample_interval_ns),
             brain,
         }
     }
@@ -62,7 +64,17 @@ impl SimpleEstimator {
 
 impl Estimator for SimpleEstimator {
     fn estimate(&self, tenant_id: TenantId) -> NetHintV2 {
-        let vcluster = Rc::clone(&self.brain.borrow().vclusters[&tenant_id]);
-        (*vcluster).clone()
+        // let vcluster = Rc::clone(&self.brain.borrow().vclusters[&tenant_id]);
+        // let mut ret = (*vcluster.borrow()).clone();
+        let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
+        // fill the link with some arbitrary bandwidth
+        for link_ix in vcluster.all_links() {
+            vcluster[link_ix].bandwidth = 100.gbps();
+        }
+        vcluster
+    }
+
+    fn sample(&mut self) {
+        //
     }
 }

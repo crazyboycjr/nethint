@@ -12,7 +12,7 @@ use structopt::StructOpt;
 use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
-    cluster::Cluster,
+    cluster::{Cluster, Topology},
     simulator::{Executor, Simulator},
     ToStdDuration,
 };
@@ -78,6 +78,7 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
     });
 
     let policy = ReducerPlacementPolicy::HierarchicalGreedy;
+    // let policy = ReducerPlacementPolicy::Random;
 
     let ncases = std::cmp::min(
         opt.ncases,
@@ -107,7 +108,7 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
 
         // assmue we have a tenant: i
         let tenant_id = i;
-        let vcluster = brain
+        let _vcluster = brain
             .borrow_mut()
             .provision(
                 tenant_id,
@@ -124,12 +125,12 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
         let seed = i as _;
         let tenant_id = i;
         let (start_ts, job_spec) = job.get(i).unwrap();
-        let mut app = Box::new(MapReduceApp::new(
+        let app = Box::new(MapReduceApp::new(
             tenant_id,
             seed,
             job_spec,
             None,
-            MapperPlacementPolicy::Greedy,
+            MapperPlacementPolicy::Random(0),
             policy,
         ));
         // app.start();
@@ -140,6 +141,11 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
     let mut simulator = Simulator::with_brain(brain);
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
     let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    let app_stats: Vec<_> = app_jct
+        .iter()
+        .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
+        .collect();
+    info!("app_stats: {:?}", app_stats);
     info!("all job completion time: {:?}", all_jct.unwrap().to_dura());
 }
 

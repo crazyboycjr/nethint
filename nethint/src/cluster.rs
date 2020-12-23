@@ -9,8 +9,9 @@ use petgraph::{
 };
 
 use crate::bandwidth::Bandwidth;
-use crate::LoadBalancer;
 use crate::brain::TenantId;
+use crate::simulator::FlowState;
+use crate::LoadBalancer;
 
 lazy_static! {
     static ref LINK_ID: AtomicUsize = AtomicUsize::new(0);
@@ -23,7 +24,7 @@ pub type LinkIxIter = EdgeIndices;
 use std::ops::{Index, IndexMut};
 
 pub trait Topology:
-    Index<NodeIx, Output = Node> + Index<LinkIx, Output = Link> + IndexMut<LinkIx>
+    Index<NodeIx, Output = Node> + Index<LinkIx, Output = Link> + IndexMut<LinkIx> + IndexMut<NodeIx>
 {
     fn get_node_index(&self, name: &str) -> NodeIx;
     fn get_target(&self, ix: LinkIx) -> NodeIx;
@@ -40,6 +41,7 @@ pub trait Topology:
     fn num_switches(&self) -> usize;
     /// do network translation
     fn translate(&self, vname: &str) -> String;
+    fn to_dot(&self) -> Dot<&Graph<Node, Link>>;
 }
 
 /// A VirtCluster is a subgraph of the original physical cluster.
@@ -69,6 +71,12 @@ impl Index<NodeIx> for VirtCluster {
 
 impl IndexMut<LinkIx> for VirtCluster {
     fn index_mut(&mut self, index: LinkIx) -> &mut Self::Output {
+        &mut self.inner[index]
+    }
+}
+
+impl IndexMut<NodeIx> for VirtCluster {
+    fn index_mut(&mut self, index: NodeIx) -> &mut Self::Output {
         &mut self.inner[index]
     }
 }
@@ -120,6 +128,10 @@ impl Topology for VirtCluster {
     #[inline]
     fn translate(&self, vname: &str) -> String {
         self.virt_to_phys[vname].clone()
+    }
+
+    fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
+        self.inner.to_dot()
     }
 }
 
@@ -183,10 +195,6 @@ impl Cluster {
         assert!(self.graph[cnode].parent.is_none());
         self.graph[cnode].parent = Some(l2);
     }
-
-    pub fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
-        Dot::with_config(&self.graph, &[])
-    }
 }
 
 impl std::ops::Index<NodeIx> for Cluster {
@@ -205,6 +213,12 @@ impl std::ops::Index<LinkIx> for Cluster {
 
 impl std::ops::IndexMut<LinkIx> for Cluster {
     fn index_mut(&mut self, index: LinkIx) -> &mut Self::Output {
+        &mut self.graph[index]
+    }
+}
+
+impl IndexMut<NodeIx> for Cluster {
+    fn index_mut(&mut self, index: NodeIx) -> &mut Self::Output {
         &mut self.graph[index]
     }
 }
@@ -299,6 +313,10 @@ impl Topology for Cluster {
     fn translate(&self, vname: &str) -> String {
         vname.to_owned()
     }
+
+    fn to_dot(&self) -> Dot<&Graph<Node, Link>> {
+        Dot::with_config(&self.graph, &[])
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +371,40 @@ pub struct Node {
     // this gives us faster route search
     parent: Option<EdgeIndex>,
     children: Vec<EdgeIndex>,
+    // counters
+    pub(crate) counters: Counters,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Counters {
+    pub(crate) tx_total: usize,
+    pub(crate) rx_total: usize,
+    pub(crate) tx_in: usize,
+    pub(crate) rx_in: usize,
+}
+
+impl Counters {
+    pub(crate) fn new() -> Self {
+        Default::default()
+    }
+
+    pub(crate) fn update_tx(&mut self, f: &FlowState, inc: usize) {
+        // by checking the length of route, we know whether src and dst
+        // are within the same rack
+        self.tx_total += inc;
+        if f.route.path.len() == 2 {
+            // same rack
+            self.tx_in += inc;
+        }
+    }
+
+    pub(crate) fn update_rx(&mut self, f: &FlowState, inc: usize) {
+        self.rx_total += inc;
+        if f.route.path.len() == 2 {
+            // same rack
+            self.rx_in += inc;
+        }
+    }
 }
 
 impl Node {
@@ -364,6 +416,7 @@ impl Node {
             node_type,
             parent: None,
             children: Vec::new(),
+            counters: Counters::new(),
         }
     }
 

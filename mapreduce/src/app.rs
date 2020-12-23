@@ -10,10 +10,10 @@ use crate::{
 use log::info;
 use nethint::{
     app::{AppEvent, Application, Replayer},
-    cluster::{Cluster, Topology},
-    simulator::{Event, Executor, Simulator},
-    Duration, Flow, Trace, TraceRecord,
     brain::TenantId,
+    cluster::{Cluster, Topology},
+    simulator::{Event, Events, Executor, Simulator},
+    Duration, Flow, Trace, TraceRecord,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 
@@ -82,7 +82,12 @@ impl<'c> MapReduceApp<'c> {
             ReducerPlacementPolicy::HierarchicalGreedy => Box::new(GreedyReducerScheduler::new()),
         };
 
-        let reducers = reduce_scheduler.place(&**self.cluster.as_ref().unwrap(), &self.job_spec, &mappers, &shuffle);
+        let reducers = reduce_scheduler.place(
+            &**self.cluster.as_ref().unwrap(),
+            &self.job_spec,
+            &mappers,
+            &shuffle,
+        );
         info!("reducers: {:?}", reducers);
         reducers
     }
@@ -137,24 +142,30 @@ impl<'c> MapReduceApp<'c> {
 
 impl<'c> Application for MapReduceApp<'c> {
     type Output = Option<Duration>;
-    fn on_event(&mut self, event: AppEvent) -> Event {
+    fn on_event(&mut self, event: AppEvent) -> Events {
         if self.cluster.is_none() {
             // ask simulator for the NetHint
-            match event {
-                AppEvent::AppStart => {
+            match &event {
+                &AppEvent::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return Event::NetHintRequest(0, self.tenant_id);
+                    return Event::NetHintRequest(0, self.tenant_id).into();
                 }
-                AppEvent::NetHintResponse(_, tenant_id, vc) => {
+                &AppEvent::NetHintResponse(_, tenant_id, ref vc) => {
                     assert_eq!(tenant_id, self.tenant_id);
-                    self.cluster = Some(Rc::new(vc));
+                    self.cluster = Some(Rc::new(vc.clone()));
+                    info!(
+                        "nethint response: {}",
+                        self.cluster.as_ref().unwrap().to_dot()
+                    );
                     // since we have the cluster, start and schedule the app again
                     self.start();
+                    return self.replayer.on_event(AppEvent::AppStart);
                 }
                 _ => unreachable!(),
             }
         }
 
+        assert!(self.cluster.is_some());
         if let AppEvent::FlowComplete(ref flows) = &event {
             let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();

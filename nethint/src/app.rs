@@ -1,6 +1,12 @@
-use crate::{hint::NetHintV2, simulator::Event};
-use crate::{Timestamp, Trace, TraceRecord};
+use log::{debug, trace};
+
 use crate::brain::TenantId;
+use crate::{
+    hint::NetHintV2,
+    simulator::{Event, Events},
+    Token,
+};
+use crate::{Timestamp, Trace, TraceRecord};
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -8,13 +14,15 @@ pub enum AppEvent {
     AppStart,
     NetHintResponse(usize, TenantId, NetHintV2),
     FlowComplete(Vec<TraceRecord>),
+    // Time up event triggered
+    Notification(Token),
 }
 
 /// An Applicatoin can interact with the simulator based on the flow completion event it received.
 /// It dynamically start new flows according to the finish and arrive event of some flows.
 pub trait Application {
     type Output;
-    fn on_event(&mut self, event: AppEvent) -> Event;
+    fn on_event(&mut self, event: AppEvent) -> Events;
     fn answer(&mut self) -> Self::Output;
 }
 
@@ -28,18 +36,18 @@ pub struct Replayer {
 
 impl Application for Replayer {
     type Output = Trace;
-    fn on_event(&mut self, event: AppEvent) -> Event {
+    fn on_event(&mut self, event: AppEvent) -> Events {
         match event {
-            AppEvent::AppStart => Event::FlowArrive(self.trace.recs.clone()),
+            AppEvent::AppStart => Event::FlowArrive(self.trace.recs.clone()).into(),
             AppEvent::FlowComplete(mut flows) => {
                 self.completed.recs.append(&mut flows);
                 if self.completed.recs.len() == self.num_flows {
-                    Event::AppFinish
+                    (Event::AppFinish).into()
                 } else {
-                    Event::Continue
+                    Events::new()
                 }
             }
-            AppEvent::NetHintResponse(_, _, _) => Event::Continue,
+            AppEvent::NetHintResponse(..) | AppEvent::Notification(_) => Events::new(), // Replayer does not handle these events
         }
     }
     fn answer(&mut self) -> Self::Output {
@@ -68,6 +76,28 @@ pub struct AppGroup<'a, T> {
     output: Vec<(usize, T)>,
 }
 
+pub trait AppGroupTokenCoding {
+    fn encode(tenant_id: TenantId, app_id: usize) -> Token;
+    fn decode(&self) -> (TenantId, usize);
+}
+
+impl AppGroupTokenCoding for Token {
+    fn encode(tenant_id: TenantId, app_id: usize) -> Token {
+        assert_eq!(
+            tenant_id, app_id,
+            "currently, AppGroupTokenCoding assumes tenant_id and app_id are the same"
+        );
+        assert!(
+            tenant_id < 0x1 << 32,
+            format!("invalid tenant_id {}", tenant_id)
+        );
+        Token(tenant_id << 32 | app_id)
+    }
+    fn decode(&self) -> (TenantId, usize) {
+        (self.0 >> 32, self.0 & 0xffffffff)
+    }
+}
+
 impl<'a, T> Application for AppGroup<'a, T>
 where
     T: Clone,
@@ -75,51 +105,63 @@ where
     // a list of (app_id, App::Output)
     type Output = Vec<(usize, T)>;
 
-    fn on_event(&mut self, event: AppEvent) -> Event {
+    fn on_event(&mut self, event: AppEvent) -> Events {
         if self.output.len() == self.apps.len() {
-            return Event::AppFinish;
+            return (Event::AppFinish).into();
         }
 
-        let mut new_flows = Vec::new();
-        match event {
+        trace!("AppGroup receive an app_event {:?}", event);
+        let events = match event {
             AppEvent::AppStart => {
                 // start all apps, modify the start time of flow, gather all flows
-                // xs >>= f = concat $ map f xs
-                // (>>=) :: m a -> (a -> m b) -> m b
-                // and_then
-                // concat a set of Event::FlowArraive 
-                for app_id in 0..self.apps.len() {
-                    self.forward(app_id, AppEvent::AppStart, &mut new_flows);
-                }
+                // register notification to start apps
+                (0..self.apps.len())
+                    .map(|app_id| {
+                        let start_off = self.apps[app_id].0;
+                        let token = Token::encode(app_id, app_id);
+                        Event::RegisterTimer(start_off, token)
+                    })
+                    .collect()
             }
             AppEvent::FlowComplete(recs) => {
                 // dispatch flows to different apps by looking at the token
                 let mut flows = vec![vec![]; self.apps.len()];
                 for r in recs {
-                    let app_id: usize = r.flow.token.unwrap().into();
+                    let (_, app_id) = r.flow.token.unwrap().decode();
                     assert!(app_id < self.apps.len());
                     let mut f = r.clone();
                     f.ts -= self.apps[app_id].0; // f.ts -= start_off;
                     flows[app_id].push(f);
                 }
-                for (app_id, recs) in flows.into_iter().enumerate() {
-                    if !recs.is_empty() {
-                        self.forward(app_id, AppEvent::FlowComplete(recs), &mut new_flows);
-                    }
-                }
+
+                flows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(app_id, recs)| {
+                        if !recs.is_empty() {
+                            self.forward(app_id, AppEvent::FlowComplete(recs))
+                        } else {
+                            Events::new()
+                        }
+                    })
+                    .flatten()
+                    .collect()
             }
             AppEvent::NetHintResponse(app_id, tenant_id, vc) => {
                 let app_event = AppEvent::NetHintResponse(app_id, tenant_id, vc);
-                self.forward(app_id, app_event, &mut new_flows);
+                self.forward(app_id, app_event)
             }
-        }
+            AppEvent::Notification(token) => {
+                // now the timestamp is at self.apps[app_id].start_off
+                let (_, app_id) = token.decode();
+                self.forward(app_id, AppEvent::AppStart)
+            }
+        };
 
-        if self.apps.len() == self.output.len() {
-            Event::AppFinish
-        } else if new_flows.is_empty() {
-            Event::Continue
+        if self.output.len() == self.apps.len() {
+            return (Event::AppFinish).into();
         } else {
-            Event::FlowArrive(new_flows)
+            events
         }
     }
 
@@ -150,29 +192,45 @@ where
         app_id
     }
 
-    fn forward(&mut self, app_id: usize, app_event: AppEvent, new_flows: &mut Vec<TraceRecord>) {
-        let (start_off, app) = &mut self.apps[app_id];
-        match app.on_event(app_event) {
-            Event::FlowArrive(mut recs) => {
-                recs.iter_mut().for_each(|r| {
-                    r.ts += *start_off;
-                    assert!(
-                        r.flow.token.is_none(),
-                        "Currently AppGroup assumes the flow token is not used"
-                    );
-                    r.flow.token = Some(app_id.into());
-                    // TODO(cjr): we can save the token and restore it transparently
-                });
-                new_flows.append(&mut recs);
-            }
-            Event::AppFinish => {
-                self.output.push((app_id, app.answer()));
-            }
-            Event::Continue => {}
-            Event::NetHintRequest(app_id, tenant_id) => {
-                assert_eq!(app_id, 0);
-                Event::NetHintRequest(app_id, tenant_id)
-            }
-        }
+    fn forward(&mut self, app_id: usize, app_event: AppEvent) -> Events {
+        let start_off = self.apps[app_id].0;
+
+        self.apps[app_id]
+            .1
+            .on_event(app_event)
+            .into_iter()
+            .flat_map(|event| {
+                match event {
+                    Event::FlowArrive(mut recs) => {
+                        recs.iter_mut().for_each(|r| {
+                            r.ts += start_off;
+                            assert!(
+                                r.flow.token.is_none(),
+                                "Currently AppGroup assumes the flow token is not used"
+                            );
+                            r.flow.token = Some(Token::encode(app_id, app_id));
+                            // TODO(cjr): we can save the token and restore it transparently
+                        });
+                        Event::FlowArrive(recs).into()
+                    }
+                    Event::AppFinish => {
+                        debug!("AppGroup, user app notifies AppFinish, app_id: {}", app_id);
+                        let app = &mut self.apps[app_id].1;
+                        self.output.push((app_id, app.answer()));
+                        Events::new()
+                    }
+                    Event::NetHintRequest(inner_app_id, tenant_id) => {
+                        assert_eq!(inner_app_id, 0);
+                        Event::NetHintRequest(app_id, tenant_id).into()
+                    }
+                    Event::RegisterTimer(_dura, token) => {
+                        panic!(
+                            "impossible to receive timer registration from user app, token: {:?}",
+                            token
+                        );
+                    }
+                }
+            })
+            .collect()
     }
 }

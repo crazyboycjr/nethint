@@ -12,9 +12,10 @@ use crate::brain::{Brain, TenantId};
 use crate::cluster::{Cluster, Link, Route, Topology};
 use crate::{
     app::{AppEvent, Application, Replayer},
-    hint::{SimpleEstimator, Estimator},
+    hint::{Estimator, SimpleEstimator},
+    timer::{OnceTimer, RepeatTimer, Timer, TimerKind},
 };
-use crate::{Duration, Flow, Timestamp, ToStdDuration, Trace, TraceRecord};
+use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 
@@ -30,9 +31,10 @@ pub struct Simulator {
     ts: Timestamp,
     state: NetState,
 
+    timers: BinaryHeap<Box<dyn Timer>>,
+
     // nethint
     enable_nethint: bool,
-    brain: Option<Rc<RefCell<Brain>>>,
     estimator: Option<Box<dyn Estimator>>,
 }
 
@@ -42,21 +44,27 @@ impl Simulator {
             cluster,
             ts: 0,
             state: Default::default(),
+            timers: BinaryHeap::new(),
             enable_nethint: false,
-            brain: None,
             estimator: None,
         }
     }
 
     pub fn with_brain(brain: Rc<RefCell<Brain>>) -> Self {
         let cluster = (**brain.borrow().cluster()).clone();
-        let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain)));
+        let interval = 1_000_000; // 1ms
+        let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain), interval));
+        let timers =
+            std::iter::once(Box::new(RepeatTimer::new(interval, interval)) as Box<dyn Timer>)
+                .collect();
+        let mut state: NetState = Default::default();
+        state.brain = Some(Rc::clone(&brain));
         Simulator {
             cluster,
             ts: 0,
-            state: Default::default(),
+            state,
+            timers,
             enable_nethint: true,
-            brain: Some(brain),
             estimator: Some(estimator),
         }
     }
@@ -70,6 +78,16 @@ impl Simulator {
         // resume from the previous saved state
         unimplemented!();
     }
+
+    fn register_once(&mut self, next_ready: Timestamp, token: Token) {
+        self.timers
+            .push(Box::new(OnceTimer::new(next_ready, token)));
+    }
+
+    // fn register_repeat(&mut self, next_ready: Timestamp, dura: Duration) {
+    //     self.timers
+    //         .push(Box::new(RepeatTimer::new(next_ready, dura)));
+    // }
 
     #[inline]
     fn calc_delta(l: &Link, fs: &[FlowStateRef]) -> Bandwidth {
@@ -87,6 +105,24 @@ impl Simulator {
         // start new ready flows
         self.ts += ts_inc;
         self.state.emit_ready_flows(self.ts);
+
+        // nethint sampling
+        if self.enable_nethint {
+            if let Some(timer) = self.timers.peek() {
+                if timer.next_alert() <= self.ts + ts_inc && timer.kind() == TimerKind::Repeat {
+                    let timer = self.timers.pop().unwrap();
+                    match timer.as_box_any().downcast::<RepeatTimer>() {
+                        Ok(mut repeat_timer) => {
+                            self.estimator.as_mut().unwrap().sample();
+
+                            repeat_timer.reset();
+                            self.timers.push(repeat_timer);
+                        }
+                        Err(_) => panic!("impossible"),
+                    }
+                }
+            }
+        }
 
         comp_flows
     }
@@ -131,8 +167,10 @@ impl Simulator {
         }
     }
 
-    fn max_min_fairness(&mut self) -> Vec<TraceRecord> {
+    fn max_min_fairness(&mut self) -> AppEvent {
         loop {
+            // TODO(cjr): Optimization: if netstate hasn't been changed
+            // (i.e. new newly added or completed flows), the skip max_min_fairness_converge.
             // compute a fair share of bandwidth allocation
             self.max_min_fairness_converge();
             trace!(
@@ -158,16 +196,53 @@ impl Simulator {
             let ts_inc = first_complete_time
                 .into_iter()
                 .chain(first_ready_time)
+                .chain(self.timers.peek().map(|x| x.next_alert()))
                 .min()
-                .expect("running flows and ready flows are both empty")
+                .expect("running flows, ready flows, and timers are all empty")
                 - self.ts;
 
-            assert!(ts_inc > 0);
+            // TODO(cjr): handle the timer
+            trace!("self.ts: {}, ts_inc: {}", self.ts, ts_inc);
+            assert!(
+                !(first_complete_time.is_none()
+                    && first_ready_time.is_none()
+                    && (self.timers.is_empty() || self.timers.len() == 1 && self.enable_nethint))
+            );
+
+            if ts_inc == 0 {
+                // the next event should be the timer event
+                if let Some(timer) = self.timers.peek() {
+                    assert_eq!(timer.next_alert(), self.ts);
+                    if timer.kind() == TimerKind::Once {
+                        let timer = self.timers.pop().unwrap();
+                        let once_timer = timer.as_any().downcast_ref::<OnceTimer>().unwrap();
+                        debug!("{:?}", once_timer);
+                        let token = once_timer.token;
+                        break AppEvent::Notification(token);
+                    }
+                }
+            }
+
+            assert!(
+                ts_inc > 0
+                    || (ts_inc == 0
+                        && self
+                            .timers
+                            .peek()
+                            .and_then(|timer| timer.as_any().downcast_ref::<RepeatTimer>())
+                            .is_some()),
+                "only Nethint timers can cause ts_inc == 0"
+            );
 
             // modify the network state to the time at ts + ts_inc
             let comp_flows = self.proceed(ts_inc);
             if !comp_flows.is_empty() {
-                break comp_flows;
+                trace!(
+                    "ts: {:?}, completed flows: {:?}",
+                    self.ts.to_dura(),
+                    comp_flows
+                );
+                break AppEvent::FlowComplete(comp_flows);
             }
         }
     }
@@ -182,43 +257,59 @@ impl<'a> Executor<'a> for Simulator {
     fn run_with_appliation<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
         // let's write some conceptual code
         let start = std::time::Instant::now();
-        let mut event = app.on_event(AppEvent::AppStart);
-        assert!(matches!(event, Event::FlowArrive(_)));
+        let mut events = app.on_event(AppEvent::AppStart);
 
         loop {
-            trace!("simulator: on event {:?}", event);
-            event = match event {
-                Event::FlowArrive(recs) => {
-                    assert!(!recs.is_empty(), "No flow arrives.");
-                    // 1. find path for each flow and add to current net state
-                    for r in recs {
-                        self.state.add_flow(r, &self.cluster, self.ts);
+            let mut finished = false;
+            let mut new_events = Events::new();
+            events.reverse();
+
+            trace!("simulator: events.len: {:?}", events.len());
+            while let Some(event) = events.pop() {
+                trace!("simulator: on event {:?}", event);
+                match event {
+                    Event::FlowArrive(recs) => {
+                        assert!(!recs.is_empty(), "No flow arrives.");
+                        // 1. find path for each flow and add to current net state
+                        for r in recs {
+                            self.state.add_flow(r, &self.cluster, self.ts);
+                        }
                     }
-                    // 2. run max-min fairness to find the next completed flow
-                    let comp_flows = self.max_min_fairness();
-                    trace!(
-                        "ts: {:?}, completed flows: {:?}",
-                        self.ts.to_dura(),
-                        comp_flows
-                    );
-
-                    // 3. nofity the application with this flow
-                    app.on_event(AppEvent::FlowComplete(comp_flows))
-                }
-                Event::AppFinish => {
-                    break;
-                }
-                Event::Continue => {
-                    let comp_flows = self.max_min_fairness();
-                    trace!(
-                        "ts: {:?}, completed flows: {:?}",
-                        self.ts.to_dura(),
-                        comp_flows
-                    );
-
-                    app.on_event(AppEvent::FlowComplete(comp_flows))
+                    Event::AppFinish => {
+                        finished = true;
+                    }
+                    Event::NetHintRequest(app_id, tenant_id) => {
+                        assert!(self.enable_nethint, "Nethint not enabled.");
+                        let response = AppEvent::NetHintResponse(
+                            app_id,
+                            tenant_id,
+                            self.estimator.as_ref().unwrap().estimate(tenant_id),
+                        );
+                        new_events.append(app.on_event(response));
+                    }
+                    Event::RegisterTimer(after_dura, token) => {
+                        self.register_once(self.ts + after_dura, token);
+                    }
                 }
             }
+
+            if finished {
+                break;
+            }
+
+            if new_events.len() > 0 {
+                // NetHintResponse sent, new flows may arrive
+                // must handle them first before computing max_min_fairness
+                std::mem::swap(&mut events, &mut new_events);
+                continue;
+            }
+
+            // 2. run max-min fairness to find the next completed flow
+            let app_event = self.max_min_fairness();
+
+            // 3. nofity the application with this flow
+            new_events.append(app.on_event(app_event));
+            std::mem::swap(&mut events, &mut new_events);
         }
 
         let end = std::time::Instant::now();
@@ -237,6 +328,8 @@ struct NetState {
     running_flows: Vec<FlowStateRef>,
     flows: HashMap<Link, Vec<FlowStateRef>>,
     resolve_route_time: std::time::Duration,
+    // for nethint use
+    brain: Option<Rc<RefCell<Brain>>>,
 }
 
 impl NetState {
@@ -287,9 +380,13 @@ impl NetState {
         );
         let mut comp_flows = Vec::new();
 
-        self.running_flows.iter_mut().for_each(|f| {
+        self.running_flows.iter().for_each(|f| {
             let speed = f.borrow().speed;
-            f.borrow_mut().bytes_sent += (speed / 1e9 * ts_inc as f64).round() as usize / 8;
+            let delta = (speed / 1e9 * ts_inc as f64).round() as usize / 8;
+            f.borrow_mut().bytes_sent += delta;
+
+            // update counters for nethint
+            self.update_counters(&*f.borrow(), delta);
 
             if f.borrow().completed() {
                 comp_flows.push(TraceRecord::new(
@@ -305,10 +402,31 @@ impl NetState {
         for (_, fs) in self.flows.iter_mut() {
             fs.retain(|f| !f.borrow().completed());
         }
+
         // filter all empty links
         self.flows.retain(|_, fs| !fs.is_empty());
 
         comp_flows
+    }
+
+    fn update_counters(&self, f: &FlowState, delta: usize) {
+        // by looking at flow.token, we can extract the tenant_id of the flow
+        // that directs us to the corresponding VirtCluster by looking up
+        // in Brain.
+        // The sampler is to copy all nodes's latest data in all virt clusters.
+        if let Some(ref brain) = self.brain {
+            use crate::app::AppGroupTokenCoding;
+            let token = f.flow.token.unwrap_or(0.into());
+            let (tenant_id, _) = token.decode();
+            let src_ix = f.route.from;
+            let dst_ix = f.route.to;
+            let vsrc_ix = brain.borrow().phys_to_virt(src_ix, tenant_id);
+            let vdst_ix = brain.borrow().phys_to_virt(dst_ix, tenant_id);
+            brain.borrow().vclusters.get(&tenant_id).map(|vcluster| {
+                vcluster.borrow_mut()[vsrc_ix].counters.update_tx(f, delta);
+                vcluster.borrow_mut()[vdst_ix].counters.update_rx(f, delta);
+            });
+        }
     }
 }
 
@@ -316,7 +434,7 @@ type FlowStateRef = Rc<RefCell<FlowState>>;
 
 /// A running flow
 #[derive(Debug)]
-struct FlowState {
+pub(crate) struct FlowState {
     /// flow start time, could be greater than sim_ts, read only
     ts: Timestamp,
     /// read only flow property
@@ -325,7 +443,7 @@ struct FlowState {
     converged: bool,
     bytes_sent: usize,
     speed: f64, // bits/s
-    route: Route,
+    pub(crate) route: Route,
 }
 
 impl FlowState {
@@ -382,8 +500,61 @@ pub enum Event {
     /// The application has completed all flows and has no more flows to send. This event should
     /// appear after certain FlowComplete event.
     AppFinish,
-    /// Application does not take any action.
-    Continue,
     /// Request NetHint information, (app_id, tenant_id)
     NetHintRequest(usize, TenantId),
+    /// A Timer event is registered by Application. It notifies the application after duration ns.
+    /// Token is used to identify the timer.
+    RegisterTimer(Duration, Token),
+}
+
+/// Iterator of Event
+// TODO(cjr): use smallvec
+#[derive(Debug, Clone, Default)]
+pub struct Events(Vec<Event>);
+
+impl Events {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn add(&mut self, e: Event) {
+        self.0.push(e);
+    }
+
+    pub fn append(&mut self, mut e: Events) {
+        self.0.append(&mut e.0);
+    }
+
+    pub fn reverse(&mut self) {
+        self.0.reverse();
+    }
+
+    pub fn pop(&mut self) -> Option<Event> {
+        self.0.pop()
+    }
+}
+
+impl IntoIterator for Events {
+    type Item = Event;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl std::iter::FromIterator<Event> for Events {
+    fn from_iter<T: IntoIterator<Item = Event>>(iter: T) -> Self {
+        Events(iter.into_iter().collect())
+    }
+}
+
+impl From<Event> for Events {
+    fn from(e: Event) -> Self {
+        Events(vec![e])
+    }
 }

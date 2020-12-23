@@ -1,5 +1,5 @@
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
@@ -20,7 +20,9 @@ pub struct Brain {
     /// used set of nodes in phycisal cluster
     used: HashSet<NodeIx>,
     /// now we only support each tenant owns a single VirtCluster
-    pub(crate) vclusters: HashMap<TenantId, Rc<VirtCluster>>,
+    pub(crate) vclusters: HashMap<TenantId, Rc<RefCell<VirtCluster>>>,
+    /// physical node index + tenant_id to virtual node index
+    phys_to_virt: HashMap<(NodeIx, TenantId), NodeIx>,
 }
 
 /// Similar to AWS Placement Groups.
@@ -66,11 +68,24 @@ impl Brain {
             cluster: Arc::new(cluster),
             used: Default::default(),
             vclusters: Default::default(),
+            phys_to_virt: Default::default(),
         }))
     }
 
     pub fn cluster(&self) -> &Arc<Cluster> {
         &self.cluster
+    }
+
+    pub(crate) fn phys_to_virt(&self, node_ix: NodeIx, tenant_id: TenantId) -> NodeIx {
+        *self
+            .phys_to_virt
+            .get(&(node_ix, tenant_id))
+            .unwrap_or_else(|| {
+                panic!(
+                    "node_ix: {:?}, teannt_id: {} not found in physical cluster.",
+                    node_ix, tenant_id
+                )
+            })
     }
 
     pub fn make_asymmetric(&mut self, seed: u64) {
@@ -93,7 +108,7 @@ impl Brain {
         tenant_id: TenantId,
         nhosts: usize,
         strategy: PlacementStrategy,
-    ) -> Result<Rc<VirtCluster>, Error> {
+    ) -> Result<VirtCluster, Error> {
         if self.used.len() + nhosts > self.cluster.num_hosts() {
             return Err(Error::NoHost(self.cluster.num_hosts(), nhosts));
         }
@@ -104,17 +119,35 @@ impl Brain {
             PlacementStrategy::Random => self.place_random(nhosts),
         };
 
-        let vcluster = Rc::new(VirtCluster {
+        let vcluster = VirtCluster {
             inner,
             virt_to_phys,
             tenant_id,
-        });
-        let ret = self.vclusters.insert(tenant_id, Rc::clone(&vcluster));
-        assert!(ret.is_none());
-        Ok(vcluster)
+        };
+
+        let ret = vcluster.clone();
+
+        // update mapping from physical node to virtual node
+        vcluster
+            .virt_to_phys
+            .iter()
+            .for_each(|(virt_name, phys_name)| {
+                let vnode_ix = vcluster.get_node_index(&virt_name);
+                let pnode_ix = self.cluster.get_node_index(&phys_name);
+                self.phys_to_virt
+                    .insert((pnode_ix, tenant_id), vnode_ix)
+                    .unwrap_none();
+            });
+
+        // update tenant_id -> VirtCluster
+        self.vclusters
+            .insert(tenant_id, Rc::new(RefCell::new(vcluster)))
+            .unwrap_none();
+
+        Ok(ret)
     }
 
-    fn place_random(&self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
+    fn place_random(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         use crate::RNG;
         use rand::seq::IteratorRandom;
 
@@ -157,6 +190,7 @@ impl Brain {
             // connect the host to the ToR
             inner.add_node(Node::new(host_name, 3, NodeType::Host));
             inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
+            self.used.insert(host_ix);
         }
 
         let virt_to_phys = host_alloc
@@ -168,11 +202,11 @@ impl Brain {
         (inner, virt_to_phys)
     }
 
-    fn place_compact(&self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
+    fn place_compact(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         // Vec<(slots, tor_ix)>
         let root = "virtual_cloud";
 
-        let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches())
+        let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches() - 1)
             .map(|i| {
                 let name = format!("tor_{}", i);
                 let tor_ix = self.cluster.get_node_index(&name);
@@ -181,7 +215,7 @@ impl Brain {
                     .get_downlinks(tor_ix)
                     .filter(|&link_ix| {
                         let host_ix = self.cluster.get_target(*link_ix);
-                        self.used.contains(&host_ix)
+                        !self.used.contains(&host_ix)
                     })
                     .count();
                 (cap, tor_ix)
@@ -226,6 +260,7 @@ impl Brain {
                     inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
                     to_pick -= 1;
                     allocated += 1;
+                    self.used.insert(host_ix);
                 }
             }
 
