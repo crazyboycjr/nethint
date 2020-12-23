@@ -9,9 +9,11 @@ use crate::{
   AllReducePolicy, AllReduceAlgorithm,
   random_ring::RandomRingAllReduce,
   topology_aware::TopologyAwareRingAllReduce,
+  JobSpec,
 };
 
 pub struct AllReduceApp<'c> {
+    job_spec: &'c JobSpec,
     cluster: &'c dyn Topology,
     replayer: Replayer,
     jct: Option<Duration>,
@@ -20,9 +22,10 @@ pub struct AllReduceApp<'c> {
 }
 
 impl<'c> AllReduceApp<'c> {
-    pub fn new(cluster: &'c dyn Topology, seed: u64, allreduce_policy: AllReducePolicy) -> Self {
+    pub fn new(job_spec: &'c JobSpec, cluster: &'c dyn Topology, seed: u64, allreduce_policy: AllReducePolicy) -> Self {
         let trace = Trace::new();
         AllReduceApp {
+            job_spec,
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
@@ -43,7 +46,7 @@ impl<'c> AllReduceApp<'c> {
           AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
         };
 
-        let flows = allreduce_algorithm.allreduce(1000000, self.cluster);
+        let flows = allreduce_algorithm.allreduce(self.job_spec.buffer_size as u64, self.cluster);
 
         for flow in flows {
             let rec = TraceRecord::new(0, flow, None);

@@ -14,12 +14,16 @@ use nethint:: {
 #[derive(Debug, Clone)]
 pub struct JobSpec {
     pub num_workers: usize,
+    pub buffer_size: usize,
+    pub num_iterations: usize,
 }
 
 impl JobSpec {
-    pub fn new(num_workers: usize) -> Self {
+    pub fn new(num_workers: usize, buffer_size: usize, num_iterations: usize) -> Self {
         JobSpec {
           num_workers,
+          buffer_size,
+          num_iterations,
         }
     }
 }
