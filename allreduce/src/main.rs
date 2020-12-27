@@ -7,7 +7,7 @@ use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
     simulator::{Executor, Simulator},
-    cluster::Topology,
+    // cluster::Topology,
 };
 
 extern crate allreduce;
