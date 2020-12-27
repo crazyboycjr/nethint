@@ -17,11 +17,11 @@ fn main() {
     logging::init_log();
 
     let opt = Opt::from_args();
-    info!("Opts: {:#?}", opt);
+    // info!("Opts: {:#?}", opt);
 
     let mut brain = Brain::build_cloud(opt.topo.clone());
 
-    info!("cluster:\n{}", brain.cluster().to_dot());
+    // info!("cluster:\n{}", brain.cluster().to_dot());
 
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     info!("seed = {}", seed);
@@ -60,6 +60,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
 
     let mut simulator = Simulator::new((**brain.cluster()).clone());
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
-    info!("all job completion time: {:?}", all_jct.unwrap());
+    // let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    // info!("all job completion time: {:?}", all_jct.unwrap());
+    info!("{:?}", app_jct);
 }
