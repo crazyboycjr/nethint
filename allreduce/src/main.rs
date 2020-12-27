@@ -63,4 +63,5 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
     // let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     // info!("all job completion time: {:?}", all_jct.unwrap());
     info!("{:?}", app_jct);
+    println!("{:?}", app_jct);
 }
