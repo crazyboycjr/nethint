@@ -25,6 +25,6 @@ pub struct Opt {
     pub ncases: usize,
 
     /// Nethint level.
-    #[structopt(short = "h", long = "nethint_level", default_value = "0")]
+    #[structopt(short = "nh", long = "nethint_level", default_value = "0")]
     pub nethint_level: usize,
 }
