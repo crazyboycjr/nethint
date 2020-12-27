@@ -36,11 +36,11 @@ impl Simulator {
         }
     }
 
-    pub fn suspend(&mut self, path: &std::path::Path) {
+    pub fn suspend(&mut self, _path: &std::path::Path) {
         // dump all running states of the simulator
     }
 
-    pub fn resume(&mut self, path: &std::path::Path) {
+    pub fn resume(&mut self, _path: &std::path::Path) {
         // resume from the previous saved state
     }
 

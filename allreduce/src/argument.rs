@@ -23,4 +23,8 @@ pub struct Opt {
     /// Number of jobs.
     #[structopt(short = "n", long = "ncases", default_value = "1")]
     pub ncases: usize,
+
+    /// Nethint level.
+    #[structopt(short = "nh", long = "nethint_level", default_value = "0")]
+    pub nethint_level: usize,
 }

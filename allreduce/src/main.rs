@@ -7,7 +7,7 @@ use nethint::{
     app::AppGroup,
     brain::{Brain, PlacementStrategy},
     simulator::{Executor, Simulator},
-    cluster::Topology,
+    // cluster::Topology,
 };
 
 extern crate allreduce;
@@ -17,11 +17,11 @@ fn main() {
     logging::init_log();
 
     let opt = Opt::from_args();
-    info!("Opts: {:#?}", opt);
+    // info!("Opts: {:#?}", opt);
 
     let mut brain = Brain::build_cloud(opt.topo.clone());
 
-    info!("cluster:\n{}", brain.cluster().to_dot());
+    // info!("cluster:\n{}", brain.cluster().to_dot());
 
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     info!("seed = {}", seed);
@@ -32,6 +32,11 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
     let mut vc_container = Vec::new();
     let mut jobs = Vec::new();
     let mut app_group = AppGroup::new();
+
+    let all_reduce_policy = match opt.nethint_level {
+        1 => AllReducePolicy::TopologyAware,
+        _ => AllReducePolicy::Random,
+    };
 
     for _i in 0..opt.ncases {
         let job_spec = JobSpec::new(opt.num_workers, opt.buffer_size, opt.num_iterations);
@@ -47,7 +52,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
             jobs.get(i).unwrap(),
             vc_container.get(i).unwrap(),
             seed,
-            AllReducePolicy::TopologyAware,
+            &all_reduce_policy,
         ));
         app.start();
         app_group.add(0, app);
@@ -55,6 +60,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
 
     let mut simulator = Simulator::new((**brain.cluster()).clone());
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
-    info!("all job completion time: {:?}", all_jct.unwrap());
+    // let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    // info!("all job completion time: {:?}", all_jct.unwrap());
+    info!("{:?}", app_jct);
 }
