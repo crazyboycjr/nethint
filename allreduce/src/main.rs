@@ -33,6 +33,11 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
     let mut jobs = Vec::new();
     let mut app_group = AppGroup::new();
 
+    let all_reduce_policy = match opt.nethint_level {
+        1 => AllReducePolicy::TopologyAware,
+        _ => AllReducePolicy::Random,
+    };
+
     for _i in 0..opt.ncases {
         let job_spec = JobSpec::new(opt.num_workers, opt.buffer_size, opt.num_iterations);
         let vcluster = brain
@@ -47,7 +52,7 @@ fn run_experiments(opt: &Opt, brain: &mut Brain, seed: u64) {
             jobs.get(i).unwrap(),
             vc_container.get(i).unwrap(),
             seed,
-            AllReducePolicy::TopologyAware,
+            &all_reduce_policy,
         ));
         app.start();
         app_group.add(0, app);

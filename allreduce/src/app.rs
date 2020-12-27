@@ -18,13 +18,13 @@ pub struct AllReduceApp<'c> {
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
-    allreduce_policy: AllReducePolicy,
+    allreduce_policy: &'c AllReducePolicy,
     remaining_iterations: usize,
     remaining_flows: usize,
 }
 
 impl<'c> AllReduceApp<'c> {
-    pub fn new(job_spec: &'c JobSpec, cluster: &'c dyn Topology, seed: u64, allreduce_policy: AllReducePolicy) -> Self {
+    pub fn new(job_spec: &'c JobSpec, cluster: &'c dyn Topology, seed: u64, allreduce_policy: &'c AllReducePolicy) -> Self {
         let trace = Trace::new();
         AllReduceApp {
             job_spec,
