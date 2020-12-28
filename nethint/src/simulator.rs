@@ -113,7 +113,7 @@ impl Simulator {
                     let timer = self.timers.pop().unwrap();
                     match timer.as_box_any().downcast::<RepeatTimer>() {
                         Ok(mut repeat_timer) => {
-                            self.estimator.as_mut().unwrap().sample();
+                            self.estimator.as_mut().unwrap().sample(self.ts);
 
                             repeat_timer.reset();
                             self.timers.push(repeat_timer);

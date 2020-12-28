@@ -4,9 +4,10 @@ Here's the plan
 - VirtCluster
 - Sampler
 - NetHint (3-level)
-- Allreduce Example
 - Plink
 - run from configuration (toml)
+- BackgroundFlow
+- Allreduce Example
 -[o] Flow
 -[o] Trace
 -[o] Event
@@ -14,7 +15,6 @@ Here's the plan
 -[o] Application
 -[o] Topology trait
 -[o] Cluster, physical topology
-- BackgroundFlow
 - MapReduce Example
 
 

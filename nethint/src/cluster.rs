@@ -1,6 +1,6 @@
-use fnv::FnvHashMap as HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+use fnv::FnvHashMap as HashMap;
 use lazy_static::lazy_static;
 use log::debug;
 use petgraph::{
@@ -28,9 +28,11 @@ pub trait Topology:
 {
     fn get_node_index(&self, name: &str) -> NodeIx;
     fn get_target(&self, ix: LinkIx) -> NodeIx;
+    fn get_source(&self, ix: LinkIx) -> NodeIx;
     fn get_uplink(&self, ix: NodeIx) -> LinkIx;
     fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx>;
     fn all_links(&self) -> EdgeIndices;
+    fn find_link(&self, ix: NodeIx, iy: NodeIx) -> Option<LinkIx>;
     fn resolve_route(
         &self,
         src: &str,
@@ -93,6 +95,11 @@ impl Topology for VirtCluster {
     }
 
     #[inline]
+    fn get_source(&self, ix: LinkIx) -> NodeIx {
+        self.inner.get_source(ix)
+    }
+
+    #[inline]
     fn get_uplink(&self, ix: NodeIx) -> LinkIx {
         self.inner.get_uplink(ix)
     }
@@ -104,6 +111,10 @@ impl Topology for VirtCluster {
 
     fn all_links(&self) -> EdgeIndices {
         self.inner.all_links()
+    }
+
+    fn find_link(&self, ix: NodeIx, iy: NodeIx) -> Option<LinkIx> {
+        self.inner.find_link(ix, iy)
     }
 
     fn resolve_route(
@@ -239,6 +250,11 @@ impl Topology for Cluster {
     }
 
     #[inline]
+    fn get_source(&self, ix: LinkIx) -> NodeIx {
+        self.graph.raw_edges()[ix.index()].source()
+    }
+
+    #[inline]
     fn get_uplink(&self, ix: NodeIx) -> LinkIx {
         self.graph[ix]
             .parent
@@ -252,6 +268,10 @@ impl Topology for Cluster {
 
     fn all_links(&self) -> EdgeIndices {
         self.graph.edge_indices()
+    }
+
+    fn find_link(&self, ix: NodeIx, iy: NodeIx) -> Option<LinkIx> {
+        self.graph.find_edge(ix, iy)
     }
 
     fn resolve_route(
@@ -377,10 +397,10 @@ pub struct Node {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Counters {
-    pub(crate) tx_total: usize,
-    pub(crate) rx_total: usize,
-    pub(crate) tx_in: usize,
-    pub(crate) rx_in: usize,
+    pub(crate) tx_total: u64,
+    pub(crate) rx_total: u64,
+    pub(crate) tx_in: u64,
+    pub(crate) rx_in: u64,
 }
 
 impl Counters {
@@ -391,6 +411,7 @@ impl Counters {
     pub(crate) fn update_tx(&mut self, f: &FlowState, inc: usize) {
         // by checking the length of route, we know whether src and dst
         // are within the same rack
+        let inc = inc as u64;
         self.tx_total += inc;
         if f.route.path.len() == 2 {
             // same rack
@@ -399,6 +420,7 @@ impl Counters {
     }
 
     pub(crate) fn update_rx(&mut self, f: &FlowState, inc: usize) {
+        let inc = inc as u64;
         self.rx_total += inc;
         if f.route.path.len() == 2 {
             // same rack

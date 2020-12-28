@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
 use crate::bandwidth::BandwidthTrait;
-use crate::cluster::{Cluster, Node, NodeIx, NodeType, Topology, VirtCluster};
+use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
 use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
 use thiserror::Error;
@@ -23,6 +23,10 @@ pub struct Brain {
     pub(crate) vclusters: HashMap<TenantId, Rc<RefCell<VirtCluster>>>,
     /// physical node index + tenant_id to virtual node index
     phys_to_virt: HashMap<(NodeIx, TenantId), NodeIx>,
+    /// map from physical link to virtual links
+    pub(crate) plink_to_vlinks: HashMap<LinkIx, Vec<(TenantId, LinkIx)>>,
+    /// virtual link to physical link
+    pub(crate) vlink_to_plink: HashMap<(TenantId, LinkIx), LinkIx>,
 }
 
 /// Similar to AWS Placement Groups.
@@ -33,7 +37,7 @@ pub enum PlacementStrategy {
     /// Prefer to spread instances to different racks.
     Spread,
     /// Random uniformally choose some hosts to allocate.
-    Random,
+    Random(u64),
 }
 
 #[derive(Error, Debug)]
@@ -69,6 +73,8 @@ impl Brain {
             used: Default::default(),
             vclusters: Default::default(),
             phys_to_virt: Default::default(),
+            plink_to_vlinks: Default::default(),
+            vlink_to_plink: Default::default(),
         }))
     }
 
@@ -89,7 +95,6 @@ impl Brain {
     }
 
     pub fn make_asymmetric(&mut self, seed: u64) {
-        use crate::cluster::{Link, LinkIx};
         use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
 
@@ -116,7 +121,7 @@ impl Brain {
         let (inner, virt_to_phys) = match strategy {
             PlacementStrategy::Compact => self.place_compact(nhosts),
             PlacementStrategy::Spread => unimplemented!(),
-            PlacementStrategy::Random => self.place_random(nhosts),
+            PlacementStrategy::Random(seed) => self.place_random(nhosts, seed),
         };
 
         let vcluster = VirtCluster {
@@ -139,6 +144,32 @@ impl Brain {
                     .unwrap_none();
             });
 
+        // update link mappings
+        for vlink_ix in vcluster.all_links() {
+            let vsrc = vcluster.get_source(vlink_ix);
+            let vdst = vcluster.get_target(vlink_ix);
+            let psrc = self
+                .cluster
+                .get_node_index(&vcluster.translate(&vcluster[vsrc].name));
+            let pdst = self
+                .cluster
+                .get_node_index(&vcluster.translate(&vcluster[vdst].name));
+            let plink_ix = self.cluster.find_link(psrc, pdst).unwrap_or_else(|| {
+                panic!(
+                    "cannot find link from vname:{} to vname:{} in physical cluster",
+                    vcluster[vsrc].name, vcluster[vdst].name
+                )
+            });
+
+            self.vlink_to_plink
+                .insert((tenant_id, vlink_ix), plink_ix)
+                .unwrap_none();
+            self.plink_to_vlinks
+                .entry(plink_ix)
+                .or_insert(Vec::new())
+                .push((tenant_id, vlink_ix));
+        }
+
         // update tenant_id -> VirtCluster
         self.vclusters
             .insert(tenant_id, Rc::new(RefCell::new(vcluster)))
@@ -147,9 +178,34 @@ impl Brain {
         Ok(ret)
     }
 
-    fn place_random(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
-        use crate::RNG;
+    pub fn destroy(&mut self, tenant_id: TenantId) {
+        let vcluster = self.vclusters.remove(&tenant_id).unwrap();
+
+        vcluster.borrow().all_links().for_each(|vlink_ix| {
+            let plink_ix = self.vlink_to_plink[&(tenant_id, vlink_ix)];
+            let v = self.plink_to_vlinks.get_mut(&plink_ix).unwrap();
+            v.remove(v.iter().position(|&x| x == (tenant_id, vlink_ix)).unwrap());
+        });
+        vcluster.borrow().all_links().for_each(|vlink_ix| {
+            self.vlink_to_plink.remove(&(tenant_id, vlink_ix));
+        });
+
+        vcluster
+            .borrow()
+            .virt_to_phys
+            .iter()
+            .for_each(|(_, phys_name)| {
+                let pnode_ix = self.cluster.get_node_index(&phys_name);
+                self.used.remove(&pnode_ix);
+                let flag = self.phys_to_virt.remove(&(pnode_ix, tenant_id)).is_some();
+                assert!(flag);
+            });
+    }
+
+    fn place_random(&mut self, nhosts: usize, seed: u64) -> (Cluster, HashMap<String, String>) {
         use rand::seq::IteratorRandom;
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(seed);
 
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
@@ -158,14 +214,13 @@ impl Brain {
         let root = "virtual_cloud";
         inner.add_node(Node::new(root, 1, NodeType::Switch));
 
-        let alloced_hosts = RNG.with(|rng| {
-            let mut rng = rng.borrow_mut();
+        let alloced_hosts = {
             let avail_hosts = (0..self.cluster.num_hosts())
                 .into_iter()
                 .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
                 .filter(|node_ix| !self.used.contains(&node_ix));
-            avail_hosts.choose_multiple(&mut *rng, nhosts)
-        });
+            avail_hosts.choose_multiple(&mut rng, nhosts)
+        };
 
         assert_eq!(alloced_hosts.len(), nhosts);
 
@@ -192,6 +247,13 @@ impl Brain {
             inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
             self.used.insert(host_ix);
         }
+
+        tor_alloc
+            .insert(
+                self.cluster().get_node_index("cloud"),
+                "virtual_cloud".to_owned(),
+            )
+            .unwrap_none();
 
         let virt_to_phys = host_alloc
             .into_iter()
@@ -268,6 +330,13 @@ impl Brain {
                 break;
             }
         }
+
+        tor_alloc
+            .insert(
+                self.cluster().get_node_index("cloud"),
+                "virtual_cloud".to_owned(),
+            )
+            .unwrap_none();
 
         let virt_to_phys = host_alloc
             .into_iter()

@@ -62,7 +62,42 @@ fn main() {
     }
 
     if opt.multitenant {
-        run_experiments_multitenant(&opt, brain);
+        let seed_base = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let (app_stats1, max_jct1) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::Random,
+            Rc::clone(&brain),
+            seed_base,
+        );
+
+        let (app_stats2, max_jct2) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::GeneticAlgorithm,
+            Rc::clone(&brain),
+            seed_base,
+        );
+
+        let (app_stats3, max_jct3) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::HierarchicalGreedy,
+            Rc::clone(&brain),
+            seed_base,
+        );
+
+        info!("Random:");
+        info!("app_stats: {:?}", app_stats1);
+        info!("max job completion time: {:?}", max_jct1.to_dura());
+
+        info!("GeneticAlgorithm:");
+        info!("app_stats: {:?}", app_stats2);
+        info!("max job completion time: {:?}", max_jct2.to_dura());
+
+        info!("Greedy:");
+        info!("app_stats: {:?}", app_stats3);
+        info!("max job completion time: {:?}", max_jct3.to_dura());
         return;
     }
 
@@ -71,14 +106,16 @@ fn main() {
     visualize(&opt, results).unwrap();
 }
 
-fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
+fn run_experiments_multitenant(
+    opt: &Opt,
+    policy: ReducerPlacementPolicy,
+    brain: Rc<RefCell<Brain>>,
+    seed_base: u64
+) -> (Vec<(usize, u64, u64)>, u64) {
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)
             .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e))
     });
-
-    let policy = ReducerPlacementPolicy::HierarchicalGreedy;
-    // let policy = ReducerPlacementPolicy::Random;
 
     let ncases = std::cmp::min(
         opt.ncases,
@@ -86,7 +123,6 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
     );
 
     // values in a scope are dropped in the opposite order they are defined
-    // let mut vc_container = Vec::new();
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
     for i in 0..ncases {
@@ -113,11 +149,11 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
             .provision(
                 tenant_id,
                 job_spec.num_map + job_spec.num_reduce,
-                PlacementStrategy::Random,
+                PlacementStrategy::Random(seed_base + i as u64),
+                // PlacementStrategy::Compact,
             )
             .unwrap();
 
-        // vc_container.push(vcluster);
         job.push((start_ts, job_spec));
     }
 
@@ -130,23 +166,26 @@ fn run_experiments_multitenant(opt: &Opt, brain: Rc<RefCell<Brain>>) {
             seed,
             job_spec,
             None,
-            MapperPlacementPolicy::Random(0),
+            // MapperPlacementPolicy::Random(seed_base + seed),
+            MapperPlacementPolicy::Greedy,
             policy,
         ));
-        // app.start();
         app_group.add(*start_ts, app);
     }
 
     // let mut simulator = Simulator::new((**brain.cluster()).clone());
-    let mut simulator = Simulator::with_brain(brain);
+    let mut simulator = Simulator::with_brain(Rc::clone(&brain));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
         .collect();
-    info!("app_stats: {:?}", app_stats);
-    info!("all job completion time: {:?}", all_jct.unwrap().to_dura());
+
+    for i in 0..ncases {
+        brain.borrow_mut().destroy(i);
+    }
+    (app_stats, max_jct.unwrap())
 }
 
 fn run_experiments(
