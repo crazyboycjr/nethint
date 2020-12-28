@@ -52,7 +52,7 @@ impl Simulator {
 
     pub fn with_brain(brain: Rc<RefCell<Brain>>) -> Self {
         let cluster = (**brain.borrow().cluster()).clone();
-        let interval = 1_000_000; // 1ms
+        let interval = 1_000_000_00; // 100ms
         let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain), interval));
         let timers =
             std::iter::once(Box::new(RepeatTimer::new(interval, interval)) as Box<dyn Timer>)

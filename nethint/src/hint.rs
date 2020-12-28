@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::collections::VecDeque;
 
 use fnv::FnvHashMap as HashMap;
 use log::warn;
@@ -35,12 +36,14 @@ impl<V: Copy> Point<V> {
 /// VM historical statictics for each virtual node
 #[derive(Debug, Clone, Default)]
 struct VmStats {
-    tx_total: Vec<Point<u64>>,
+    tx_total: VecDeque<Point<u64>>,
     /// tx traffic within the rack
-    tx_in: Vec<Point<u64>>,
-    rx_total: Vec<Point<u64>>,
-    rx_in: Vec<Point<u64>>,
+    tx_in: VecDeque<Point<u64>>,
+    rx_total: VecDeque<Point<u64>>,
+    rx_in: VecDeque<Point<u64>>,
 }
+
+const VM_STATS_MEMORY_LEN: usize = 100;
 
 macro_rules! impl_last_delta_for {
     ($(($member:ident, $func_name:ident)),+ $(,)?) => (
@@ -72,7 +75,10 @@ impl VmStats {
         macro_rules! stmt_add_counter_for {
             ($($member:ident),+ $(,)?) => (
                 $(
-                    self.$member.push(Point::new(ts, counter.$member));
+                    self.$member.push_back(Point::new(ts, counter.$member));
+                    if self.$member.len() > VM_STATS_MEMORY_LEN {
+                        self.$member.pop_front();
+                    }
                 )+
             )
         }

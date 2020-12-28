@@ -110,7 +110,7 @@ fn run_experiments_multitenant(
     opt: &Opt,
     policy: ReducerPlacementPolicy,
     brain: Rc<RefCell<Brain>>,
-    seed_base: u64
+    seed_base: u64,
 ) -> (Vec<(usize, u64, u64)>, u64) {
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)
@@ -130,7 +130,13 @@ fn run_experiments_multitenant(
         let (start_ts, job_spec) = job_trace
             .as_ref()
             .map(|job_trace| {
-                let record = job_trace.records[id].clone();
+                let mut record = job_trace.records[id].clone();
+                // mutiple traffic by a number
+                record.reducers = record
+                    .reducers
+                    .into_iter()
+                    .map(|(a, b)| (a, b * opt.traffic_scale))
+                    .collect();
                 let start_ts = record.ts * 1_000_000;
                 debug!("record: {:?}", record);
                 let job_spec = JobSpec::new(

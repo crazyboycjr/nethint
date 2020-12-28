@@ -35,6 +35,10 @@ pub struct Opt {
     #[structopt(short = "n", long = "ncases", default_value = "10")]
     pub ncases: usize,
 
+    /// Traffic scale, multiple the traffic size by a number to allow job overlaps
+    #[structopt(short = "t", long = "traffic-scale", default_value = "1.0")]
+    pub traffic_scale: f64,
+
     /// Run experiments from trace file
     #[structopt(short = "f", long = "file")]
     pub trace: Option<std::path::PathBuf>,
