@@ -1,11 +1,12 @@
-use fnv::FnvBuildHasher;
-use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::rc::Rc;
 
+use fnv::FnvBuildHasher;
+use indexmap::IndexMap;
 use log::{debug, trace};
+use smallvec::{SmallVec, smallvec};
 
 use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::brain::{Brain, TenantId};
@@ -170,7 +171,7 @@ impl Simulator {
     fn max_min_fairness(&mut self) -> AppEvent {
         loop {
             // TODO(cjr): Optimization: if netstate hasn't been changed
-            // (i.e. new newly added or completed flows), the skip max_min_fairness_converge.
+            // (i.e. new newly added or completed flows), then skip max_min_fairness_converge.
             // compute a fair share of bandwidth allocation
             self.max_min_fairness_converge();
             trace!(
@@ -201,7 +202,6 @@ impl Simulator {
                 .expect("running flows, ready flows, and timers are all empty")
                 - self.ts;
 
-            // TODO(cjr): handle the timer
             trace!("self.ts: {}, ts_inc: {}", self.ts, ts_inc);
             assert!(
                 !(first_complete_time.is_none()
@@ -209,6 +209,7 @@ impl Simulator {
                     && (self.timers.is_empty() || self.timers.len() == 1 && self.enable_nethint))
             );
 
+            // it must be the timer
             if ts_inc == 0 {
                 // the next event should be the timer event
                 if let Some(timer) = self.timers.peek() {
@@ -255,13 +256,12 @@ impl<'a> Executor<'a> for Simulator {
     }
 
     fn run_with_appliation<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
-        // let's write some conceptual code
         let start = std::time::Instant::now();
         let mut events = app.on_event(AppEvent::AppStart);
+        let mut new_events = Events::new();
 
         loop {
             let mut finished = false;
-            let mut new_events = Events::new();
             events.reverse();
 
             trace!("simulator: events.len: {:?}", events.len());
@@ -309,6 +309,7 @@ impl<'a> Executor<'a> for Simulator {
 
             // 3. nofity the application with this flow
             new_events.append(app.on_event(app_event));
+            debug!("================ new_events.len: {}", new_events.len());
             std::mem::swap(&mut events, &mut new_events);
         }
 
@@ -508,9 +509,8 @@ pub enum Event {
 }
 
 /// Iterator of Event
-// TODO(cjr): use smallvec
 #[derive(Debug, Clone, Default)]
-pub struct Events(Vec<Event>);
+pub struct Events(SmallVec<[Event; 8]>);
 
 impl Events {
     pub fn new() -> Self {
@@ -544,7 +544,7 @@ impl Events {
 
 impl IntoIterator for Events {
     type Item = Event;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
+    type IntoIter = smallvec::IntoIter<[Self::Item; 8]>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -559,6 +559,6 @@ impl std::iter::FromIterator<Event> for Events {
 
 impl From<Event> for Events {
     fn from(e: Event) -> Self {
-        Events(vec![e])
+        Events(smallvec![e])
     }
 }
