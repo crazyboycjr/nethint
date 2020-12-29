@@ -62,12 +62,13 @@ impl PlaceReducer for GeneticReducerScheduler {
                 .collect();
 
             (0..ga_size)
-                .map(|_| GAUnit {
-                    reducer: hosts
+                .map(|_| {
+                    let mut reducer: Vec<usize> = hosts
                         .choose_multiple(&mut *rng, job_spec.num_reduce)
                         .cloned()
-                        .collect(),
-                    ctx: &ctx,
+                        .collect();
+                    reducer.shuffle(&mut *rng);
+                    GAUnit { reducer, ctx: &ctx }
                 })
                 .collect()
         });

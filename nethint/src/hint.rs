@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::collections::VecDeque;
 
 use fnv::FnvHashMap as HashMap;
-use log::warn;
 
 use crate::{
     bandwidth::{Bandwidth, BandwidthTrait},
