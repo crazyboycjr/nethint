@@ -2,12 +2,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
-use crate::bandwidth::BandwidthTrait;
-use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
 use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
 use thiserror::Error;
+
+use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
+use crate::bandwidth::BandwidthTrait;
+use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
 
 pub type TenantId = usize;
 
@@ -166,7 +167,7 @@ impl Brain {
                 .unwrap_none();
             self.plink_to_vlinks
                 .entry(plink_ix)
-                .or_insert(Vec::new())
+                .or_insert_with(Vec::new)
                 .push((tenant_id, vlink_ix));
         }
 
@@ -230,6 +231,7 @@ impl Brain {
             let uplink_ix = self.cluster.get_uplink(host_ix);
             let tor_ix = self.cluster.get_target(uplink_ix);
 
+            #[allow(clippy::map_entry)]
             if !tor_alloc.contains_key(&tor_ix) {
                 // new ToR in virtual cluster
                 let tor_name = format!("tor_{}", tor_alloc.len());

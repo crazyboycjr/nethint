@@ -159,7 +159,7 @@ where
         };
 
         if self.output.len() == self.apps.len() {
-            return (Event::AppFinish).into();
+            (Event::AppFinish).into()
         } else {
             events
         }

@@ -52,7 +52,7 @@ impl Simulator {
 
     pub fn with_brain(brain: Rc<RefCell<Brain>>) -> Self {
         let cluster = (**brain.borrow().cluster()).clone();
-        let interval = 1_000_000_00; // 100ms
+        let interval = 100_000_000; // 100ms
         let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain), interval));
         let timers =
             std::iter::once(Box::new(RepeatTimer::new(interval, interval)) as Box<dyn Timer>)
@@ -297,7 +297,7 @@ impl<'a> Executor<'a> for Simulator {
                 break;
             }
 
-            if new_events.len() > 0 {
+            if !new_events.is_empty() {
                 // NetHintResponse sent, new flows may arrive
                 // must handle them first before computing max_min_fairness
                 std::mem::swap(&mut events, &mut new_events);
@@ -416,16 +416,16 @@ impl NetState {
         // The sampler is to copy all nodes's latest data in all virt clusters.
         if let Some(ref brain) = self.brain {
             use crate::app::AppGroupTokenCoding;
-            let token = f.flow.token.unwrap_or(0.into());
+            let token = f.flow.token.unwrap_or_else(|| 0.into());
             let (tenant_id, _) = token.decode();
             let src_ix = f.route.from;
             let dst_ix = f.route.to;
             let vsrc_ix = brain.borrow().phys_to_virt(src_ix, tenant_id);
             let vdst_ix = brain.borrow().phys_to_virt(dst_ix, tenant_id);
-            brain.borrow().vclusters.get(&tenant_id).map(|vcluster| {
+            if let Some(vcluster) = brain.borrow().vclusters.get(&tenant_id) {
                 vcluster.borrow_mut()[vsrc_ix].counters.update_tx(f, delta);
                 vcluster.borrow_mut()[vdst_ix].counters.update_rx(f, delta);
-            });
+            }
         }
     }
 }
@@ -519,6 +519,10 @@ impl Events {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn add(&mut self, e: Event) {

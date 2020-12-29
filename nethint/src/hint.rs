@@ -133,6 +133,9 @@ impl Sampler {
             agg[rack_id].rx_in += counters.rx_in;
         }
 
+        debug_assert_eq!(agg.len(), num_racks);
+
+        #[allow(clippy::needless_range_loop)]
         for i in 0..num_racks {
             let tor_name = format!("tor_{}", i);
             let tor_ix = vcluster.get_node_index(&tor_name);
@@ -169,10 +172,10 @@ fn get_phys_link(brain: &Brain, tenant_id: TenantId, vlink_ix: LinkIx) -> LinkIx
     brain.vlink_to_plink[&(tenant_id, vlink_ix)]
 }
 
-fn get_all_virtual_links<'b>(
-    brain: &'b Brain,
+fn get_all_virtual_links(
+    brain: &Brain,
     plink_ix: LinkIx,
-) -> impl Iterator<Item = (TenantId, LinkIx)> + 'b {
+) -> impl Iterator<Item = (TenantId, LinkIx)> + '_ {
     brain.plink_to_vlinks[&plink_ix]
         .iter()
         .map(|&(tenant_id, vlink_ix)| (tenant_id, vlink_ix))
@@ -223,7 +226,7 @@ impl SimpleEstimator {
                 None
             };
 
-            demand_sum = demand_sum + demand_i.unwrap_or(0.gbps());
+            demand_sum = demand_sum + demand_i.unwrap_or_else(|| 0.gbps());
             cnt += 1;
         }
 
@@ -265,11 +268,12 @@ impl Estimator for SimpleEstimator {
 
     fn sample(&mut self, ts: Timestamp) {
         let brain = self.brain.borrow();
+        let interval_ns = self.sample_interval_ns;
         for (&tenant_id, vcluster) in brain.vclusters.iter() {
             let vcluster = &*vcluster.borrow();
             self.sampler
                 .entry(tenant_id)
-                .or_insert(Sampler::new(self.sample_interval_ns))
+                .or_insert_with(|| Sampler::new(interval_ns))
                 .sample(vcluster, ts);
         }
     }
