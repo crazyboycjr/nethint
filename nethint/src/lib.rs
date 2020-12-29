@@ -1,3 +1,7 @@
+#![feature(option_unwrap_none)]
+#![feature(option_zip)]
+#![feature(concat_idents)]
+
 use rand::{rngs::StdRng, SeedableRng};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,6 +18,7 @@ use cluster::Route;
 
 pub mod app;
 
+pub mod timer;
 pub mod simulator;
 
 pub mod architecture;

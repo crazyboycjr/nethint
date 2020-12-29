@@ -1,4 +1,6 @@
 #![feature(box_patterns)]
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -32,13 +34,13 @@ fn main() {
     let opt = Opt::from_args();
     info!("Opts: {:#?}", opt);
 
-    let mut brain = Brain::build_cloud(opt.topo.clone());
+    let brain = Brain::build_cloud(opt.topo.clone());
 
     if opt.asym {
-        brain.make_asymmetric(0);
+        brain.borrow_mut().make_asymmetric(0);
     }
 
-    info!("cluster:\n{}", brain.cluster().to_dot());
+    info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     let policies = &[
         ReducerPlacementPolicy::Random,
@@ -47,7 +49,7 @@ fn main() {
     ];
 
     if opt.inspect {
-        let results = inspect::run_experiments(&opt, Arc::clone(&brain.cluster()));
+        let results = inspect::run_experiments(&opt, Arc::clone(&brain.borrow().cluster()));
         let mut segments = results.unwrap();
         segments.sort_by_key(|x| x.0);
         info!("inspect results: {:?}", segments);
@@ -60,22 +62,60 @@ fn main() {
     }
 
     if opt.multitenant {
-        run_experiments_multitenant(&opt, &mut brain);
+        let seed_base = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let (app_stats1, max_jct1) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::Random,
+            Rc::clone(&brain),
+            seed_base,
+        );
+
+        let (app_stats2, max_jct2) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::GeneticAlgorithm,
+            Rc::clone(&brain),
+            seed_base,
+        );
+
+        let (app_stats3, max_jct3) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::HierarchicalGreedy,
+            Rc::clone(&brain),
+            seed_base,
+        );
+
+        println!("Random:");
+        println!("app_stats: {:?}", app_stats1);
+        println!("max job completion time: {:?}", max_jct1.to_dura());
+
+        println!("GeneticAlgorithm:");
+        println!("app_stats: {:?}", app_stats2);
+        println!("max job completion time: {:?}", max_jct2.to_dura());
+
+        println!("Greedy:");
+        println!("app_stats: {:?}", app_stats3);
+        println!("max job completion time: {:?}", max_jct3.to_dura());
         return;
     }
 
-    let results = run_experiments(&opt, Arc::clone(&brain.cluster()), policies);
+    let results = run_experiments(&opt, Arc::clone(&brain.borrow().cluster()), policies);
 
     visualize(&opt, results).unwrap();
 }
 
-fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
+fn run_experiments_multitenant(
+    opt: &Opt,
+    policy: ReducerPlacementPolicy,
+    brain: Rc<RefCell<Brain>>,
+    seed_base: u64,
+) -> (Vec<(usize, u64, u64)>, u64) {
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)
             .unwrap_or_else(|e| panic!("failed to load from file: {:?}, error: {}", p, e))
     });
-
-    let policy = ReducerPlacementPolicy::HierarchicalGreedy;
 
     let ncases = std::cmp::min(
         opt.ncases,
@@ -83,7 +123,6 @@ fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
     );
 
     // values in a scope are dropped in the opposite order they are defined
-    let mut vc_container = Vec::new();
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
     for i in 0..ncases {
@@ -91,7 +130,13 @@ fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
         let (start_ts, job_spec) = job_trace
             .as_ref()
             .map(|job_trace| {
-                let record = job_trace.records[id].clone();
+                let mut record = job_trace.records[id].clone();
+                // mutiple traffic by a number
+                record.reducers = record
+                    .reducers
+                    .into_iter()
+                    .map(|(a, b)| (a, b * opt.traffic_scale))
+                    .collect();
                 let start_ts = record.ts * 1_000_000;
                 debug!("record: {:?}", record);
                 let job_spec = JobSpec::new(
@@ -103,34 +148,50 @@ fn run_experiments_multitenant(opt: &Opt, brain: &mut Brain) {
             })
             .unwrap();
 
-        let vcluster = brain
+        // assmue we have a tenant: i
+        let tenant_id = i;
+        let _vcluster = brain
+            .borrow_mut()
             .provision(
+                tenant_id,
                 job_spec.num_map + job_spec.num_reduce,
-                PlacementStrategy::Random,
+                PlacementStrategy::Random(seed_base + i as u64),
+                // PlacementStrategy::Compact,
             )
             .unwrap();
 
-        vc_container.push(vcluster);
         job.push((start_ts, job_spec));
     }
 
     for i in 0..ncases {
         let seed = i as _;
+        let tenant_id = i;
         let (start_ts, job_spec) = job.get(i).unwrap();
-        let mut app = Box::new(MapReduceApp::new(
+        let app = Box::new(MapReduceApp::new(
+            tenant_id,
+            seed,
             job_spec,
-            vc_container.get(i).unwrap(),
+            None,
+            // MapperPlacementPolicy::Random(seed_base + seed),
             MapperPlacementPolicy::Greedy,
             policy,
         ));
-        app.start(seed);
         app_group.add(*start_ts, app);
     }
 
-    let mut simulator = Simulator::new((**brain.cluster()).clone());
+    // let mut simulator = Simulator::new((**brain.cluster()).clone());
+    let mut simulator = Simulator::with_brain(Rc::clone(&brain));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let all_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
-    info!("all job completion time: {:?}", all_jct.unwrap().to_dura());
+    let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    let app_stats: Vec<_> = app_jct
+        .iter()
+        .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
+        .collect();
+
+    for i in 0..ncases {
+        brain.borrow_mut().destroy(i);
+    }
+    (app_stats, max_jct.unwrap())
 }
 
 fn run_experiments(
