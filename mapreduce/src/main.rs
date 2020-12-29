@@ -87,17 +87,17 @@ fn main() {
             seed_base,
         );
 
-        info!("Random:");
-        info!("app_stats: {:?}", app_stats1);
-        info!("max job completion time: {:?}", max_jct1.to_dura());
+        println!("Random:");
+        println!("app_stats: {:?}", app_stats1);
+        println!("max job completion time: {:?}", max_jct1.to_dura());
 
-        info!("GeneticAlgorithm:");
-        info!("app_stats: {:?}", app_stats2);
-        info!("max job completion time: {:?}", max_jct2.to_dura());
+        println!("GeneticAlgorithm:");
+        println!("app_stats: {:?}", app_stats2);
+        println!("max job completion time: {:?}", max_jct2.to_dura());
 
-        info!("Greedy:");
-        info!("app_stats: {:?}", app_stats3);
-        info!("max job completion time: {:?}", max_jct3.to_dura());
+        println!("Greedy:");
+        println!("app_stats: {:?}", app_stats3);
+        println!("max job completion time: {:?}", max_jct3.to_dura());
         return;
     }
 
