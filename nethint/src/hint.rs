@@ -253,14 +253,15 @@ impl Estimator for SimpleEstimator {
 
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {
-            let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
-            let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
-            let bw = self.compute_fair_share(
-                brain.cluster()[phys_link].bandwidth,
-                brain.cluster()[phys_link].bandwidth,
-                all_virtual_links,
-            );
-            vcluster[link_ix].bandwidth = bw;
+            // let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
+            // let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+            // let bw = self.compute_fair_share(
+            //     brain.cluster()[phys_link].bandwidth,
+            //     brain.cluster()[phys_link].bandwidth,
+            //     all_virtual_links,
+            // );
+            // vcluster[link_ix].bandwidth = bw;
+            vcluster[link_ix].bandwidth = 100.gbps();
         }
 
         vcluster

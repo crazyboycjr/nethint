@@ -15,7 +15,7 @@ use nethint::{
     brain::{Brain, PlacementStrategy},
     cluster::{Cluster, Topology},
     simulator::{Executor, Simulator},
-    ToStdDuration, Duration,
+    Duration, ToStdDuration,
 };
 
 extern crate mapreduce;
@@ -74,13 +74,6 @@ fn main() {
             seed_base,
         );
 
-        let (app_stats2, max_jct2) = run_experiments_multitenant(
-            &opt,
-            ReducerPlacementPolicy::GeneticAlgorithm,
-            Rc::clone(&brain),
-            seed_base,
-        );
-
         let (app_stats3, max_jct3) = run_experiments_multitenant(
             &opt,
             ReducerPlacementPolicy::HierarchicalGreedy,
@@ -88,17 +81,23 @@ fn main() {
             seed_base,
         );
 
+        let (app_stats2, _max_jct2) = (app_stats3.clone(), max_jct3);
+
         println!("Random:");
         println!("app_stats: {:?}", app_stats1);
         println!("max job completion time: {:?}", max_jct1.to_dura());
 
-        println!("GeneticAlgorithm:");
-        println!("app_stats: {:?}", app_stats2);
-        println!("max job completion time: {:?}", max_jct2.to_dura());
-
         println!("Greedy:");
         println!("app_stats: {:?}", app_stats3);
         println!("max job completion time: {:?}", max_jct3.to_dura());
+
+        let results = app_stats1
+            .into_iter()
+            .zip(app_stats2)
+            .zip(app_stats3)
+            .flat_map(|((x, y), z)| vec![(x.0 * 3, x.2), (y.0 * 3 + 1, y.2), (z.0 * 3 + 2, z.2)])
+            .collect();
+        visualize(&opt, Some(results)).unwrap();
         return;
     }
 
@@ -126,7 +125,7 @@ fn run_experiments_multitenant(
     // values in a scope are dropped in the opposite order they are defined
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
-    let mut vc_container = Vec::new();
+    // let mut vc_container = Vec::new();
     for i in 0..ncases {
         let id = i;
         let (start_ts, job_spec) = job_trace
@@ -151,17 +150,17 @@ fn run_experiments_multitenant(
             .unwrap();
 
         // assmue we have a tenant: i
-        let tenant_id = i;
-        let vcluster = brain
-            .borrow_mut()
-            .provision(
-                tenant_id,
-                job_spec.num_map + job_spec.num_reduce,
-                PlacementStrategy::Random(seed_base + i as u64),
-                // PlacementStrategy::Compact,
-            )
-            .unwrap();
-        vc_container.push(vcluster);
+        // let tenant_id = i;
+        // let vcluster = brain
+        //     .borrow_mut()
+        //     .provision(
+        //         tenant_id,
+        //         job_spec.num_map + job_spec.num_reduce,
+        //         // PlacementStrategy::Random(seed_base + i as u64),
+        //         PlacementStrategy::Compact,
+        //     )
+        //     .unwrap();
+        // vc_container.push(vcluster);
 
         job.push((start_ts, job_spec));
     }
@@ -172,46 +171,63 @@ fn run_experiments_multitenant(
         let (start_ts, job_spec) = job.get(i).unwrap();
         let app = Box::new(MapReduceApp::new(
             tenant_id,
+            Some(Rc::clone(&brain)),
             seed,
             job_spec,
             None,
             // MapperPlacementPolicy::Random(seed_base + seed),
-            MapperPlacementPolicy::Greedy,
+            // MapperPlacementPolicy::Greedy,
+            MapperPlacementPolicy::RandomSkew(seed_base + seed, 0.2),
             policy,
         ));
 
         // plink
-        let vcluster = vc_container[tenant_id].clone();
-        // let dur_ms = (vcluster.num_hosts() * 100) as _;
-        let background_flow = Box::new(BackgroundFlowApp::new(
-            Rc::new(vcluster),
-            0,
-            BackgroundFlowPattern::Alltoall,
-            Some(1_000_000),
-            Option::<Duration>::None,
-        ));
+        // let vcluster = vc_container[tenant_id].clone();
+        // // let dur_ms = (vcluster.num_hosts() * 100) as _;
+        // let background_flow = Box::new(BackgroundFlowApp::new(
+        //     Rc::new(vcluster),
+        //     0,
+        //     BackgroundFlowPattern::Alltoall,
+        //     Some(1_000_000),
+        //     Option::<Duration>::None,
+        // ));
 
-        let mut app_seq = Box::new(Sequence::new());
-        app_seq.add(background_flow);
-        app_seq.add(app);
-        app_group.add(*start_ts, app_seq);
-        // app_group.add(*start_ts, app);
+        // let mut app_seq = Box::new(Sequence::new());
+        // app_seq.add(background_flow);
+        // app_seq.add(app);
+        // app_group.add(*start_ts, app_seq);
+        app_group.add(*start_ts, app);
     }
 
     // let mut simulator = Simulator::new((**brain.cluster()).clone());
     let mut simulator = Simulator::with_brain(Rc::clone(&brain));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let max_jct = app_jct.iter().map(|(_, jct)| jct.last().unwrap().unwrap()).max();
-    // let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    // let max_jct = app_jct.iter().map(|(_, jct)| jct.last().unwrap().unwrap()).max();
+    let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct
         .iter()
-        .map(|(i, jct)| (*i, job[*i].0, jct.last().unwrap().unwrap()))
-        // .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
+        // .map(|(i, jct)| (*i, job[*i].0, jct.last().unwrap().unwrap()))
+        .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
         .collect();
 
-    for i in 0..ncases {
-        brain.borrow_mut().destroy(i);
-    }
+    // for i in 0..ncases {
+    //     brain.borrow_mut().destroy(i);
+    // }
+
+    let app_stats: Vec<_> = app_stats
+        .into_iter()
+        .filter(|&(id, _start, _dura)| {
+            if let Some(job_trace) = job_trace.as_ref() {
+                let record = &job_trace.records[id];
+                let weights: Vec<_> = record.reducers.iter().map(|(_x, y)| *y as u64).collect();
+                !(record.num_map == 1
+                    || weights.iter().copied().max() == weights.iter().copied().min())
+            } else {
+                true
+            }
+        })
+        .collect();
+
     (app_stats, max_jct.unwrap())
 }
 

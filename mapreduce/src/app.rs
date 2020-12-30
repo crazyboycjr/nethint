@@ -1,16 +1,11 @@
 use std::rc::Rc;
+use std::cell::RefCell;
 
-use crate::{
-    mapper::{
-        GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, TraceMapperScheduler,
-    },
-    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
-    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
-};
+use crate::{GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern, mapper::{GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, RandomSkewMapperScheduler, TraceMapperScheduler}};
 use log::info;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
-    brain::TenantId,
+    brain::{TenantId, Brain, PlacementStrategy},
     cluster::{Cluster, Topology},
     simulator::{Event, Events, Executor, Simulator},
     Duration, Flow, Trace, TraceRecord,
@@ -19,6 +14,7 @@ use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 
 pub struct MapReduceApp<'c> {
     tenant_id: TenantId,
+    brain: Option<Rc<RefCell<Brain>>>,
     seed: u64,
     job_spec: &'c JobSpec,
     cluster: Option<Rc<dyn Topology>>,
@@ -31,6 +27,7 @@ pub struct MapReduceApp<'c> {
 impl<'c> MapReduceApp<'c> {
     pub fn new(
         tenant_id: TenantId,
+        brain: Option<Rc<RefCell<Brain>>>,
         seed: u64,
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
@@ -40,6 +37,7 @@ impl<'c> MapReduceApp<'c> {
         let trace = Trace::new();
         MapReduceApp {
             tenant_id,
+            brain,
             seed,
             job_spec,
             cluster,
@@ -69,6 +67,7 @@ impl<'c> MapReduceApp<'c> {
                 Box::new(TraceMapperScheduler::new(record.clone()))
             }
             MapperPlacementPolicy::Greedy => Box::new(GreedyMapperScheduler::new()),
+            MapperPlacementPolicy::RandomSkew(seed, s) => Box::new(RandomSkewMapperScheduler::new(seed, s)),
         };
         let mappers = map_scheduler.place(&**self.cluster.as_ref().unwrap(), &self.job_spec);
         info!("mappers: {:?}", mappers);
@@ -147,6 +146,17 @@ impl<'c> Application for MapReduceApp<'c> {
             // ask simulator for the NetHint
             match &event.event {
                 &AppEventKind::AppStart => {
+                    // first thing is to provision a set of VMs
+                    let _vcluster = self.brain
+                        .as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .provision(
+                            self.tenant_id,
+                            self.job_spec.num_map + self.job_spec.num_reduce,
+                            PlacementStrategy::Compact,
+                        )
+                        .unwrap();
                     // app_id should be tagged by AppGroup, so leave 0 here
                     return Event::NetHintRequest(0, self.tenant_id).into();
                 }
@@ -173,6 +183,11 @@ impl<'c> Application for MapReduceApp<'c> {
         if let Some(sim_ev) = events.last() {
             if matches!(sim_ev, Event::AppFinish) {
                 self.jct = Some(now);
+
+                // destroy the set of VMs
+                if let Some(brain) = self.brain.as_ref() {
+                    brain.borrow_mut().destroy(self.tenant_id);
+                }
             }
         }
 
@@ -198,6 +213,7 @@ pub fn run_map_reduce(
     };
     let mut app = Box::new(MapReduceApp::new(
         0,
+        None,
         seed,
         job_spec,
         Some(Rc::new(cluster.clone())),
