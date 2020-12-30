@@ -1,5 +1,5 @@
 use nethint::{
-    app::{AppEvent, Application, Replayer},
+    app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::Topology,
     simulator::Events,
     Duration, Trace, TraceRecord, Timestamp,
@@ -68,14 +68,14 @@ impl<'c> AllReduceApp<'c> {
 impl<'c> Application for AllReduceApp<'c> {
     type Output = Option<Duration>;
     fn on_event(&mut self, event: AppEvent) -> Events {
-        if let AppEvent::FlowComplete(ref flows) = &event {
+        if let AppEventKind::FlowComplete(ref flows) = &event.event {
             let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();
             self.remaining_flows -= flows.len();
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
                 self.allreduce(self.jct.unwrap());
-                return self.replayer.on_event(AppEvent::AppStart);
+                return self.replayer.on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
             }
         }
         self.replayer.on_event(event)

@@ -10,11 +10,12 @@ use log::{debug, info};
 use structopt::StructOpt;
 
 use nethint::{
-    app::AppGroup,
+    app::{AppGroup, Sequence},
+    background_flow::{BackgroundFlowApp, BackgroundFlowPattern},
     brain::{Brain, PlacementStrategy},
     cluster::{Cluster, Topology},
     simulator::{Executor, Simulator},
-    ToStdDuration,
+    ToStdDuration, Duration,
 };
 
 extern crate mapreduce;
@@ -125,6 +126,7 @@ fn run_experiments_multitenant(
     // values in a scope are dropped in the opposite order they are defined
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
+    let mut vc_container = Vec::new();
     for i in 0..ncases {
         let id = i;
         let (start_ts, job_spec) = job_trace
@@ -150,7 +152,7 @@ fn run_experiments_multitenant(
 
         // assmue we have a tenant: i
         let tenant_id = i;
-        let _vcluster = brain
+        let vcluster = brain
             .borrow_mut()
             .provision(
                 tenant_id,
@@ -159,6 +161,7 @@ fn run_experiments_multitenant(
                 // PlacementStrategy::Compact,
             )
             .unwrap();
+        vc_container.push(vcluster);
 
         job.push((start_ts, job_spec));
     }
@@ -176,16 +179,34 @@ fn run_experiments_multitenant(
             MapperPlacementPolicy::Greedy,
             policy,
         ));
-        app_group.add(*start_ts, app);
+
+        // plink
+        let vcluster = vc_container[tenant_id].clone();
+        // let dur_ms = (vcluster.num_hosts() * 100) as _;
+        let background_flow = Box::new(BackgroundFlowApp::new(
+            Rc::new(vcluster),
+            0,
+            BackgroundFlowPattern::Alltoall,
+            Some(1_000_000),
+            Option::<Duration>::None,
+        ));
+
+        let mut app_seq = Box::new(Sequence::new());
+        app_seq.add(background_flow);
+        app_seq.add(app);
+        app_group.add(*start_ts, app_seq);
+        // app_group.add(*start_ts, app);
     }
 
     // let mut simulator = Simulator::new((**brain.cluster()).clone());
     let mut simulator = Simulator::with_brain(Rc::clone(&brain));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
+    let max_jct = app_jct.iter().map(|(_, jct)| jct.last().unwrap().unwrap()).max();
+    // let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct
         .iter()
-        .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
+        .map(|(i, jct)| (*i, job[*i].0, jct.last().unwrap().unwrap()))
+        // .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
         .collect();
 
     for i in 0..ncases {
