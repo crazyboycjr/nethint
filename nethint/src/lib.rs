@@ -26,6 +26,8 @@ pub mod brain;
 
 pub mod hint;
 
+pub mod background_flow;
+
 // nanoseconds
 pub type Timestamp = u64;
 pub type Duration = u64;

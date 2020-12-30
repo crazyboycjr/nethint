@@ -9,7 +9,20 @@ use crate::{
 use crate::{Timestamp, Trace, TraceRecord};
 
 #[derive(Debug, Clone)]
-pub enum AppEvent {
+pub struct AppEvent {
+    pub ts: Timestamp,
+    pub event: AppEventKind,
+}
+
+impl AppEvent {
+    #[inline]
+    pub fn new(ts: Timestamp, event: AppEventKind) -> Self {
+        AppEvent { ts, event }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AppEventKind {
     /// On start, an application returns all flows it can start, whatever the timestamps are.
     AppStart,
     NetHintResponse(usize, TenantId, NetHintV2),
@@ -37,9 +50,9 @@ pub struct Replayer {
 impl Application for Replayer {
     type Output = Trace;
     fn on_event(&mut self, event: AppEvent) -> Events {
-        match event {
-            AppEvent::AppStart => Event::FlowArrive(self.trace.recs.clone()).into(),
-            AppEvent::FlowComplete(mut flows) => {
+        match event.event {
+            AppEventKind::AppStart => Event::FlowArrive(self.trace.recs.clone()).into(),
+            AppEventKind::FlowComplete(mut flows) => {
                 self.completed.recs.append(&mut flows);
                 if self.completed.recs.len() == self.num_flows {
                     (Event::AppFinish).into()
@@ -47,7 +60,7 @@ impl Application for Replayer {
                     Events::new()
                 }
             }
-            AppEvent::NetHintResponse(..) | AppEvent::Notification(_) => Events::new(), // Replayer does not handle these events
+            AppEventKind::NetHintResponse(..) | AppEventKind::Notification(_) => Events::new(), // Replayer does not handle these events
         }
     }
     fn answer(&mut self) -> Self::Output {
@@ -63,6 +76,96 @@ impl Replayer {
             num_flows,
             completed: Default::default(),
         }
+    }
+}
+
+/// Sequence is a application combinator, it takes a sequence of applications.
+/// Each application depends on previous one and only starts after the previous one is finished.
+/// The result is a list of outputs of the applications with the order kepted.
+#[derive(Default)]
+pub struct Sequence<'a, T> {
+    apps: Vec<Box<dyn Application<Output = T> + 'a>>,
+    output: Vec<T>,
+    cur_app: usize,
+    start_time: Vec<Timestamp>,
+}
+
+impl<'a, T> Sequence<'a, T> {
+    pub fn new() -> Self {
+        Sequence {
+            apps: Vec::new(),
+            output: Vec::new(),
+            cur_app: 0,
+            start_time: vec![0], // the first app starts at time 0
+        }
+    }
+
+    pub fn add(&mut self, app: Box<dyn Application<Output = T> + 'a>) {
+        self.apps.push(app);
+    }
+}
+
+impl<'a, T: Clone> Application for Sequence<'a, T> {
+    type Output = Vec<T>;
+
+    fn on_event(&mut self, event: AppEvent) -> Events {
+        let now = event.ts;
+
+        let app_start_time = self.start_time[self.cur_app];
+
+        // hijack all timestamps
+        let new_event = match event.event {
+            AppEventKind::FlowComplete(mut flows) => {
+                for f in &mut flows {
+                    f.ts -= app_start_time;
+                }
+                AppEvent::new(now - app_start_time, AppEventKind::FlowComplete(flows))
+            }
+            AppEventKind::AppStart
+            | AppEventKind::NetHintResponse(..)
+            | AppEventKind::Notification(_) => AppEvent::new(now - app_start_time, event.event),
+        };
+
+        let events = self.apps[self.cur_app].on_event(new_event);
+        trace!("Sequence sim_events: {:?}", events);
+
+        // hijack timestamps of all flows
+        let new_events = events
+            .into_iter()
+            .map(|sim_event| {
+                match sim_event {
+                    Event::AppFinish => {
+                        self.output.push(self.apps[self.cur_app].answer());
+                        // start the next app or finish
+                        self.cur_app += 1;
+                        if self.cur_app < self.apps.len() {
+                            self.start_time.push(now);
+                            self.apps[self.cur_app]
+                                .on_event(AppEvent::new(0, AppEventKind::AppStart))
+                        } else {
+                            // we are ending here
+                            (Event::AppFinish).into()
+                        }
+                    }
+                    Event::FlowArrive(mut flows) => {
+                        // becase all events in this flatmap are from the same app
+                        // it is good to use the same app_start_time
+                        for f in &mut flows {
+                            f.ts += app_start_time;
+                        }
+                        Event::FlowArrive(flows).into()
+                    }
+                    Event::NetHintRequest(..) | Event::RegisterTimer(..) => sim_event.into(),
+                }
+            })
+            .flatten()
+            .collect();
+
+        new_events
+    }
+
+    fn answer(&mut self) -> Self::Output {
+        self.output.clone()
     }
 }
 
@@ -111,8 +214,8 @@ where
         }
 
         trace!("AppGroup receive an app_event {:?}", event);
-        let events = match event {
-            AppEvent::AppStart => {
+        let events = match event.event {
+            AppEventKind::AppStart => {
                 // start all apps, modify the start time of flow, gather all flows
                 // register notification to start apps
                 (0..self.apps.len())
@@ -123,7 +226,7 @@ where
                     })
                     .collect()
             }
-            AppEvent::FlowComplete(recs) => {
+            AppEventKind::FlowComplete(recs) => {
                 // dispatch flows to different apps by looking at the token
                 let mut flows = vec![vec![]; self.apps.len()];
                 for r in recs {
@@ -131,15 +234,17 @@ where
                     assert!(app_id < self.apps.len());
                     let mut f = r.clone();
                     f.ts -= self.apps[app_id].0; // f.ts -= start_off;
+                    f.flow.token = None; // TODO(cjr): restore the token
                     flows[app_id].push(f);
                 }
 
+                let ts = event.ts;
                 flows
                     .into_iter()
                     .enumerate()
                     .map(|(app_id, recs)| {
                         if !recs.is_empty() {
-                            self.forward(app_id, AppEvent::FlowComplete(recs))
+                            self.forward(app_id, ts, AppEventKind::FlowComplete(recs))
                         } else {
                             Events::new()
                         }
@@ -147,14 +252,14 @@ where
                     .flatten()
                     .collect()
             }
-            AppEvent::NetHintResponse(app_id, tenant_id, vc) => {
-                let app_event = AppEvent::NetHintResponse(app_id, tenant_id, vc);
-                self.forward(app_id, app_event)
+            AppEventKind::NetHintResponse(app_id, tenant_id, vc) => {
+                let app_event_kind = AppEventKind::NetHintResponse(app_id, tenant_id, vc);
+                self.forward(app_id, event.ts, app_event_kind)
             }
-            AppEvent::Notification(token) => {
+            AppEventKind::Notification(token) => {
                 // now the timestamp is at self.apps[app_id].start_off
                 let (_, app_id) = token.decode();
-                self.forward(app_id, AppEvent::AppStart)
+                self.forward(app_id, event.ts, AppEventKind::AppStart)
             }
         };
 
@@ -192,8 +297,9 @@ where
         app_id
     }
 
-    fn forward(&mut self, app_id: usize, app_event: AppEvent) -> Events {
+    fn forward(&mut self, app_id: usize, ts: Timestamp, app_event_kind: AppEventKind) -> Events {
         let start_off = self.apps[app_id].0;
+        let app_event = AppEvent::new(ts - start_off, app_event_kind);
 
         self.apps[app_id]
             .1

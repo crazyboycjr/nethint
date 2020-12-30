@@ -12,7 +12,7 @@ use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::brain::{Brain, TenantId};
 use crate::cluster::{Cluster, Link, Route, Topology};
 use crate::{
-    app::{AppEvent, Application, Replayer},
+    app::{AppEvent, AppEventKind, Application, Replayer},
     hint::{Estimator, SimpleEstimator},
     timer::{OnceTimer, RepeatTimer, Timer, TimerKind},
 };
@@ -168,7 +168,7 @@ impl Simulator {
         }
     }
 
-    fn max_min_fairness(&mut self) -> AppEvent {
+    fn max_min_fairness(&mut self) -> AppEventKind {
         loop {
             // TODO(cjr): Optimization: if netstate hasn't been changed
             // (i.e. new newly added or completed flows), then skip max_min_fairness_converge.
@@ -219,7 +219,7 @@ impl Simulator {
                         let once_timer = timer.as_any().downcast_ref::<OnceTimer>().unwrap();
                         debug!("{:?}", once_timer);
                         let token = once_timer.token;
-                        break AppEvent::Notification(token);
+                        break AppEventKind::Notification(token);
                     }
                 }
             }
@@ -243,7 +243,7 @@ impl Simulator {
                     self.ts.to_dura(),
                     comp_flows
                 );
-                break AppEvent::FlowComplete(comp_flows);
+                break AppEventKind::FlowComplete(comp_flows);
             }
         }
     }
@@ -256,8 +256,14 @@ impl<'a> Executor<'a> for Simulator {
     }
 
     fn run_with_appliation<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
+        macro_rules! app_event {
+            ($kind:expr) => {
+                AppEvent::new(self.ts, $kind)
+            };
+        }
+
         let start = std::time::Instant::now();
-        let mut events = app.on_event(AppEvent::AppStart);
+        let mut events = app.on_event(app_event!(AppEventKind::AppStart));
         let mut new_events = Events::new();
 
         loop {
@@ -280,12 +286,12 @@ impl<'a> Executor<'a> for Simulator {
                     }
                     Event::NetHintRequest(app_id, tenant_id) => {
                         assert!(self.enable_nethint, "Nethint not enabled.");
-                        let response = AppEvent::NetHintResponse(
+                        let response = AppEventKind::NetHintResponse(
                             app_id,
                             tenant_id,
                             self.estimator.as_ref().unwrap().estimate(tenant_id),
                         );
-                        new_events.append(app.on_event(response));
+                        new_events.append(app.on_event(app_event!(response)));
                     }
                     Event::RegisterTimer(after_dura, token) => {
                         self.register_once(self.ts + after_dura, token);
@@ -305,11 +311,10 @@ impl<'a> Executor<'a> for Simulator {
             }
 
             // 2. run max-min fairness to find the next completed flow
-            let app_event = self.max_min_fairness();
+            let app_event_kind = self.max_min_fairness();
 
             // 3. nofity the application with this flow
-            new_events.append(app.on_event(app_event));
-            debug!("================ new_events.len: {}", new_events.len());
+            new_events.append(app.on_event(app_event!(app_event_kind)));
             std::mem::swap(&mut events, &mut new_events);
         }
 
@@ -523,6 +528,10 @@ impl Events {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn last(&self) -> Option<&Event> {
+        self.0.last()
     }
 
     pub fn add(&mut self, e: Event) {

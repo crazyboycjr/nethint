@@ -9,7 +9,7 @@ use crate::{
 };
 use log::info;
 use nethint::{
-    app::{AppEvent, Application, Replayer},
+    app::{AppEvent, AppEventKind, Application, Replayer},
     brain::TenantId,
     cluster::{Cluster, Topology},
     simulator::{Event, Events, Executor, Simulator},
@@ -145,12 +145,12 @@ impl<'c> Application for MapReduceApp<'c> {
     fn on_event(&mut self, event: AppEvent) -> Events {
         if self.cluster.is_none() {
             // ask simulator for the NetHint
-            match &event {
-                &AppEvent::AppStart => {
+            match &event.event {
+                &AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
                     return Event::NetHintRequest(0, self.tenant_id).into();
                 }
-                &AppEvent::NetHintResponse(_, tenant_id, ref vc) => {
+                &AppEventKind::NetHintResponse(_, tenant_id, ref vc) => {
                     assert_eq!(tenant_id, self.tenant_id);
                     self.cluster = Some(Rc::new(vc.clone()));
                     info!(
@@ -159,18 +159,24 @@ impl<'c> Application for MapReduceApp<'c> {
                     );
                     // since we have the cluster, start and schedule the app again
                     self.start();
-                    return self.replayer.on_event(AppEvent::AppStart);
+                    return self.replayer.on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
                 }
                 _ => unreachable!(),
             }
         }
 
         assert!(self.cluster.is_some());
-        if let AppEvent::FlowComplete(ref flows) = &event {
-            let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
-            self.jct = self.jct.iter().cloned().chain(fct_cur).max();
+
+        let now = event.ts;
+        let events = self.replayer.on_event(event);
+
+        if let Some(sim_ev) = events.last() {
+            if matches!(sim_ev, Event::AppFinish) {
+                self.jct = Some(now);
+            }
         }
-        self.replayer.on_event(event)
+
+        events
     }
     fn answer(&mut self) -> Self::Output {
         self.jct
