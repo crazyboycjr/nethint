@@ -42,11 +42,11 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64) {
 
     for i in 0..opt.ncases {
         let tenant_id = i;
-        let seed = i as _;
+        // let seed = i as _;
         let job_spec = JobSpec::new(opt.num_workers, opt.buffer_size, opt.num_iterations);
         let vcluster = brain
             .borrow_mut()
-            .provision(tenant_id, job_spec.num_workers, PlacementStrategy::Random(seed))
+            .provision(tenant_id, job_spec.num_workers, PlacementStrategy::Compact)
             .unwrap();
         vc_container.push(vcluster);
         jobs.push(job_spec);
