@@ -96,7 +96,12 @@ impl Simulator {
             let f = f.borrow();
             (acc.0 + !f.converged as usize, acc.1 + f.speed)
         });
-        (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active as f64
+        // COMMENT(cjr): due to precision issue, here consumed_bw can be a littble bigger than bw
+        if l.bandwidth < (consumed_bw / 1e9).gbps() {
+            0.gbps()
+        } else {
+            (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active as f64
+        }
     }
 
     fn proceed(&mut self, ts_inc: Duration) -> Vec<TraceRecord> {
@@ -257,9 +262,10 @@ impl<'a> Executor<'a> for Simulator {
 
     fn run_with_appliation<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
         macro_rules! app_event {
-            ($kind:expr) => {
-                AppEvent::new(self.ts, $kind)
-            };
+            ($kind:expr) => {{
+                let kind = $kind;
+                AppEvent::new(self.ts, kind)
+            }};
         }
 
         let start = std::time::Instant::now();

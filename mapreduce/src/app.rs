@@ -147,16 +147,16 @@ impl<'c> Application for MapReduceApp<'c> {
             match &event.event {
                 &AppEventKind::AppStart => {
                     // first thing is to provision a set of VMs
-                    let _vcluster = self.brain
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .provision(
-                            self.tenant_id,
-                            self.job_spec.num_map + self.job_spec.num_reduce,
-                            PlacementStrategy::Compact,
-                        )
-                        .unwrap();
+                    // let _vcluster = self.brain
+                    //     .as_ref()
+                    //     .unwrap()
+                    //     .borrow_mut()
+                    //     .provision(
+                    //         self.tenant_id,
+                    //         self.job_spec.num_map + self.job_spec.num_reduce,
+                    //         PlacementStrategy::Compact,
+                    //     )
+                    //     .unwrap();
                     // app_id should be tagged by AppGroup, so leave 0 here
                     return Event::NetHintRequest(0, self.tenant_id).into();
                 }
@@ -185,9 +185,9 @@ impl<'c> Application for MapReduceApp<'c> {
                 self.jct = Some(now);
 
                 // destroy the set of VMs
-                if let Some(brain) = self.brain.as_ref() {
-                    brain.borrow_mut().destroy(self.tenant_id);
-                }
+                // if let Some(brain) = self.brain.as_ref() {
+                //     brain.borrow_mut().destroy(self.tenant_id);
+                // }
             }
         }
 
