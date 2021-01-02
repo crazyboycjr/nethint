@@ -34,8 +34,8 @@ fn normalize(
     (l1, l2, l3)
 }
 
-pub fn plot(data: &Vec<u64>, norm: bool) -> Figure {
-    let data: Vec<f64> = data.into_iter().map(|&x| x as f64 / 1000.).collect();
+pub fn plot(data: &[u64], norm: bool) -> Figure {
+    let data: Vec<f64> = data.iter().map(|&x| x as f64 / 1000.).collect();
 
     let (l1, l2, l3) = if norm {
         let (l1, l2, l3) = decompose(&data);
@@ -111,8 +111,8 @@ fn to_cdf(mut data: Vec<f64>) -> (Vec<f64>, Vec<f64>) {
     (xv, yv)
 }
 
-pub fn plot_cdf(data: &Vec<u64>, norm: bool) -> Figure {
-    let data: Vec<f64> = data.into_iter().map(|&x| x as f64 / 1000.).collect();
+pub fn plot_cdf(data: &[u64], norm: bool) -> Figure {
+    let data: Vec<f64> = data.iter().map(|&x| x as f64 / 1000.).collect();
 
     let (d1, d2, d3) = if norm {
         let (d1, d2, d3) = decompose(&data);
@@ -164,7 +164,7 @@ pub fn plot_cdf(data: &Vec<u64>, norm: bool) -> Figure {
     fg
 }
 
-pub fn plot_segments(data: &Vec<JobLifetime>) -> Figure {
+pub fn plot_segments(data: &[JobLifetime]) -> Figure {
     let mut fg = Figure::new();
     let ax = fg.axes2d();
 

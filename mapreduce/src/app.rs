@@ -6,6 +6,7 @@ use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::{Cluster, Topology},
     simulator::{Event, Events, Executor, Simulator},
+    hint::NetHintVersion,
     Duration, Flow, Trace, TraceRecord,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
@@ -16,6 +17,7 @@ pub struct MapReduceApp<'c> {
     cluster: Option<Rc<dyn Topology>>,
     mapper_place_policy: MapperPlacementPolicy,
     reducer_place_policy: ReducerPlacementPolicy,
+    nethint_level: usize,
     replayer: Replayer,
     jct: Option<Duration>,
 }
@@ -27,15 +29,17 @@ impl<'c> MapReduceApp<'c> {
         cluster: Option<Rc<dyn Topology>>,
         mapper_place_policy: MapperPlacementPolicy,
         reducer_place_policy: ReducerPlacementPolicy,
+        nethint_level: usize,
     ) -> Self {
-        let trace = Trace::new();
+        assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
             seed,
             job_spec,
             cluster,
             mapper_place_policy,
             reducer_place_policy,
-            replayer: Replayer::new(trace),
+            nethint_level,
+            replayer: Replayer::new(Trace::new()),
             jct: None,
         }
     }
@@ -122,6 +126,7 @@ impl<'c> MapReduceApp<'c> {
             ShufflePattern::FromTrace(record) => {
                 assert_eq!(m % record.num_reduce, 0);
                 let k = m / record.num_reduce;
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..n {
                     for j in 0..m {
                         pairs[i][j] = (record.reducers[j / k].1 / n as f64 * 1e6) as usize;
@@ -138,23 +143,16 @@ impl<'c> Application for MapReduceApp<'c> {
     fn on_event(&mut self, event: AppEvent) -> Events {
         if self.cluster.is_none() {
             // ask simulator for the NetHint
-            match &event.event {
-                &AppEventKind::AppStart => {
-                    // first thing is to provision a set of VMs
-                    // let _vcluster = self.brain
-                    //     .as_ref()
-                    //     .unwrap()
-                    //     .borrow_mut()
-                    //     .provision(
-                    //         self.tenant_id,
-                    //         self.job_spec.num_map + self.job_spec.num_reduce,
-                    //         PlacementStrategy::Compact,
-                    //     )
-                    //     .unwrap();
+            match event.event {
+                AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return Event::NetHintRequest(0, 0).into();
+                    return match self.nethint_level {
+                        1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
+                        2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
+                        _ => panic!("unexpected nethint_level: {}", self.nethint_level),
+                    };
                 }
-                &AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
+                AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
                     info!(
                         "nethint response: {}",
@@ -176,11 +174,6 @@ impl<'c> Application for MapReduceApp<'c> {
         if let Some(sim_ev) = events.last() {
             if matches!(sim_ev, Event::AppFinish) {
                 self.jct = Some(now);
-
-                // destroy the set of VMs
-                // if let Some(brain) = self.brain.as_ref() {
-                //     brain.borrow_mut().destroy(self.tenant_id);
-                // }
             }
         }
 
@@ -210,6 +203,7 @@ pub fn run_map_reduce(
         Some(Rc::new(cluster.clone())),
         map_place_policy,
         reduce_place_policy,
+        2,
     ));
     app.start();
 

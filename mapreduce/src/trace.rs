@@ -40,7 +40,7 @@ macro_rules! parse_next {
 impl std::str::FromStr for Record {
     type Err = ParseRecordError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut tokens = s.trim().split(" ");
+        let mut tokens = s.trim().split(' ');
         let id = parse_next!(tokens, usize);
         let ts = parse_next!(tokens, Timestamp);
         let num_map = parse_next!(tokens, usize);
@@ -82,7 +82,7 @@ impl JobTrace {
         reader.read_line(&mut line)?;
         let v: Vec<usize> = line
             .trim()
-            .split(" ")
+            .split(' ')
             .map(|x| x.parse().ok())
             .collect::<Option<_>>()
             .unwrap();
@@ -94,7 +94,7 @@ impl JobTrace {
         for _i in 0..count {
             let mut line = String::new();
             reader.read_line(&mut line)?;
-            if line.starts_with("#") {
+            if line.starts_with('#') {
                 continue;
             }
             let r: Record = line

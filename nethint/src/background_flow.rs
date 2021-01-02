@@ -60,6 +60,7 @@ impl<T> BackgroundFlowApp<T> {
                     })
                     .collect();
 
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..n {
                     let sname = &vnames[i];
                     for j in 0..n {

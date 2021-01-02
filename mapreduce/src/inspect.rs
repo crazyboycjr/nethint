@@ -19,7 +19,7 @@ pub struct JobLifetime {
 pub fn run_experiments(opt: &Opt, cluster: Arc<Cluster>) -> Option<Vec<(usize, JobLifetime)>> {
     assert!(opt.trace.is_some(), "need to specify a trace file");
 
-    let num_cpus = opt.parallel.unwrap_or(num_cpus::get());
+    let num_cpus = opt.parallel.unwrap_or_else(num_cpus::get);
 
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)

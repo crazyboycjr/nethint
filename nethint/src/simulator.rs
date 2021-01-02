@@ -13,7 +13,7 @@ use crate::brain::{Brain, TenantId};
 use crate::cluster::{Cluster, Link, Route, Topology};
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
-    hint::{Estimator, SimpleEstimator},
+    hint::{NetHintVersion, Estimator, SimpleEstimator},
     timer::{OnceTimer, RepeatTimer, Timer, TimerKind},
 };
 use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
@@ -290,12 +290,15 @@ impl<'a> Executor<'a> for Simulator {
                     Event::AppFinish => {
                         finished = true;
                     }
-                    Event::NetHintRequest(app_id, tenant_id) => {
+                    Event::NetHintRequest(app_id, tenant_id, version) => {
                         assert!(self.enable_nethint, "Nethint not enabled.");
                         let response = AppEventKind::NetHintResponse(
                             app_id,
                             tenant_id,
-                            self.estimator.as_ref().unwrap().estimate(tenant_id),
+                            match version {
+                                NetHintVersion::V1 => self.estimator.as_ref().unwrap().estimate_v1(tenant_id),
+                                NetHintVersion::V2 => self.estimator.as_ref().unwrap().estimate_v2(tenant_id),
+                            }
                         );
                         new_events.append(app.on_event(app_event!(response)));
                     }
@@ -512,8 +515,8 @@ pub enum Event {
     /// The application has completed all flows and has no more flows to send. This event should
     /// appear after certain FlowComplete event.
     AppFinish,
-    /// Request NetHint information, (app_id, tenant_id)
-    NetHintRequest(usize, TenantId),
+    /// Request NetHint information, (app_id, tenant_id, version)
+    NetHintRequest(usize, TenantId, NetHintVersion),
     /// A Timer event is registered by Application. It notifies the application after duration ns.
     /// Token is used to identify the timer.
     RegisterTimer(Duration, Token),

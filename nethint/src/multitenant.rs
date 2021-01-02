@@ -78,7 +78,7 @@ impl<'a, T: Clone> Application for Tenant<'a, T> {
             }
         };
 
-        let new_events = sim_events
+        sim_events
             .into_iter()
             .map(|sim_event| {
                 match sim_event {
@@ -95,10 +95,10 @@ impl<'a, T: Clone> Application for Tenant<'a, T> {
                         }
                         Event::FlowArrive(virt_flows)
                     }
-                    Event::NetHintRequest(app_id, tenant_id) => {
+                    Event::NetHintRequest(app_id, tenant_id, version) => {
                         assert_eq!(app_id, 0);
                         assert_eq!(tenant_id, 0);
-                        Event::NetHintRequest(app_id, self.tenant_id)
+                        Event::NetHintRequest(app_id, self.tenant_id, version)
                     }
                     Event::RegisterTimer(..) => {
                         unreachable!(
@@ -107,9 +107,7 @@ impl<'a, T: Clone> Application for Tenant<'a, T> {
                     }
                 }
             })
-            .collect();
-
-        new_events
+            .collect()
     }
 
     fn answer(&mut self) -> T {

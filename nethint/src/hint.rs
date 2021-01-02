@@ -1,6 +1,6 @@
 use std::cell::RefCell;
-use std::rc::Rc;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use fnv::FnvHashMap as HashMap;
 
@@ -10,6 +10,12 @@ use crate::{
     cluster::{Counters, LinkIx, NodeIx, NodeType, Topology, VirtCluster},
     Duration, Timestamp,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetHintVersion {
+    V1,
+    V2,
+}
 
 /// Only topology information, all bandwidth are set to 0.gbps()
 pub type NetHintV1 = VirtCluster;
@@ -148,7 +154,8 @@ impl Sampler {
 }
 
 pub trait Estimator {
-    fn estimate(&self, tenant_id: TenantId) -> NetHintV2;
+    fn estimate_v1(&self, tenant_id: TenantId) -> NetHintV1;
+    fn estimate_v2(&self, tenant_id: TenantId) -> NetHintV2;
     fn sample(&mut self, ts: Timestamp);
 }
 
@@ -248,20 +255,29 @@ impl SimpleEstimator {
 }
 
 impl Estimator for SimpleEstimator {
-    fn estimate(&self, tenant_id: TenantId) -> NetHintV2 {
+    fn estimate_v1(&self, tenant_id: TenantId) -> NetHintV1 {
+        let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
+
+        for link_ix in vcluster.all_links() {
+            vcluster[link_ix].bandwidth = 100.gbps();
+        }
+
+        vcluster
+    }
+
+    fn estimate_v2(&self, tenant_id: TenantId) -> NetHintV2 {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {
-            // let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
-            // let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
-            // let bw = self.compute_fair_share(
-            //     brain.cluster()[phys_link].bandwidth,
-            //     brain.cluster()[phys_link].bandwidth,
-            //     all_virtual_links,
-            // );
-            // vcluster[link_ix].bandwidth = bw;
-            vcluster[link_ix].bandwidth = 100.gbps();
+            let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
+            let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+            let bw = self.compute_fair_share(
+                brain.cluster()[phys_link].bandwidth,
+                brain.cluster()[phys_link].bandwidth,
+                all_virtual_links,
+            );
+            vcluster[link_ix].bandwidth = bw;
         }
 
         vcluster

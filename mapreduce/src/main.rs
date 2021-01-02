@@ -56,7 +56,7 @@ fn main() {
         segments.sort_by_key(|x| x.0);
         info!("inspect results: {:?}", segments);
 
-        let data = segments.into_iter().map(|x| x.1).collect();
+        let data: Vec<_> = segments.into_iter().map(|x| x.1).collect();
         use plot::plot_segments;
         let mut fg = plot_segments(&data);
         fg.show().unwrap();
@@ -177,13 +177,13 @@ fn run_experiments_multitenant(
             // MapperPlacementPolicy::Greedy,
             MapperPlacementPolicy::RandomSkew(seed_base + seed, 0.2),
             policy,
+            opt.nethint_level,
         ));
 
         let nhosts_to_acquire = job_spec.num_map + job_spec.num_reduce;
 
         let app: Box<dyn Application<Output = _>> = if use_plink {
-            let plink_app = Box::new(PlinkApp::new(nhosts_to_acquire, mapreduce_app));
-            plink_app
+            Box::new(PlinkApp::new(nhosts_to_acquire, mapreduce_app))
         } else {
             mapreduce_app
         };
@@ -229,7 +229,7 @@ fn run_experiments(
     cluster: Arc<Cluster>,
     policies: &[ReducerPlacementPolicy],
 ) -> Option<Vec<(usize, u64)>> {
-    let num_cpus = opt.parallel.unwrap_or(num_cpus::get());
+    let num_cpus = opt.parallel.unwrap_or_else(num_cpus::get);
 
     let ngroups = policies.len();
 
@@ -283,11 +283,11 @@ fn run_experiments(
 
 fn visualize(opt: &Opt, experiments: Option<Vec<(usize, u64)>>) -> Result<()> {
     let data: Option<Vec<u64>> = experiments.map(|mut a| {
-        a.sort();
+        a.sort_unstable();
         a.into_iter().map(|t| t.1).collect()
     });
 
-    let data = Arc::new(data.ok_or(anyhow!("Empty experiment data"))?);
+    let data = Arc::new(data.ok_or_else(|| anyhow!("Empty experiment data"))?);
 
     macro_rules! async_plot {
         ($fig_prefix:expr, $func:path) => {{

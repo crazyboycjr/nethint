@@ -130,9 +130,9 @@ impl<'a, T: Clone> Application for Sequence<'a, T> {
         trace!("Sequence sim_events: {:?}", events);
 
         // hijack timestamps of all flows
-        let new_events = events
+        events
             .into_iter()
-            .map(|sim_event| {
+            .flat_map(|sim_event| {
                 match sim_event {
                     Event::AppFinish => {
                         self.output.push(self.apps[self.cur_app].answer());
@@ -158,10 +158,7 @@ impl<'a, T: Clone> Application for Sequence<'a, T> {
                     Event::NetHintRequest(..) | Event::RegisterTimer(..) => sim_event.into(),
                 }
             })
-            .flatten()
-            .collect();
-
-        new_events
+            .collect()
     }
 
     fn answer(&mut self) -> Self::Output {
@@ -325,10 +322,10 @@ where
                         self.output.push((app_id, app.answer()));
                         Events::new()
                     }
-                    Event::NetHintRequest(inner_app_id, tenant_id) => {
+                    Event::NetHintRequest(inner_app_id, tenant_id, version) => {
                         // nested AppGroup will be supported later
                         assert_eq!(inner_app_id, 0);
-                        Event::NetHintRequest(app_id, tenant_id).into()
+                        Event::NetHintRequest(app_id, tenant_id, version).into()
                     }
                     Event::RegisterTimer(_dura, token) => {
                         panic!(

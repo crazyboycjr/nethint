@@ -130,7 +130,7 @@ impl std::str::FromStr for ShufflePattern {
 
         s.split_once("_")
             .and_then(|(name, args)| match name {
-                "uniform" => args.parse::<u64>().ok().map(|n| ShufflePattern::Uniform(n)),
+                "uniform" => args.parse::<u64>().ok().map(ShufflePattern::Uniform),
                 "zipf" => args.split_once("_").and_then(|(n, s)| {
                     n.parse::<u64>()
                         .ok()

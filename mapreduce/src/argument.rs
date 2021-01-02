@@ -62,6 +62,10 @@ pub struct Opt {
     /// Multi-tenant
     #[structopt(long = "multitenant")]
     pub multitenant: bool,
+
+    /// Nethint level.
+    #[structopt(short = "l", long = "nethint_level", default_value = "1")]
+    pub nethint_level: usize,
 }
 
 // impl Opt {
