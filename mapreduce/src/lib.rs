@@ -25,6 +25,8 @@ pub mod mapper;
 
 pub mod app;
 
+pub mod plink;
+
 pub mod inspect;
 
 const RAND_SEED: u64 = 0;

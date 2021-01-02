@@ -1,10 +1,7 @@
-use std::rc::Rc;
-
 use log::warn;
 
 use crate::{
     app::{AppEvent, AppEventKind, Application},
-    cluster::Topology,
     simulator::{Event, Events},
     Duration, Flow, Timestamp, Trace, TraceRecord,
 };
@@ -19,7 +16,7 @@ pub enum BackgroundFlowPattern {
 /// It keeps generating flows with `msg_size` and stops when dur_ms has passed.
 /// It also has a generic type T as the output type. The output is just a stub to fit in AppGroup<T>.
 pub struct BackgroundFlowApp<T> {
-    cluster: Rc<dyn Topology>,
+    nhosts: usize,
     /// running for dur_ms milliseconds
     dur_ms: Duration,
     pattern: BackgroundFlowPattern,
@@ -34,14 +31,14 @@ pub struct BackgroundFlowApp<T> {
 
 impl<T> BackgroundFlowApp<T> {
     pub fn new(
-        cluster: Rc<dyn Topology>,
+        nhosts: usize,
         dur_ms: Duration,
         pattern: BackgroundFlowPattern,
         msg_size: Option<usize>,
         output_stub: T,
     ) -> Self {
         BackgroundFlowApp {
-            cluster,
+            nhosts,
             dur_ms,
             pattern,
             msg_size: msg_size.unwrap_or(1_000_000),
@@ -55,21 +52,21 @@ impl<T> BackgroundFlowApp<T> {
         match event.event {
             AppEventKind::AppStart => {
                 let mut trace = Trace::new();
-                let n = self.cluster.num_hosts();
-                let pnames: Vec<_> = (0..n)
+                let n = self.nhosts;
+                let vnames: Vec<_> = (0..n)
                     .map(|i| {
                         let vname = format!("host_{}", i);
-                        self.cluster.translate(&vname)
+                        vname
                     })
                     .collect();
 
                 for i in 0..n {
-                    let sname = &pnames[i];
+                    let sname = &vnames[i];
                     for j in 0..n {
                         if i == j {
                             continue;
                         }
-                        let dname = &pnames[j];
+                        let dname = &vnames[j];
                         let flow = Flow::new(self.msg_size, sname, dname, None);
                         let rec = TraceRecord::new(0, flow, None);
                         trace.add_record(rec);
@@ -119,7 +116,7 @@ impl<T> BackgroundFlowApp<T> {
         use rand::seq::SliceRandom;
 
         let mut trace = Trace::new();
-        let n = self.cluster.num_hosts();
+        let n = self.nhosts;
         let ids = RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
             let mut ids: Vec<_> = (0..n).collect();
@@ -127,17 +124,17 @@ impl<T> BackgroundFlowApp<T> {
             ids
         });
 
-        let pnames: Vec<_> = ids
+        let vnames: Vec<_> = ids
             .into_iter()
             .map(|i| {
                 let vname = format!("host_{}", i);
-                self.cluster.translate(&vname)
+                vname
             })
             .collect();
 
         for (i, j) in (0..n).step_by(2).zip((1..n).step_by(2)) {
-            let sname = &pnames[i];
-            let dname = &pnames[j];
+            let sname = &vnames[i];
+            let dname = &vnames[j];
             let flow = Flow::new(self.msg_size, sname, dname, None);
             let rec = TraceRecord::new(cur_ts, flow, None);
             trace.add_record(rec);

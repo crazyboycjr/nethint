@@ -326,6 +326,7 @@ where
                         Events::new()
                     }
                     Event::NetHintRequest(inner_app_id, tenant_id) => {
+                        // nested AppGroup will be supported later
                         assert_eq!(inner_app_id, 0);
                         Event::NetHintRequest(app_id, tenant_id).into()
                     }

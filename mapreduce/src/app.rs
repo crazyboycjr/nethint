@@ -1,11 +1,9 @@
 use std::rc::Rc;
-use std::cell::RefCell;
 
 use crate::{GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern, mapper::{GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, RandomSkewMapperScheduler, TraceMapperScheduler}};
 use log::info;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
-    brain::{TenantId, Brain, PlacementStrategy},
     cluster::{Cluster, Topology},
     simulator::{Event, Events, Executor, Simulator},
     Duration, Flow, Trace, TraceRecord,
@@ -13,8 +11,6 @@ use nethint::{
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 
 pub struct MapReduceApp<'c> {
-    tenant_id: TenantId,
-    brain: Option<Rc<RefCell<Brain>>>,
     seed: u64,
     job_spec: &'c JobSpec,
     cluster: Option<Rc<dyn Topology>>,
@@ -26,8 +22,6 @@ pub struct MapReduceApp<'c> {
 
 impl<'c> MapReduceApp<'c> {
     pub fn new(
-        tenant_id: TenantId,
-        brain: Option<Rc<RefCell<Brain>>>,
         seed: u64,
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
@@ -36,8 +30,6 @@ impl<'c> MapReduceApp<'c> {
     ) -> Self {
         let trace = Trace::new();
         MapReduceApp {
-            tenant_id,
-            brain,
             seed,
             job_spec,
             cluster,
@@ -96,9 +88,11 @@ impl<'c> MapReduceApp<'c> {
         let mut trace = Trace::new();
         for i in 0..self.job_spec.num_map {
             for j in 0..self.job_spec.num_reduce {
-                let phys_map = self.cluster.as_ref().unwrap().translate(&mappers.0[i]);
-                let phys_reduce = self.cluster.as_ref().unwrap().translate(&reducers.0[j]);
-                let flow = Flow::new(shuffle.0[i][j], &phys_map, &phys_reduce, None);
+                // let phys_map = self.cluster.as_ref().unwrap().translate(&mappers.0[i]);
+                // let phys_reduce = self.cluster.as_ref().unwrap().translate(&reducers.0[j]);
+                // let flow = Flow::new(shuffle.0[i][j], &phys_map, &phys_reduce, None);
+                // no translation
+                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
                 let rec = TraceRecord::new(0, flow, None);
                 trace.add_record(rec);
             }
@@ -158,10 +152,9 @@ impl<'c> Application for MapReduceApp<'c> {
                     //     )
                     //     .unwrap();
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return Event::NetHintRequest(0, self.tenant_id).into();
+                    return Event::NetHintRequest(0, 0).into();
                 }
-                &AppEventKind::NetHintResponse(_, tenant_id, ref vc) => {
-                    assert_eq!(tenant_id, self.tenant_id);
+                &AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
                     info!(
                         "nethint response: {}",
@@ -212,8 +205,6 @@ pub fn run_map_reduce(
         MapperPlacementPolicy::Random(seed)
     };
     let mut app = Box::new(MapReduceApp::new(
-        0,
-        None,
         seed,
         job_spec,
         Some(Rc::new(cluster.clone())),

@@ -18,7 +18,7 @@ use cluster::Route;
 
 pub mod app;
 
-// pub mod multitenant;
+pub mod multitenant;
 
 pub mod timer;
 pub mod simulator;
