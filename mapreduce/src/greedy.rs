@@ -23,6 +23,7 @@ fn find_best_node(cluster: &dyn Topology, denylist: &HashSet<NodeIx>, rack: usiz
         .max_by_key(|&&downlink| cluster[downlink].bandwidth)
         .unwrap();
 
+    #[allow(clippy::let_and_return)]
     let best_node_ix = cluster.get_target(*downlink);
     best_node_ix
 }

@@ -8,6 +8,7 @@ pub enum MapperPlacementPolicy {
     Random(u64),
     FromTrace(Record),
     Greedy,
+    RandomSkew(u64, f64), // seed, s
 }
 
 #[derive(Debug, Default)]
@@ -118,3 +119,59 @@ impl PlaceMapper for GreedyMapperScheduler {
         Placement(hosts)
     }
 }
+#[derive(Debug, Default)]
+pub struct RandomSkewMapperScheduler {
+    seed: u64,
+    s: f64,
+}
+
+impl RandomSkewMapperScheduler {
+    pub fn new(seed: u64, s: f64) -> Self {
+        Self { seed, s }
+    }
+}
+
+impl PlaceMapper for RandomSkewMapperScheduler {
+    fn place(&mut self, vcluster: &dyn Topology, job_spec: &JobSpec) -> Placement {
+
+        let mut rng = StdRng::seed_from_u64(self.seed);
+        let num_racks = vcluster.num_switches() - 1;
+
+        use rand::distributions::Distribution;
+        let zipf = zipf::ZipfDistribution::new(num_racks, self.s).unwrap();
+
+        let mut used = HashSet::new();
+        let mut hosts = Vec::new();
+
+        for _i in 0..job_spec.num_map {
+            let mut found = None;
+            while found.is_none() {
+                let rack_id = zipf.sample(&mut rng) - 1;
+                assert!(rack_id < num_racks, format!("{} {}", rack_id, num_racks));
+
+                let tor_name = format!("tor_{}", rack_id);
+                let tor_ix = vcluster.get_node_index(&tor_name);
+                for &link_ix in vcluster.get_downlinks(tor_ix) {
+                    let host_ix = vcluster.get_target(link_ix);
+                    if !used.contains(&host_ix) {
+                        found = Some(host_ix);
+                        break;
+                    }
+                }
+
+                if found.is_none() {
+                    log::warn!("rack {} is full, we don't want this", rack_id);
+                }
+            }
+
+            used.insert(found.unwrap());
+            let host_name = vcluster[found.unwrap()].name.clone();
+            hosts.push(host_name);
+        }
+
+        hosts.shuffle(&mut rng);
+
+        Placement(hosts)
+    }
+}
+

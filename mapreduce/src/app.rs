@@ -1,51 +1,45 @@
 use std::rc::Rc;
 
-use crate::{
-    mapper::{
-        GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, TraceMapperScheduler,
-    },
-    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
-    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
-};
+use crate::{GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern, mapper::{GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, RandomSkewMapperScheduler, TraceMapperScheduler}};
 use log::info;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
-    brain::TenantId,
     cluster::{Cluster, Topology},
     simulator::{Event, Events, Executor, Simulator},
+    hint::NetHintVersion,
     Duration, Flow, Trace, TraceRecord,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 
 pub struct MapReduceApp<'c> {
-    tenant_id: TenantId,
     seed: u64,
     job_spec: &'c JobSpec,
     cluster: Option<Rc<dyn Topology>>,
     mapper_place_policy: MapperPlacementPolicy,
     reducer_place_policy: ReducerPlacementPolicy,
+    nethint_level: usize,
     replayer: Replayer,
     jct: Option<Duration>,
 }
 
 impl<'c> MapReduceApp<'c> {
     pub fn new(
-        tenant_id: TenantId,
         seed: u64,
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
         mapper_place_policy: MapperPlacementPolicy,
         reducer_place_policy: ReducerPlacementPolicy,
+        nethint_level: usize,
     ) -> Self {
-        let trace = Trace::new();
+        assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
-            tenant_id,
             seed,
             job_spec,
             cluster,
             mapper_place_policy,
             reducer_place_policy,
-            replayer: Replayer::new(trace),
+            nethint_level,
+            replayer: Replayer::new(Trace::new()),
             jct: None,
         }
     }
@@ -69,6 +63,7 @@ impl<'c> MapReduceApp<'c> {
                 Box::new(TraceMapperScheduler::new(record.clone()))
             }
             MapperPlacementPolicy::Greedy => Box::new(GreedyMapperScheduler::new()),
+            MapperPlacementPolicy::RandomSkew(seed, s) => Box::new(RandomSkewMapperScheduler::new(seed, s)),
         };
         let mappers = map_scheduler.place(&**self.cluster.as_ref().unwrap(), &self.job_spec);
         info!("mappers: {:?}", mappers);
@@ -97,9 +92,11 @@ impl<'c> MapReduceApp<'c> {
         let mut trace = Trace::new();
         for i in 0..self.job_spec.num_map {
             for j in 0..self.job_spec.num_reduce {
-                let phys_map = self.cluster.as_ref().unwrap().translate(&mappers.0[i]);
-                let phys_reduce = self.cluster.as_ref().unwrap().translate(&reducers.0[j]);
-                let flow = Flow::new(shuffle.0[i][j], &phys_map, &phys_reduce, None);
+                // let phys_map = self.cluster.as_ref().unwrap().translate(&mappers.0[i]);
+                // let phys_reduce = self.cluster.as_ref().unwrap().translate(&reducers.0[j]);
+                // let flow = Flow::new(shuffle.0[i][j], &phys_map, &phys_reduce, None);
+                // no translation
+                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
                 let rec = TraceRecord::new(0, flow, None);
                 trace.add_record(rec);
             }
@@ -129,6 +126,7 @@ impl<'c> MapReduceApp<'c> {
             ShufflePattern::FromTrace(record) => {
                 assert_eq!(m % record.num_reduce, 0);
                 let k = m / record.num_reduce;
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..n {
                     for j in 0..m {
                         pairs[i][j] = (record.reducers[j / k].1 / n as f64 * 1e6) as usize;
@@ -145,13 +143,16 @@ impl<'c> Application for MapReduceApp<'c> {
     fn on_event(&mut self, event: AppEvent) -> Events {
         if self.cluster.is_none() {
             // ask simulator for the NetHint
-            match &event.event {
-                &AppEventKind::AppStart => {
+            match event.event {
+                AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return Event::NetHintRequest(0, self.tenant_id).into();
+                    return match self.nethint_level {
+                        1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
+                        2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
+                        _ => panic!("unexpected nethint_level: {}", self.nethint_level),
+                    };
                 }
-                &AppEventKind::NetHintResponse(_, tenant_id, ref vc) => {
-                    assert_eq!(tenant_id, self.tenant_id);
+                AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
                     info!(
                         "nethint response: {}",
@@ -197,12 +198,12 @@ pub fn run_map_reduce(
         MapperPlacementPolicy::Random(seed)
     };
     let mut app = Box::new(MapReduceApp::new(
-        0,
         seed,
         job_spec,
         Some(Rc::new(cluster.clone())),
         map_place_policy,
         reduce_place_policy,
+        2,
     ));
     app.start();
 

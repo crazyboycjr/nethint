@@ -19,7 +19,7 @@ pub struct JobLifetime {
 pub fn run_experiments(opt: &Opt, cluster: Arc<Cluster>) -> Option<Vec<(usize, JobLifetime)>> {
     assert!(opt.trace.is_some(), "need to specify a trace file");
 
-    let num_cpus = opt.parallel.unwrap_or(num_cpus::get());
+    let num_cpus = opt.parallel.unwrap_or_else(num_cpus::get);
 
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)
@@ -41,7 +41,13 @@ pub fn run_experiments(opt: &Opt, cluster: Arc<Cluster>) -> Option<Vec<(usize, J
                 let (start_ts, job_spec) = job_trace
                     .as_ref()
                     .map(|job_trace| {
-                        let record = job_trace.records[id].clone();
+                        let mut record = job_trace.records[id].clone();
+                        // mutiple traffic by a number
+                        record.reducers = record
+                            .reducers
+                            .into_iter()
+                            .map(|(a, b)| (a, b * opt.traffic_scale))
+                            .collect();
                         debug!("record: {:?}", record);
                         let ts = record.ts;
                         let job_spec = JobSpec::new(

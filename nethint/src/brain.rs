@@ -180,7 +180,10 @@ impl Brain {
     }
 
     pub fn destroy(&mut self, tenant_id: TenantId) {
-        let vcluster = self.vclusters.remove(&tenant_id).unwrap();
+        let vcluster = self
+            .vclusters
+            .remove(&tenant_id)
+            .unwrap_or_else(|| panic!("tenant_id: {}", tenant_id));
 
         vcluster.borrow().all_links().for_each(|vlink_ix| {
             let plink_ix = self.vlink_to_plink[&(tenant_id, vlink_ix)];
