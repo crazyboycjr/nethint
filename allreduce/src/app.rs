@@ -23,6 +23,12 @@ pub struct AllReduceApp<'c> {
     remaining_flows: usize,
 }
 
+impl<'c> std::fmt::Debug for AllReduceApp<'c> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AllReduceApp")
+    }
+}
+
 impl<'c> AllReduceApp<'c> {
     pub fn new(job_spec: &'c JobSpec, cluster: &'c dyn Topology, seed: u64, allreduce_policy: &'c AllReducePolicy) -> Self {
         let trace = Trace::new();

@@ -33,7 +33,7 @@ pub enum AppEventKind {
 
 /// An Applicatoin can interact with the simulator based on the flow completion event it received.
 /// It dynamically start new flows according to the finish and arrive event of some flows.
-pub trait Application {
+pub trait Application: std::fmt::Debug {
     type Output;
     fn on_event(&mut self, event: AppEvent) -> Events;
     fn answer(&mut self) -> Self::Output;
@@ -82,7 +82,7 @@ impl Replayer {
 /// Sequence is a application combinator, it takes a sequence of applications.
 /// Each application depends on previous one and only starts after the previous one is finished.
 /// The result is a list of outputs of the applications with the order kepted.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Sequence<'a, T> {
     apps: Vec<Box<dyn Application<Output = T> + 'a>>,
     output: Vec<T>,
@@ -105,7 +105,7 @@ impl<'a, T> Sequence<'a, T> {
     }
 }
 
-impl<'a, T: Clone> Application for Sequence<'a, T> {
+impl<'a, T: Clone + std::fmt::Debug> Application for Sequence<'a, T> {
     type Output = Vec<T>;
 
     fn on_event(&mut self, event: AppEvent) -> Events {
@@ -169,7 +169,7 @@ impl<'a, T: Clone> Application for Sequence<'a, T> {
 /// AppGroup is an application created by combining multiple applications started at different timestamps.
 /// It marks flows from each individual application.
 /// It works like a proxy, intercepting, modifying, and forwarding simulator events to and from corresponding apps.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AppGroup<'a, T> {
     // Vec<(start time offset, application)>
     apps: Vec<(Timestamp, Box<dyn Application<Output = T> + 'a>)>,
@@ -200,7 +200,7 @@ impl AppGroupTokenCoding for Token {
 
 impl<'a, T> Application for AppGroup<'a, T>
 where
-    T: Clone,
+    T: Clone + std::fmt::Debug,
 {
     // a list of (app_id, App::Output)
     type Output = Vec<(usize, T)>;

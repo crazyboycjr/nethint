@@ -198,6 +198,8 @@ fn run_experiments_multitenant(
         app_group.add(*start_ts, virtualized_app);
     }
 
+    debug!("app_group: {:?}", app_group);
+
     // let mut simulator = Simulator::new((**brain.cluster()).clone());
     let mut simulator = Simulator::with_brain(Rc::clone(&brain));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));

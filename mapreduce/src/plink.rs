@@ -5,6 +5,7 @@ use nethint::{
     Duration,
 };
 
+#[derive(Debug)]
 pub struct PlinkApp<'a, T> {
     dur_ms: Duration,
     inner: Box<Sequence<'a, T>>,
@@ -12,7 +13,7 @@ pub struct PlinkApp<'a, T> {
 
 impl<'a, T: 'a> PlinkApp<'a, T>
 where
-    T: Default + Clone,
+    T: Default + Clone + std::fmt::Debug,
 {
     pub fn new(nhosts: usize, app: Box<dyn Application<Output = T> + 'a>) -> Self {
         let dur_ms = (nhosts * 100) as _;

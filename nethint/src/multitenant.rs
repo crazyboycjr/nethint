@@ -20,6 +20,16 @@ pub struct Tenant<'a, T> {
     pname_to_vname: HashMap<String, String>,
 }
 
+impl<'a, T> std::fmt::Debug for Tenant<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tenant")
+            .field("app", &self.app)
+            .field("tenant_id", &self.tenant_id)
+            .field("nhosts", &self.nhosts)
+            .finish()
+    }
+}
+
 impl<'a, T> Tenant<'a, T> {
     pub fn new(
         app: Box<dyn Application<Output = T> + 'a>,
@@ -39,7 +49,9 @@ impl<'a, T> Tenant<'a, T> {
 
     fn virt_to_phys(&mut self, vname: &str) -> String {
         let pname = self.vcluster.as_ref().unwrap().translate(vname);
-        self.pname_to_vname.entry(pname.clone()).or_insert_with(|| vname.to_owned());
+        self.pname_to_vname
+            .entry(pname.clone())
+            .or_insert_with(|| vname.to_owned());
         pname
     }
 
@@ -48,7 +60,7 @@ impl<'a, T> Tenant<'a, T> {
     }
 }
 
-impl<'a, T: Clone> Application for Tenant<'a, T> {
+impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
     type Output = T;
 
     fn on_event(&mut self, event: AppEvent) -> Events {

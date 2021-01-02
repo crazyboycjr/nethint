@@ -22,6 +22,12 @@ pub struct MapReduceApp<'c> {
     jct: Option<Duration>,
 }
 
+impl<'c> std::fmt::Debug for MapReduceApp<'c> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MapReduceApp")
+    }
+}
+
 impl<'c> MapReduceApp<'c> {
     pub fn new(
         seed: u64,
