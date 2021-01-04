@@ -1,5 +1,7 @@
 use log::{debug, trace};
 
+use fnv::FnvHashMap as HashMap;
+
 use crate::brain::TenantId;
 use crate::{
     hint::NetHintV2,
@@ -174,6 +176,7 @@ pub struct AppGroup<'a, T> {
     // Vec<(start time offset, application)>
     apps: Vec<(Timestamp, Box<dyn Application<Output = T> + 'a>)>,
     output: Vec<(usize, T)>,
+    stored_flow_token: HashMap<usize, Option<Token>>,
 }
 
 pub trait AppGroupTokenCoding {
@@ -231,7 +234,7 @@ where
                     assert!(app_id < self.apps.len());
                     let mut f = r.clone();
                     f.ts -= self.apps[app_id].0; // f.ts -= start_off;
-                    f.flow.token = None; // TODO(cjr): restore the token
+                    f.flow.token = self.stored_flow_token.remove(&r.flow.id).unwrap(); // restore the token
                     flows[app_id].push(f);
                 }
 
@@ -281,6 +284,7 @@ where
         AppGroup {
             apps: Default::default(),
             output: Default::default(),
+            stored_flow_token: HashMap::default(),
         }
     }
 
@@ -307,12 +311,10 @@ where
                     Event::FlowArrive(mut recs) => {
                         recs.iter_mut().for_each(|r| {
                             r.ts += start_off;
-                            assert!(
-                                r.flow.token.is_none(),
-                                "Currently AppGroup assumes the flow token is not used"
-                            );
+                            self.stored_flow_token
+                                .insert(r.flow.id, r.flow.token)
+                                .unwrap_none(); // store the token
                             r.flow.token = Some(Token::encode(app_id, app_id));
-                            // TODO(cjr): we can save the token and restore it transparently
                         });
                         Event::FlowArrive(recs).into()
                     }

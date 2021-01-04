@@ -91,7 +91,7 @@ impl<T> BackgroundFlowApp<T> {
                     // start new flows
                     let mut new_flows = Trace::new();
                     for r in &recs {
-                        let flow = r.flow.clone();
+                        let flow = Flow::new(r.flow.bytes, &r.flow.src, &r.flow.dst, r.flow.token);
                         let rec = TraceRecord::new(cur_ts, flow, None);
                         new_flows.add_record(rec);
                     }

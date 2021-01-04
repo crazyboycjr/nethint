@@ -2,13 +2,20 @@
 #![feature(option_zip)]
 #![feature(concat_idents)]
 
-use rand::{rngs::StdRng, SeedableRng};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+use lazy_static::lazy_static;
+use rand::{rngs::StdRng, SeedableRng};
 
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));
+}
+
+lazy_static! {
+    static ref FLOW_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
 pub mod bandwidth;
@@ -20,11 +27,12 @@ pub mod app;
 
 pub mod multitenant;
 
-pub mod timer;
 pub mod simulator;
+pub mod timer;
 
 pub mod architecture;
 pub mod brain;
+pub use brain::TenantId;
 
 pub mod hint;
 
@@ -96,9 +104,13 @@ impl std::fmt::Debug for TraceRecord {
 
 #[derive(Debug, Clone)]
 pub struct Flow {
+    /// an identifier
+    id: usize,
     bytes: usize,
     src: String,
     dst: String,
+    /// to explicitly support tenant based fairness
+    tenant_id: Option<TenantId>,
     /// a optional tag for application use (e.g. identify the flow in application)
     token: Option<Token>,
 }
@@ -107,9 +119,11 @@ impl Flow {
     #[inline]
     pub fn new(bytes: usize, src: &str, dst: &str, token: Option<Token>) -> Self {
         Flow {
+            id: FLOW_ID.fetch_add(1, SeqCst),
             bytes,
             src: src.to_owned(),
             dst: dst.to_owned(),
+            tenant_id: None,
             token,
         }
     }
