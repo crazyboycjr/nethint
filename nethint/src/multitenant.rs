@@ -79,10 +79,9 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
             AppEventKind::FlowComplete(mut raw_flows) => {
                 // translate raw_flows to app flows
                 for f in &mut raw_flows {
-                    assert!(f.flow.tenant_id.is_none());
-                    f.flow.tenant_id = Some(self.tenant_id);
                     f.flow.src = self.phys_to_virt(&f.flow.src);
                     f.flow.dst = self.phys_to_virt(&f.flow.dst);
+                    f.flow.tenant_id = None;
                 }
                 self.app
                     .on_event(AppEvent::new(now, AppEventKind::FlowComplete(raw_flows)))
@@ -104,9 +103,10 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                     Event::FlowArrive(mut virt_flows) => {
                         // translate app flows to physical flows
                         for f in &mut virt_flows {
+                            assert!(f.flow.tenant_id.is_none());
+                            f.flow.tenant_id = Some(self.tenant_id);
                             f.flow.src = self.virt_to_phys(&f.flow.src);
                             f.flow.dst = self.virt_to_phys(&f.flow.dst);
-                            f.flow.tenant_id = None;
                         }
                         Event::FlowArrive(virt_flows)
                     }

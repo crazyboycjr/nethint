@@ -38,6 +38,18 @@ pub mod hint;
 
 pub mod background_flow;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FairnessModel {
+    PerFlowMinMax,
+    TenantFlowMinMax,
+}
+
+impl std::default::Default for FairnessModel {
+    fn default() -> Self {
+        Self::PerFlowMinMax
+    }
+}
+
 // nanoseconds
 pub type Timestamp = u64;
 pub type Duration = u64;

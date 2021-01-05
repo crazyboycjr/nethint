@@ -14,8 +14,8 @@ use nethint::{
     brain::Brain,
     cluster::{Cluster, Topology},
     multitenant::Tenant,
-    simulator::{Executor, Simulator},
-    ToStdDuration,
+    simulator::{Executor, Simulator, SimulatorBuilder},
+    FairnessModel, ToStdDuration,
 };
 
 extern crate mapreduce;
@@ -201,7 +201,14 @@ fn run_experiments_multitenant(
     debug!("app_group: {:?}", app_group);
 
     // let mut simulator = Simulator::new((**brain.cluster()).clone());
-    let mut simulator = Simulator::with_brain(Rc::clone(&brain));
+    // let mut simulator = Simulator::with_brain(Rc::clone(&brain));
+    let mut simulator = SimulatorBuilder::new()
+        .enable_nethint(true)
+        .brain(Rc::clone(&brain))
+        .fairness(FairnessModel::TenantFlowMinMax)
+        .sample_interval_ns(100_000_000)
+        .build()
+        .unwrap_or_else(|e| panic!("{}", e));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
     let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct

@@ -6,19 +6,25 @@ use std::rc::Rc;
 use fnv::FnvBuildHasher;
 use indexmap::IndexMap;
 use log::{debug, trace};
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
+use thiserror::Error;
 
-use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::brain::{Brain, TenantId};
 use crate::cluster::{Cluster, Link, Route, Topology};
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
-    hint::{NetHintVersion, Estimator, SimpleEstimator},
+    hint::{Estimator, NetHintVersion, SimpleEstimator},
     timer::{OnceTimer, RepeatTimer, Timer, TimerKind},
+};
+use crate::{
+    bandwidth::{Bandwidth, BandwidthTrait},
+    FairnessModel,
 };
 use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
+type HashMapValues<'a, K, V> = indexmap::map::Values<'a, K, V>;
+type HashMapValuesMut<'a, K, V> = indexmap::map::ValuesMut<'a, K, V>;
 
 /// The simulator driver API
 pub trait Executor<'a> {
@@ -26,14 +32,114 @@ pub trait Executor<'a> {
     fn run_with_appliation<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
 }
 
+#[derive(Debug, Clone)]
+pub struct SimulatorBuilder {
+    cluster: Option<Cluster>,
+    fairness: FairnessModel,
+    enable_nethint: bool,
+    brain: Option<Rc<RefCell<Brain>>>,
+    sample_interval_ns: Duration,
+}
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("you must also set brain to enable nethint")]
+    EmptyBrain,
+    #[error("at least one of cluster of brain must be set")]
+    EmptyClusterOrBrain,
+}
+
+impl SimulatorBuilder {
+    pub fn new() -> Self {
+        SimulatorBuilder {
+            cluster: None,
+            fairness: FairnessModel::default(),
+            enable_nethint: false,
+            brain: None,
+            sample_interval_ns: 100_000_000, // 100ms
+        }
+    }
+
+    pub fn cluster(&mut self, cluster: Cluster) -> &mut Self {
+        self.cluster = Some(cluster);
+        self
+    }
+
+    pub fn enable_nethint(&mut self, enable: bool) -> &mut Self {
+        self.enable_nethint = enable;
+        self
+    }
+
+    pub fn brain(&mut self, brain: Rc<RefCell<Brain>>) -> &mut Self {
+        self.brain = Some(brain);
+        self
+    }
+
+    pub fn fairness(&mut self, fairness: FairnessModel) -> &mut Self {
+        self.fairness = fairness;
+        self
+    }
+
+    pub fn sample_interval_ns(&mut self, sample_interval_ns: Duration) -> &mut Self {
+        self.sample_interval_ns = sample_interval_ns;
+        self
+    }
+
+    pub fn build(&mut self) -> Result<Simulator, Error> {
+        if self.enable_nethint && self.brain.is_none() {
+            return Err(Error::EmptyBrain);
+        }
+        if self.cluster.is_none() && self.brain.is_none() {
+            return Err(Error::EmptyClusterOrBrain);
+        }
+
+        let simulator = if self.enable_nethint {
+            let brain = self.brain.as_ref().unwrap();
+            let estimator = Box::new(SimpleEstimator::new(
+                Rc::clone(brain),
+                self.sample_interval_ns,
+            ));
+            let timers = std::iter::once(Box::new(RepeatTimer::new(
+                self.sample_interval_ns,
+                self.sample_interval_ns,
+            )) as Box<dyn Timer>)
+            .collect();
+            let mut state = NetState::default();
+            state.brain = Some(Rc::clone(brain));
+            state.fairness = self.fairness;
+            Simulator {
+                cluster: (**brain.borrow().cluster()).clone(),
+                ts: 0,
+                state,
+                timers,
+                fairness: self.fairness,
+                enable_nethint: self.enable_nethint,
+                estimator: Some(estimator),
+            }
+        } else {
+            Simulator {
+                cluster: self.cluster.clone().unwrap(),
+                ts: 0,
+                state: NetState::default(),
+                timers: BinaryHeap::new(),
+                fairness: self.fairness,
+                enable_nethint: self.enable_nethint,
+                estimator: None,
+            }
+        };
+
+        Ok(simulator)
+    }
+}
+
 /// The flow-level simulator.
 pub struct Simulator {
     cluster: Cluster,
     ts: Timestamp,
     state: NetState,
-
     timers: BinaryHeap<Box<dyn Timer>>,
-
+    // fairness model
+    fairness: FairnessModel,
     // nethint
     enable_nethint: bool,
     estimator: Option<Box<dyn Estimator>>,
@@ -46,6 +152,7 @@ impl Simulator {
             ts: 0,
             state: Default::default(),
             timers: BinaryHeap::new(),
+            fairness: FairnessModel::default(),
             enable_nethint: false,
             estimator: None,
         }
@@ -65,6 +172,7 @@ impl Simulator {
             ts: 0,
             state,
             timers,
+            fairness: FairnessModel::default(),
             enable_nethint: true,
             estimator: Some(estimator),
         }
@@ -91,16 +199,84 @@ impl Simulator {
     // }
 
     #[inline]
-    fn calc_delta(l: &Link, fs: &[FlowStateRef]) -> Bandwidth {
+    fn calc_delta_per_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
         let (num_active, consumed_bw) = fs.iter().fold((0, 0.0), |acc, f| {
             let f = f.borrow();
             (acc.0 + !f.converged as usize, acc.1 + f.speed)
         });
-        // COMMENT(cjr): due to precision issue, here consumed_bw can be a littble bigger than bw
-        if l.bandwidth < (consumed_bw / 1e9).gbps() {
+        // COMMENT(cjr): due to precision issue, here consumed_bw can be a little bigger than bw
+        let bw_inc = if l.bandwidth < (consumed_bw / 1e9).gbps() {
             0.gbps()
         } else {
             (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active as f64
+        };
+        // set when a flow will converge
+        fs.iter_mut()
+            .map(|f| f.borrow_mut())
+            .for_each(|mut f| f.speed_bound = f.speed_bound.min(f.speed + bw_inc.val() as f64));
+        bw_inc
+    }
+
+    #[inline]
+    fn calc_delta_tenant_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
+        // first per tenant, than per flow
+        // find the tenant having most active flows on this link
+        if let FlowSet::Groupped(m) = fs {
+            let mut consumed_bw = 0.0;
+            let mut num_active_tenants = 0;
+            let mut num_active_flows = Vec::new();
+            for fs in m.values() {
+                let mut tenant_active_flows = 0;
+                for f in fs {
+                    let f = f.borrow();
+                    consumed_bw += f.speed;
+                    tenant_active_flows += !f.converged as usize;
+                }
+
+                num_active_tenants += (tenant_active_flows > 0) as usize;
+                num_active_flows.push(tenant_active_flows);
+            }
+
+            // debug!("consumed_bw: {}", consumed_bw);
+            // debug!("num_active_tenants: {}", num_active_tenants);
+            // debug!("num_active_flows: {:?}", num_active_flows);
+
+            assert_ne!(num_active_tenants, 0);
+
+            let bw_inc_tenant = if l.bandwidth < (consumed_bw / 1e9).gbps() {
+                0.gbps()
+            } else {
+                (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active_tenants as f64
+            };
+
+            let mut min_inc = bw_inc_tenant;
+
+            // set when a flow will converge
+            for (i, fs) in m.values_mut().enumerate() {
+                if num_active_flows[i] == 0 {
+                    continue;
+                }
+                let tenant_speed_inc = bw_inc_tenant / num_active_flows[i] as f64;
+                min_inc = min_inc.min(tenant_speed_inc);
+
+                let tenant_speed_inc_f64 = tenant_speed_inc.val() as f64;
+                for f in fs {
+                    let mut f = f.borrow_mut();
+                    f.speed_bound = f.speed_bound.min(f.speed + tenant_speed_inc_f64);
+                }
+            }
+
+            min_inc
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[inline]
+    fn calc_delta(fairness: FairnessModel, l: &Link, fs: &mut FlowSet) -> Bandwidth {
+        match fairness {
+            FairnessModel::PerFlowMinMax => Self::calc_delta_per_flow(l, fs),
+            FairnessModel::TenantFlowMinMax => Self::calc_delta_tenant_flow(l, fs),
         }
     }
 
@@ -137,37 +313,47 @@ impl Simulator {
         let mut converged = 0;
         let active_flows = self.state.running_flows.len();
         self.state.running_flows.iter().for_each(|f| {
+            f.borrow_mut().speed_bound = f64::MAX;
             f.borrow_mut().converged = false;
             f.borrow_mut().speed = 0.0;
         });
+
+        let fairness = self.fairness;
         while converged < active_flows {
             // find the bottleneck link
             let res = self
                 .state
-                .flows
-                .iter()
-                .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged))
-                .min_by_key(|(l, fs)| {
+                .link_flows
+                .iter_mut()
+                .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged)) // this seems to be redundant
+                .map(|(l, fs)| {
                     assert!(!fs.is_empty());
-                    Self::calc_delta(l, fs)
-                });
+                    Self::calc_delta(fairness, l, fs)
+                })
+                .min();
 
-            let (l, fs) = res.expect("impossible");
-            let speed_inc = Self::calc_delta(l, fs).val() as f64;
+            let bw = res.expect("impossible");
+            let speed_inc = bw.val() as f64;
 
             // update and converge flows pass through the bottleneck link
-            for f in fs {
-                if !f.borrow().converged {
-                    f.borrow_mut().speed += speed_inc;
-                    f.borrow_mut().converged = true;
-                    converged += 1;
-                }
-            }
+            // for f in fs {
+            //     if !f.borrow().converged {
+            //         f.borrow_mut().speed += speed_inc;
+            //         f.borrow_mut().converged = true;
+            //         converged += 1;
+            //     }
+            // }
 
             // increase the speed of all active flows
             for f in &self.state.running_flows {
-                if !f.borrow().converged {
-                    f.borrow_mut().speed += speed_inc;
+                let mut f = f.borrow_mut();
+                if !f.converged {
+                    f.speed += speed_inc;
+                    // TODO(cjr): be careful about this
+                    if f.speed + 1e-10 >= f.speed_bound {
+                        f.converged = true;
+                        converged += 1;
+                    }
                 }
             }
         }
@@ -296,9 +482,13 @@ impl<'a> Executor<'a> for Simulator {
                             app_id,
                             tenant_id,
                             match version {
-                                NetHintVersion::V1 => self.estimator.as_ref().unwrap().estimate_v1(tenant_id),
-                                NetHintVersion::V2 => self.estimator.as_ref().unwrap().estimate_v2(tenant_id),
-                            }
+                                NetHintVersion::V1 => {
+                                    self.estimator.as_ref().unwrap().estimate_v1(tenant_id)
+                                }
+                                NetHintVersion::V2 => {
+                                    self.estimator.as_ref().unwrap().estimate_v2(tenant_id)
+                                }
+                            },
                         );
                         new_events.append(app.on_event(app_event!(response)));
                     }
@@ -335,26 +525,150 @@ impl<'a> Executor<'a> for Simulator {
     }
 }
 
+#[derive(Debug)]
+enum FlowSet {
+    Flat(Vec<FlowStateRef>),
+    Groupped(HashMap<TenantId, Vec<FlowStateRef>>),
+}
+
+impl FlowSet {
+    fn new(fairness: FairnessModel) -> FlowSet {
+        match fairness {
+            FairnessModel::PerFlowMinMax => FlowSet::Flat(Vec::new()),
+            FairnessModel::TenantFlowMinMax => FlowSet::Groupped(HashMap::default()),
+        }
+    }
+
+    fn push(&mut self, fs: FlowStateRef) {
+        match self {
+            Self::Flat(v) => v.push(fs),
+            Self::Groupped(m) => {
+                let key = fs
+                    .borrow()
+                    .flow
+                    .tenant_id
+                    .unwrap_or_else(|| panic!("flow: {:?}", fs.borrow().flow));
+                m.entry(key).or_insert_with(Vec::new).push(fs);
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Flat(v) => v.is_empty(),
+            Self::Groupped(m) => m.is_empty(),
+        }
+    }
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: Clone + FnMut(&FlowStateRef) -> bool,
+    {
+        match self {
+            Self::Flat(v) => v.retain(f),
+            Self::Groupped(m) => {
+                m.values_mut().for_each(|v| v.retain(f.clone()));
+                m.retain(|_, v| !v.is_empty());
+            }
+        }
+    }
+
+    fn iter(&self) -> FlowSetIter {
+        match self {
+            Self::Flat(v) => FlowSetIter::FlatIter(v.iter()),
+            Self::Groupped(m) => {
+                let mut iter1 = m.values();
+                let iter2 = iter1.next().map(|v| v.iter());
+                FlowSetIter::GrouppedIter(iter1, iter2)
+            }
+        }
+    }
+
+    fn iter_mut(&mut self) -> FlowSetIterMut {
+        match self {
+            Self::Flat(v) => FlowSetIterMut::FlatIter(v.iter_mut()),
+            Self::Groupped(m) => {
+                let mut iter1 = m.values_mut();
+                let iter2 = iter1.next().map(|v| v.iter_mut());
+                FlowSetIterMut::GrouppedIter(iter1, iter2)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum FlowSetIter<'a> {
+    FlatIter(std::slice::Iter<'a, FlowStateRef>),
+    GrouppedIter(
+        HashMapValues<'a, TenantId, Vec<FlowStateRef>>,
+        Option<std::slice::Iter<'a, FlowStateRef>>,
+    ),
+}
+
+enum FlowSetIterMut<'a> {
+    FlatIter(std::slice::IterMut<'a, FlowStateRef>),
+    GrouppedIter(
+        HashMapValuesMut<'a, TenantId, Vec<FlowStateRef>>,
+        Option<std::slice::IterMut<'a, FlowStateRef>>,
+    ),
+}
+
+macro_rules! impl_iter_for {
+    ($name: ident, $item:ty, $iter_func:ident) => {
+        impl<'a> Iterator for $name<'a> {
+            type Item = $item;
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    Self::FlatIter(iter) => iter.next(),
+                    Self::GrouppedIter(iter1, iter2) => {
+                        if iter2.is_none() {
+                            None
+                        } else {
+                            match iter2.as_mut().unwrap().next() {
+                                Some(ret) => Some(ret),
+                                None => {
+                                    *iter2 = iter1.next().map(|v| v.$iter_func());
+                                    if iter2.is_none() {
+                                        None
+                                    } else {
+                                        iter2.as_mut().unwrap().next()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+impl_iter_for!(FlowSetIter, &'a FlowStateRef, iter);
+impl_iter_for!(FlowSetIterMut, &'a mut FlowStateRef, iter_mut);
+
 #[derive(Default)]
 struct NetState {
     /// buffered flows, flow.ts > sim.ts
     flow_bufs: BinaryHeap<Reverse<FlowStateRef>>,
     // emitted flows
     running_flows: Vec<FlowStateRef>,
-    flows: HashMap<Link, Vec<FlowStateRef>>,
+    // link_flows: HashMap<Link, Vec<FlowStateRef>>,
+    link_flows: HashMap<Link, FlowSet>,
     resolve_route_time: std::time::Duration,
     // for nethint use
     brain: Option<Rc<RefCell<Brain>>>,
+    fairness: FairnessModel,
 }
 
 impl NetState {
     #[inline]
     fn emit_flow(&mut self, fs: FlowStateRef) {
         self.running_flows.push(Rc::clone(&fs));
+        let fairness = self.fairness;
         for l in &fs.borrow().route.path {
-            self.flows
+            self.link_flows
                 .entry(l.clone())
-                .or_insert_with(Vec::new)
+                .or_insert_with(|| FlowSet::new(fairness))
                 .push(Rc::clone(&fs));
         }
     }
@@ -414,12 +728,12 @@ impl NetState {
 
         self.running_flows.retain(|f| !f.borrow().completed());
 
-        for (_, fs) in self.flows.iter_mut() {
+        for (_, fs) in self.link_flows.iter_mut() {
             fs.retain(|f| !f.borrow().completed());
         }
 
         // filter all empty links
-        self.flows.retain(|_, fs| !fs.is_empty());
+        self.link_flows.retain(|_, fs| !fs.is_empty());
 
         comp_flows
     }
@@ -454,7 +768,10 @@ pub(crate) struct FlowState {
     ts: Timestamp,
     /// read only flow property
     flow: Flow,
-    /// states, mutated by the simulator
+    /// below are states, mutated by the simulator
+    ///
+    /// upper bound to decide if a flow should converge, used with TenantFlowMaxMin fairness model
+    speed_bound: f64,
     converged: bool,
     bytes_sent: usize,
     speed: f64, // bits/s
@@ -467,6 +784,7 @@ impl FlowState {
         Rc::new(RefCell::new(FlowState {
             ts,
             flow,
+            speed_bound: 0.0,
             converged: false,
             bytes_sent: 0,
             speed: 0.0,
