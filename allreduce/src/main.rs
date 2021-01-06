@@ -1,8 +1,8 @@
 #![feature(box_patterns)]
 use rand::Rng;
-use rand_distr::{Distribution, Poisson};
 use std::cell::RefCell;
 use std::rc::Rc;
+use rand::distributions::{Poisson, Distribution};
 
 use log::info;
 use structopt::StructOpt;
@@ -51,9 +51,9 @@ fn get_random_job_size() -> usize {
     32
 }
 
-fn get_random_arrival_time(lambda: f32) -> u64 {
-    let poi = Poisson::new(lambda).unwrap();
-    poi.sample(&mut rand::thread_rng());
+fn get_random_arrival_time(lambda: f64) -> u64 {
+    let poi = Poisson::new(lambda);
+    poi.sample(&mut rand::thread_rng())
 }
 
 fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: bool) {

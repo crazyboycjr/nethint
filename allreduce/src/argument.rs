@@ -30,5 +30,5 @@ pub struct Opt {
 
     /// Poisson arrival lambda.
     #[structopt(short = "p", long = "poisson_lambda", default_value = "1.0")]
-    pub poisson_lambda: f32,
+    pub poisson_lambda: f64,
 }
