@@ -1,5 +1,7 @@
 use log::{debug, trace};
 
+use fnv::FnvHashMap as HashMap;
+
 use crate::brain::TenantId;
 use crate::{
     hint::NetHintV2,
@@ -33,7 +35,7 @@ pub enum AppEventKind {
 
 /// An Applicatoin can interact with the simulator based on the flow completion event it received.
 /// It dynamically start new flows according to the finish and arrive event of some flows.
-pub trait Application {
+pub trait Application: std::fmt::Debug {
     type Output;
     fn on_event(&mut self, event: AppEvent) -> Events;
     fn answer(&mut self) -> Self::Output;
@@ -82,7 +84,7 @@ impl Replayer {
 /// Sequence is a application combinator, it takes a sequence of applications.
 /// Each application depends on previous one and only starts after the previous one is finished.
 /// The result is a list of outputs of the applications with the order kepted.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Sequence<'a, T> {
     apps: Vec<Box<dyn Application<Output = T> + 'a>>,
     output: Vec<T>,
@@ -105,7 +107,7 @@ impl<'a, T> Sequence<'a, T> {
     }
 }
 
-impl<'a, T: Clone> Application for Sequence<'a, T> {
+impl<'a, T: Clone + std::fmt::Debug> Application for Sequence<'a, T> {
     type Output = Vec<T>;
 
     fn on_event(&mut self, event: AppEvent) -> Events {
@@ -169,11 +171,12 @@ impl<'a, T: Clone> Application for Sequence<'a, T> {
 /// AppGroup is an application created by combining multiple applications started at different timestamps.
 /// It marks flows from each individual application.
 /// It works like a proxy, intercepting, modifying, and forwarding simulator events to and from corresponding apps.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AppGroup<'a, T> {
     // Vec<(start time offset, application)>
     apps: Vec<(Timestamp, Box<dyn Application<Output = T> + 'a>)>,
     output: Vec<(usize, T)>,
+    stored_flow_token: HashMap<usize, Option<Token>>,
 }
 
 pub trait AppGroupTokenCoding {
@@ -200,7 +203,7 @@ impl AppGroupTokenCoding for Token {
 
 impl<'a, T> Application for AppGroup<'a, T>
 where
-    T: Clone,
+    T: Clone + std::fmt::Debug,
 {
     // a list of (app_id, App::Output)
     type Output = Vec<(usize, T)>;
@@ -231,7 +234,7 @@ where
                     assert!(app_id < self.apps.len());
                     let mut f = r.clone();
                     f.ts -= self.apps[app_id].0; // f.ts -= start_off;
-                    f.flow.token = None; // TODO(cjr): restore the token
+                    f.flow.token = self.stored_flow_token.remove(&r.flow.id).unwrap(); // restore the token
                     flows[app_id].push(f);
                 }
 
@@ -281,6 +284,7 @@ where
         AppGroup {
             apps: Default::default(),
             output: Default::default(),
+            stored_flow_token: HashMap::default(),
         }
     }
 
@@ -307,12 +311,10 @@ where
                     Event::FlowArrive(mut recs) => {
                         recs.iter_mut().for_each(|r| {
                             r.ts += start_off;
-                            assert!(
-                                r.flow.token.is_none(),
-                                "Currently AppGroup assumes the flow token is not used"
-                            );
+                            self.stored_flow_token
+                                .insert(r.flow.id, r.flow.token)
+                                .unwrap_none(); // store the token
                             r.flow.token = Some(Token::encode(app_id, app_id));
-                            // TODO(cjr): we can save the token and restore it transparently
                         });
                         Event::FlowArrive(recs).into()
                     }

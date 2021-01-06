@@ -1,12 +1,19 @@
 use std::rc::Rc;
 
-use crate::{GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern, mapper::{GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler, RandomSkewMapperScheduler, TraceMapperScheduler}};
+use crate::{
+    mapper::{
+        GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
+        RandomSkewMapperScheduler, TraceMapperScheduler,
+    },
+    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
+    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
+};
 use log::info;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::{Cluster, Topology},
-    simulator::{Event, Events, Executor, Simulator},
     hint::NetHintVersion,
+    simulator::{Event, Events, Executor, Simulator},
     Duration, Flow, Trace, TraceRecord,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
@@ -20,6 +27,12 @@ pub struct MapReduceApp<'c> {
     nethint_level: usize,
     replayer: Replayer,
     jct: Option<Duration>,
+}
+
+impl<'c> std::fmt::Debug for MapReduceApp<'c> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MapReduceApp")
+    }
 }
 
 impl<'c> MapReduceApp<'c> {
@@ -63,7 +76,9 @@ impl<'c> MapReduceApp<'c> {
                 Box::new(TraceMapperScheduler::new(record.clone()))
             }
             MapperPlacementPolicy::Greedy => Box::new(GreedyMapperScheduler::new()),
-            MapperPlacementPolicy::RandomSkew(seed, s) => Box::new(RandomSkewMapperScheduler::new(seed, s)),
+            MapperPlacementPolicy::RandomSkew(seed, s) => {
+                Box::new(RandomSkewMapperScheduler::new(seed, s))
+            }
         };
         let mappers = map_scheduler.place(&**self.cluster.as_ref().unwrap(), &self.job_spec);
         info!("mappers: {:?}", mappers);
@@ -92,9 +107,6 @@ impl<'c> MapReduceApp<'c> {
         let mut trace = Trace::new();
         for i in 0..self.job_spec.num_map {
             for j in 0..self.job_spec.num_reduce {
-                // let phys_map = self.cluster.as_ref().unwrap().translate(&mappers.0[i]);
-                // let phys_reduce = self.cluster.as_ref().unwrap().translate(&reducers.0[j]);
-                // let flow = Flow::new(shuffle.0[i][j], &phys_map, &phys_reduce, None);
                 // no translation
                 let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
                 let rec = TraceRecord::new(0, flow, None);
@@ -160,7 +172,9 @@ impl<'c> Application for MapReduceApp<'c> {
                     );
                     // since we have the cluster, start and schedule the app again
                     self.start();
-                    return self.replayer.on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                    return self
+                        .replayer
+                        .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
                 }
                 _ => unreachable!(),
             }

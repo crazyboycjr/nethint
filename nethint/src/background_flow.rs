@@ -15,6 +15,7 @@ pub enum BackgroundFlowPattern {
 /// BackgroundFlow App creates a certain traffic pattern that will last for a certain time in a cluster.
 /// It keeps generating flows with `msg_size` and stops when dur_ms has passed.
 /// It also has a generic type T as the output type. The output is just a stub to fit in AppGroup<T>.
+#[derive(Debug)]
 pub struct BackgroundFlowApp<T> {
     nhosts: usize,
     /// running for dur_ms milliseconds
@@ -90,7 +91,7 @@ impl<T> BackgroundFlowApp<T> {
                     // start new flows
                     let mut new_flows = Trace::new();
                     for r in &recs {
-                        let flow = r.flow.clone();
+                        let flow = Flow::new(r.flow.bytes, &r.flow.src, &r.flow.dst, r.flow.token);
                         let rec = TraceRecord::new(cur_ts, flow, None);
                         new_flows.add_record(rec);
                     }
@@ -186,7 +187,7 @@ impl<T> BackgroundFlowApp<T> {
     }
 }
 
-impl<T: Clone> Application for BackgroundFlowApp<T> {
+impl<T: Clone + std::fmt::Debug> Application for BackgroundFlowApp<T> {
     type Output = T;
 
     fn on_event(&mut self, event: AppEvent) -> Events {
