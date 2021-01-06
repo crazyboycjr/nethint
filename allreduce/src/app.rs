@@ -2,19 +2,17 @@ use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::Topology,
     simulator::Events,
-    Duration, Trace, TraceRecord, Timestamp,
+    Duration, Timestamp, Trace, TraceRecord,
 };
 
 use crate::{
-  AllReducePolicy, AllReduceAlgorithm,
-  random_ring::RandomRingAllReduce,
-  topology_aware::TopologyAwareRingAllReduce,
-  JobSpec,
+    random_ring::RandomRingAllReduce, topology_aware::TopologyAwareRingAllReduce,
+    AllReduceAlgorithm, AllReducePolicy, JobSpec,
 };
 
 pub struct AllReduceApp<'c> {
     job_spec: &'c JobSpec,
-    cluster: &'c dyn Topology,
+    cluster: Option<&'c dyn Topology>,
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
@@ -30,7 +28,12 @@ impl<'c> std::fmt::Debug for AllReduceApp<'c> {
 }
 
 impl<'c> AllReduceApp<'c> {
-    pub fn new(job_spec: &'c JobSpec, cluster: &'c dyn Topology, seed: u64, allreduce_policy: &'c AllReducePolicy) -> Self {
+    pub fn new(
+        job_spec: &'c JobSpec,
+        cluster: Option<&'c dyn Topology>,
+        seed: u64,
+        allreduce_policy: &'c AllReducePolicy,
+    ) -> Self {
         let trace = Trace::new();
         AllReduceApp {
             job_spec,
@@ -49,15 +52,16 @@ impl<'c> AllReduceApp<'c> {
         self.allreduce(0);
     }
 
-    pub fn allreduce(&mut self, start_time : Timestamp) {
+    pub fn allreduce(&mut self, start_time: Timestamp) {
         let mut trace = Trace::new();
 
         let mut allreduce_algorithm: Box<dyn AllReduceAlgorithm> = match self.allreduce_policy {
-          AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
-          AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
+            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
+            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
         };
 
-        let flows = allreduce_algorithm.allreduce(self.job_spec.buffer_size as u64, self.cluster);
+        let flows =
+            allreduce_algorithm.allreduce(self.job_spec.buffer_size as u64, self.cluster.unwrap());
 
         for flow in flows {
             let rec = TraceRecord::new(start_time, flow, None);
@@ -81,7 +85,9 @@ impl<'c> Application for AllReduceApp<'c> {
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
                 self.allreduce(self.jct.unwrap());
-                return self.replayer.on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                return self
+                    .replayer
+                    .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
             }
         }
         self.replayer.on_event(event)
