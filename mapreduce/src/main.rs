@@ -14,7 +14,7 @@ use nethint::{
     brain::Brain,
     cluster::{Cluster, Topology},
     multitenant::Tenant,
-    simulator::{Executor, Simulator, SimulatorBuilder},
+    simulator::{Executor, SimulatorBuilder},
     FairnessModel, ToStdDuration,
 };
 
@@ -40,6 +40,10 @@ fn main() {
 
     if opt.asym {
         brain.borrow_mut().make_asymmetric(0);
+    }
+
+    if opt.broken {
+        brain.borrow_mut().mark_broken(0, 0.1);
     }
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -74,6 +78,7 @@ fn main() {
             Rc::clone(&brain),
             seed_base,
             false,
+            1,
         );
 
         let (app_stats2, max_jct2) = run_experiments_multitenant(
@@ -82,6 +87,7 @@ fn main() {
             Rc::clone(&brain),
             seed_base,
             true,
+            1,
         );
 
         let (app_stats3, max_jct3) = run_experiments_multitenant(
@@ -90,6 +96,16 @@ fn main() {
             Rc::clone(&brain),
             seed_base,
             false,
+            1,
+        );
+
+        let (app_stats4, max_jct4) = run_experiments_multitenant(
+            &opt,
+            ReducerPlacementPolicy::HierarchicalGreedy,
+            Rc::clone(&brain),
+            seed_base,
+            false,
+            2,
         );
 
         println!("Random:");
@@ -100,15 +116,27 @@ fn main() {
         println!("app_stats: {:?}", app_stats2);
         println!("max job completion time: {:?}", max_jct2.to_dura());
 
-        println!("Greedy:");
+        println!("Greedy NetHint Level 1:");
         println!("app_stats: {:?}", app_stats3);
         println!("max job completion time: {:?}", max_jct3.to_dura());
+
+        println!("Greedy NetHint Level 2:");
+        println!("app_stats: {:?}", app_stats4);
+        println!("max job completion time: {:?}", max_jct4.to_dura());
 
         let results = app_stats1
             .into_iter()
             .zip(app_stats2)
             .zip(app_stats3)
-            .flat_map(|((x, y), z)| vec![(x.0 * 3, x.2), (y.0 * 3 + 1, y.2), (z.0 * 3 + 2, z.2)])
+            .zip(app_stats4)
+            .flat_map(|(((x, y), z), w)| {
+                vec![
+                    (x.0 * 4, x.2),
+                    (y.0 * 4 + 1, y.2),
+                    (z.0 * 4 + 2, z.2),
+                    (w.0 * 4 + 3, w.2),
+                ]
+            })
             .collect();
         visualize(&opt, Some(results)).unwrap();
         return;
@@ -125,6 +153,7 @@ fn run_experiments_multitenant(
     brain: Rc<RefCell<Brain>>,
     seed_base: u64,
     use_plink: bool,
+    nethint_level: usize,
 ) -> (Vec<(usize, u64, u64)>, u64) {
     let job_trace = opt.trace.as_ref().map(|p| {
         JobTrace::from_path(p)
@@ -177,10 +206,15 @@ fn run_experiments_multitenant(
             // MapperPlacementPolicy::Greedy,
             MapperPlacementPolicy::RandomSkew(seed_base + seed, 0.2),
             policy,
-            opt.nethint_level,
+            nethint_level,
+            opt.collocate,
         ));
 
-        let nhosts_to_acquire = job_spec.num_map + job_spec.num_reduce;
+        let nhosts_to_acquire = if opt.collocate {
+            job_spec.num_map.max(job_spec.num_reduce)
+        } else {
+            job_spec.num_map + job_spec.num_reduce
+        };
 
         let app: Box<dyn Application<Output = _>> = if use_plink {
             Box::new(PlinkApp::new(nhosts_to_acquire, mapreduce_app))
@@ -205,6 +239,7 @@ fn run_experiments_multitenant(
     let mut simulator = SimulatorBuilder::new()
         .enable_nethint(true)
         .brain(Rc::clone(&brain))
+        // .fairness(FairnessModel::PerFlowMinMax)
         .fairness(FairnessModel::TenantFlowMinMax)
         .sample_interval_ns(100_000_000)
         .build()
@@ -326,11 +361,11 @@ fn visualize(opt: &Opt, experiments: Option<Vec<(usize, u64)>>) -> Result<()> {
         }};
     }
 
-    use plot::plot;
-    let future1 = async_plot!("mapreduce", plot);
+    use plot::plot4;
+    let future1 = async_plot!("mapreduce", plot4);
 
-    use plot::plot_cdf;
-    let future2 = async_plot!("mapreduce_cdf", plot_cdf);
+    use plot::plot_cdf4;
+    let future2 = async_plot!("mapreduce_cdf", plot_cdf4);
 
     let _ = task::block_on(async { futures::join!(future1, future2) });
 

@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use log::debug;
 
 use nethint::cluster::{NodeIx, Topology};
+use nethint::bandwidth::BandwidthTrait;
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle};
 
@@ -15,11 +16,13 @@ impl GreedyReducerScheduler {
     }
 }
 
-fn find_best_node(cluster: &dyn Topology, denylist: &HashSet<NodeIx>, rack: usize) -> NodeIx {
+fn find_best_node(cluster: &dyn Topology, denylist: &mut HashMap<NodeIx, usize>, rack: usize, collocate: bool) -> NodeIx {
     let tor_ix = cluster.get_node_index(&format!("tor_{}", rack));
     let downlink = cluster
         .get_downlinks(tor_ix)
-        .filter(|&&downlink| !denylist.contains(&cluster.get_target(downlink)))
+        .filter(|&&downlink| {
+            *denylist.entry(cluster.get_target(downlink)).or_default() < collocate as usize + 1
+        })
         .max_by_key(|&&downlink| cluster[downlink].bandwidth)
         .unwrap();
 
@@ -35,6 +38,7 @@ impl PlaceReducer for GreedyReducerScheduler {
         job_spec: &JobSpec,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
+        collocate: bool,
     ) -> Placement {
         // two-level allocation
         // first, find a best rack to place the reducer
@@ -51,11 +55,13 @@ impl PlaceReducer for GreedyReducerScheduler {
         // existing ingress traffic to rack_i during greedy
         let mut ingress = vec![0; num_racks];
 
-        let mut taken: HashSet<_> = mapper.0.iter().map(|m| cluster.get_node_index(m)).collect();
-        mapper.0.iter().for_each(|m| {
-            let rack_id = get_rack_id(cluster, m);
-            rack_taken[rack_id] += 1;
-        });
+        let mut taken: HashMap<_, _> = mapper.0.iter().map(|m| (cluster.get_node_index(m), 1)).collect();
+        if !collocate {
+            mapper.0.iter().for_each(|m| {
+                let rack_id = get_rack_id(cluster, m);
+                rack_taken[rack_id] += 1;
+            });
+        }
 
         // reducer rank sorted by weight
         let mut reducer_weight = vec![0; job_spec.num_reduce];
@@ -89,13 +95,21 @@ impl PlaceReducer for GreedyReducerScheduler {
                 }
 
                 // Step 2. fix the rack, find the best node in the rack
-                let best_node_ix = find_best_node(cluster, &taken, i);
+                let best_node_ix = find_best_node(cluster, &mut taken, i, collocate);
                 let r_bw = cluster[cluster.get_uplink(best_node_ix)].bandwidth;
 
                 for (mi, m) in mapper.0.iter().enumerate() {
                     let m = cluster.get_node_index(&m);
                     // let m_bw = cluster[cluster.get_uplink(m)].bandwidth;
                     let rack_m = cluster.get_target(cluster.get_uplink(m));
+
+                    let host_bottleneck = if m == best_node_ix {
+                        // collocate
+                        shuffle_pairs.0[mi][j] as f64 / 400.gbps().val() as f64
+                    } else {
+                        shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64
+                    };
+
                     if rack_m != tor_ix {
                         // est += (shuffle_pairs.0[mi][j] * (rack[i] + 1)) as f64 / rack_bw.val() as f64;
                         // The same case as it happens in GeneticAlgorithm, we should also take
@@ -103,11 +117,9 @@ impl PlaceReducer for GreedyReducerScheduler {
                         // est += (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
                         let rack_bottleneck =
                             (shuffle_pairs.0[mi][j] + ingress[i]) as f64 / rack_bw.val() as f64;
-                        let host_bottleneck = shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64;
                         est += rack_bottleneck.max(host_bottleneck);
                         traffic += shuffle_pairs.0[mi][j];
                     } else {
-                        let host_bottleneck = shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64;
                         est += host_bottleneck;
                     }
                 }
@@ -122,16 +134,20 @@ impl PlaceReducer for GreedyReducerScheduler {
             // get the best_rack
             rack[best_rack] += 1;
             ingress[best_rack] += min_traffic;
-            rack_taken[best_rack] += 1;
+            // rack_taken[best_rack] += 1;
             debug!("best_rack: {}, traffic: {}", best_rack, ingress[best_rack]);
 
             // Step 2. fix the rack, find the best node in the rack
-            let best_node_ix = find_best_node(cluster, &taken, best_rack);
+            let best_node_ix = find_best_node(cluster, &mut taken, best_rack, collocate);
             let best_node = cluster[best_node_ix].name.clone();
 
             // here we get the best node
-            taken.insert(best_node_ix);
+            *taken.entry(best_node_ix).or_default() += 1;
             placement[j] = best_node;
+
+            if taken[&best_node_ix] == collocate as usize + 1 {
+                rack_taken[best_rack] += 1;
+            }
         }
 
         Placement(placement)

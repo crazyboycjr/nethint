@@ -5,7 +5,7 @@ use crate::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
     },
-    GeneticReducerScheduler, GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
+    GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
     RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
 };
 use log::info;
@@ -25,6 +25,7 @@ pub struct MapReduceApp<'c> {
     mapper_place_policy: MapperPlacementPolicy,
     reducer_place_policy: ReducerPlacementPolicy,
     nethint_level: usize,
+    collocate: bool,
     replayer: Replayer,
     jct: Option<Duration>,
 }
@@ -43,6 +44,7 @@ impl<'c> MapReduceApp<'c> {
         mapper_place_policy: MapperPlacementPolicy,
         reducer_place_policy: ReducerPlacementPolicy,
         nethint_level: usize,
+        collocate: bool,
     ) -> Self {
         assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
@@ -52,6 +54,7 @@ impl<'c> MapReduceApp<'c> {
             mapper_place_policy,
             reducer_place_policy,
             nethint_level,
+            collocate,
             replayer: Replayer::new(Trace::new()),
             jct: None,
         }
@@ -88,7 +91,10 @@ impl<'c> MapReduceApp<'c> {
     fn place_reduce(&self, mappers: &Placement, shuffle: &Shuffle) -> Placement {
         let mut reduce_scheduler: Box<dyn PlaceReducer> = match self.reducer_place_policy {
             ReducerPlacementPolicy::Random => Box::new(RandomReducerScheduler::new()),
-            ReducerPlacementPolicy::GeneticAlgorithm => Box::new(GeneticReducerScheduler::new()),
+            ReducerPlacementPolicy::GeneticAlgorithm => {
+                panic!("do not use genetic algorithm");
+                // Box::new(GeneticReducerScheduler::new())
+            }
             ReducerPlacementPolicy::HierarchicalGreedy => Box::new(GreedyReducerScheduler::new()),
         };
 
@@ -97,6 +103,7 @@ impl<'c> MapReduceApp<'c> {
             &self.job_spec,
             &mappers,
             &shuffle,
+            self.collocate,
         );
         info!("reducers: {:?}", reducers);
         reducers
@@ -218,6 +225,7 @@ pub fn run_map_reduce(
         map_place_policy,
         reduce_place_policy,
         2,
+        false,
     ));
     app.start();
 

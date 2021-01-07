@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -16,6 +16,10 @@ use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle, RNG};
 #[derive(Debug, Default)]
 pub struct GeneticReducerScheduler {}
 
+#[deprecated(
+    since = "0.1.0",
+    note = "Collocation not considered, please do not use it."
+)]
 impl GeneticReducerScheduler {
     pub fn new() -> Self {
         Default::default()
@@ -29,6 +33,7 @@ impl PlaceReducer for GeneticReducerScheduler {
         job_spec: &JobSpec,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
+        _collocate: bool,
     ) -> Placement {
         let ga_size = 1000;
         let ga_breed_factor = 0.5;

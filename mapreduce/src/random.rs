@@ -20,12 +20,15 @@ impl PlaceReducer for RandomReducerScheduler {
         job_spec: &JobSpec,
         mapper: &Placement,
         _shuffle_pairs: &Shuffle,
+        collocate: bool,
     ) -> Placement {
         RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
             let num_hosts = cluster.num_hosts();
             let mut hosts: Vec<String> = (0..num_hosts).map(|x| format!("host_{}", x)).collect();
-            hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
+            if !collocate {
+                hosts.retain(|h| mapper.0.iter().find(|&m| m.eq(h)).is_none());
+            }
             let mut hosts: Vec<String> = hosts
                 .choose_multiple(&mut *rng, job_spec.num_reduce)
                 .cloned()

@@ -118,13 +118,18 @@ impl<T> BackgroundFlowApp<T> {
         use rand::seq::SliceRandom;
 
         let mut trace = Trace::new();
-        let n = self.nhosts;
-        let ids = RNG.with(|rng| {
+        let mut n = self.nhosts;
+        let mut ids = RNG.with(|rng| {
             let mut rng = rng.borrow_mut();
             let mut ids: Vec<_> = (0..n).collect();
             ids.shuffle(&mut *rng);
             ids
         });
+
+        if n % 2 == 1 {
+            ids.push(*ids.last().unwrap());
+            n += 1;
+        }
 
         let vnames: Vec<_> = ids
             .into_iter()

@@ -103,9 +103,24 @@ impl Brain {
             .expect("there should be no other reference to physical cluster");
 
         for link_ix in cluster.all_links() {
-            let new_bw = cluster[link_ix].bandwidth * rng.gen_range(1, 11) / 10;
+            let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1, 6));
             cluster[link_ix] = Link::new(new_bw);
             cluster[LinkIx::new(link_ix.index() ^ 1)] = Link::new(new_bw);
+        }
+    }
+
+    pub fn mark_broken(&mut self, seed: u64, ratio: f64) {
+        use rand::{rngs::StdRng, Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let cluster = Arc::get_mut(&mut self.cluster)
+            .expect("there should be no other reference to physical cluster");
+
+        for i in 0..cluster.num_hosts() {
+            let node_ix = cluster.get_node_index(&format!("host_{}", i));
+            if rng.gen_range(0., 1.) < ratio {
+                self.used.insert(node_ix);
+            }
         }
     }
 

@@ -237,10 +237,6 @@ impl Simulator {
                 num_active_flows.push(tenant_active_flows);
             }
 
-            // debug!("consumed_bw: {}", consumed_bw);
-            // debug!("num_active_tenants: {}", num_active_tenants);
-            // debug!("num_active_flows: {:?}", num_active_flows);
-
             assert_ne!(num_active_tenants, 0);
 
             let bw_inc_tenant = if l.bandwidth < (consumed_bw / 1e9).gbps() {
@@ -313,9 +309,17 @@ impl Simulator {
         let mut converged = 0;
         let active_flows = self.state.running_flows.len();
         self.state.running_flows.iter().for_each(|f| {
-            f.borrow_mut().speed_bound = f64::MAX;
-            f.borrow_mut().converged = false;
-            f.borrow_mut().speed = 0.0;
+            let mut f = f.borrow_mut();
+            if f.route.path.is_empty() {
+                f.speed_bound = 400.gbps().val() as f64;
+                f.converged = true;
+                f.speed = 400.gbps().val() as f64;
+                converged += 1;
+            } else {
+                f.speed_bound = f64::MAX;
+                f.converged = false;
+                f.speed = 0.0;
+            }
         });
 
         let fairness = self.fairness;
@@ -334,15 +338,6 @@ impl Simulator {
 
             let bw = res.expect("impossible");
             let speed_inc = bw.val() as f64;
-
-            // update and converge flows pass through the bottleneck link
-            // for f in fs {
-            //     if !f.borrow().converged {
-            //         f.borrow_mut().speed += speed_inc;
-            //         f.borrow_mut().converged = true;
-            //         converged += 1;
-            //     }
-            // }
 
             // increase the speed of all active flows
             for f in &self.state.running_flows {
@@ -652,8 +647,8 @@ struct NetState {
     flow_bufs: BinaryHeap<Reverse<FlowStateRef>>,
     // emitted flows
     running_flows: Vec<FlowStateRef>,
-    // link_flows: HashMap<Link, Vec<FlowStateRef>>,
     link_flows: HashMap<Link, FlowSet>,
+    loopback_flows: Vec<FlowStateRef>,
     resolve_route_time: std::time::Duration,
     // for nethint use
     brain: Option<Rc<RefCell<Brain>>>,
@@ -670,6 +665,9 @@ impl NetState {
                 .entry(l.clone())
                 .or_insert_with(|| FlowSet::new(fairness))
                 .push(Rc::clone(&fs));
+        }
+        if fs.borrow().route.path.is_empty() {
+            self.loopback_flows.push(Rc::clone(&fs));
         }
     }
 
@@ -710,30 +708,37 @@ impl NetState {
         let mut comp_flows = Vec::new();
 
         self.running_flows.iter().for_each(|f| {
-            let speed = f.borrow().speed;
+            let mut f = f.borrow_mut();
+            let speed = f.speed;
             let delta = (speed / 1e9 * ts_inc as f64).round() as usize / 8;
-            f.borrow_mut().bytes_sent += delta;
+            f.bytes_sent += delta;
 
             // update counters for nethint
-            self.update_counters(&*f.borrow(), delta);
+            if !f.route.path.is_empty() {
+                self.update_counters(&*f, delta);
+            }
 
-            if f.borrow().completed() {
+            if f.completed() {
                 comp_flows.push(TraceRecord::new(
-                    f.borrow().ts,
-                    f.borrow().flow.clone(),
-                    Some(sim_ts + ts_inc - f.borrow().ts),
+                    f.ts,
+                    f.flow.clone(),
+                    Some(sim_ts + ts_inc - f.ts),
                 ));
             }
         });
 
         self.running_flows.retain(|f| !f.borrow().completed());
 
+        // finish and filter link flows
         for (_, fs) in self.link_flows.iter_mut() {
             fs.retain(|f| !f.borrow().completed());
         }
 
         // filter all empty links
         self.link_flows.retain(|_, fs| !fs.is_empty());
+
+        // finish and filter loopback_flows
+        self.loopback_flows.retain(|f| !f.borrow().completed());
 
         comp_flows
     }
