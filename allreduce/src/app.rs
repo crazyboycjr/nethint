@@ -1,8 +1,11 @@
+use log::info;
+use std::rc::Rc;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::Topology,
-    simulator::Events,
+    simulator::{Event, Events},
     Duration, Timestamp, Trace, TraceRecord,
+    hint::NetHintVersion,
 };
 
 use crate::{
@@ -12,13 +15,14 @@ use crate::{
 
 pub struct AllReduceApp<'c> {
     job_spec: &'c JobSpec,
-    cluster: Option<&'c dyn Topology>,
+    cluster: Option<Rc<dyn Topology>>,
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
     allreduce_policy: &'c AllReducePolicy,
     remaining_iterations: usize,
     remaining_flows: usize,
+    nethint_level: usize,
 }
 
 impl<'c> std::fmt::Debug for AllReduceApp<'c> {
@@ -30,9 +34,10 @@ impl<'c> std::fmt::Debug for AllReduceApp<'c> {
 impl<'c> AllReduceApp<'c> {
     pub fn new(
         job_spec: &'c JobSpec,
-        cluster: Option<&'c dyn Topology>,
+        cluster: Option<Rc<dyn Topology>>,
         seed: u64,
         allreduce_policy: &'c AllReducePolicy,
+        nethint_level: usize,
     ) -> Self {
         let trace = Trace::new();
         AllReduceApp {
@@ -44,6 +49,7 @@ impl<'c> AllReduceApp<'c> {
             allreduce_policy,
             remaining_iterations: 0,
             remaining_flows: 0,
+            nethint_level,
         }
     }
 
@@ -61,7 +67,7 @@ impl<'c> AllReduceApp<'c> {
         };
 
         let flows =
-            allreduce_algorithm.allreduce(self.job_spec.buffer_size as u64, self.cluster.unwrap());
+            allreduce_algorithm.allreduce(self.job_spec.buffer_size as u64, &**self.cluster.as_ref().unwrap());
 
         for flow in flows {
             let rec = TraceRecord::new(start_time, flow, None);
@@ -78,6 +84,33 @@ impl<'c> AllReduceApp<'c> {
 impl<'c> Application for AllReduceApp<'c> {
     type Output = Option<Duration>;
     fn on_event(&mut self, event: AppEvent) -> Events {
+        if self.cluster.is_none() {
+            // ask simulator for the NetHint
+            match event.event {
+                AppEventKind::AppStart => {
+                    // app_id should be tagged by AppGroup, so leave 0 here
+                    return match self.nethint_level {
+                        1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
+                        2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
+                        _ => panic!("unexpected nethint_level: {}", self.nethint_level),
+                    };
+                }
+                AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
+                    self.cluster = Some(Rc::new(vc.clone()));
+                    info!(
+                        "nethint response: {}",
+                        self.cluster.as_ref().unwrap().to_dot()
+                    );
+                    // since we have the cluster, start and schedule the app again
+                    self.start();
+                    return self
+                        .replayer
+                        .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                }
+                _ => unreachable!(),
+            }
+        }
+
         if let AppEventKind::FlowComplete(ref flows) = &event.event {
             let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();

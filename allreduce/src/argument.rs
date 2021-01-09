@@ -25,7 +25,7 @@ pub struct Opt {
     pub ncases: usize,
 
     /// Nethint level.
-    #[structopt(short = "l", long = "nethint_level", default_value = "0")]
+    #[structopt(short = "l", long = "nethint_level", default_value = "1")]
     pub nethint_level: usize,
 
     /// Poisson arrival lambda.

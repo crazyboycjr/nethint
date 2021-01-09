@@ -77,8 +77,8 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         let tenant_id = i;
         let (start_ts, job_spec) = jobs.get(i).unwrap();
 
-        let mut allreduce_app =
-            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy));
+        let allreduce_app =
+            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy, opt.nethint_level));
 
         let nhosts_to_acquire = job_spec.num_workers;
 
