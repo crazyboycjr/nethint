@@ -8,11 +8,15 @@ use log::info;
 use structopt::StructOpt;
 
 use nethint::{
-    app::AppGroup,
+    app::{AppGroup, Application},
     brain::Brain,
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
     FairnessModel,
+};
+
+use mapreduce::{
+    plink::PlinkApp,
 };
 
 extern crate allreduce;
@@ -82,8 +86,14 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
 
         let nhosts_to_acquire = job_spec.num_workers;
 
+        let app: Box<dyn Application<Output = _>> = if use_plink {
+            Box::new(PlinkApp::new(nhosts_to_acquire, allreduce_app))
+        } else {
+            allreduce_app
+        };
+
         let virtualized_app = Box::new(Tenant::new(
-            allreduce_app,
+            app,
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),

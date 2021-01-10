@@ -13,4 +13,5 @@ rand = "0.7.3"
 gnuplot = "0.0.37"
 nethint = { path = "../nethint" }
 logging = { path = "../logging" }
+mapreduce = { path = "../mapreduce" }
 structopt = "0.3.21"
