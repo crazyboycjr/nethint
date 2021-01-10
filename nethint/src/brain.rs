@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use fnv::FnvHashMap as HashMap;
-use fnv::FnvHashSet as HashSet;
 use thiserror::Error;
 
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
@@ -12,22 +11,26 @@ use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, Vi
 
 pub type TenantId = usize;
 
+/// TODO(cjr): make this configurable
+const MAX_SLOTS: usize = 4;
+
 /// Brain is the cloud controller. It knows the underlay physical
 /// topology and decides how to provision VMs for tenants.
 #[derive(Debug)]
 pub struct Brain {
     /// physical clsuter
     cluster: Arc<Cluster>,
-    /// used set of nodes in phycisal cluster
-    used: HashSet<NodeIx>,
+    /// used set of nodes in phycisal cluster, the value
+    /// represents how much VM has been allocated on this physical node
+    used: HashMap<NodeIx, usize>,
     /// now we only support each tenant owns a single VirtCluster
     pub(crate) vclusters: HashMap<TenantId, Rc<RefCell<VirtCluster>>>,
-    /// physical node index + tenant_id to virtual node index
-    phys_to_virt: HashMap<(NodeIx, TenantId), NodeIx>,
     /// map from physical link to virtual links
     pub(crate) plink_to_vlinks: HashMap<LinkIx, Vec<(TenantId, LinkIx)>>,
     /// virtual link to physical link
     pub(crate) vlink_to_plink: HashMap<(TenantId, LinkIx), LinkIx>,
+    /// a queue to enforce FIFO order to destroy VMs
+    gc_queue: Vec<TenantId>,
 }
 
 /// Similar to AWS Placement Groups.
@@ -69,30 +72,25 @@ impl Brain {
             } => build_arbitrary_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
         };
 
+        let used = (0..cluster.num_hosts())
+            .map(|i| {
+                let host_ix = cluster.get_node_index(&format!("host_{}", i));
+                (host_ix, 0)
+            })
+            .collect();
         Rc::new(RefCell::new(Brain {
             cluster: Arc::new(cluster),
-            used: Default::default(),
+            used,
             vclusters: Default::default(),
-            phys_to_virt: Default::default(),
+            // phys_to_virt: Default::default(),
             plink_to_vlinks: Default::default(),
             vlink_to_plink: Default::default(),
+            gc_queue: Default::default(),
         }))
     }
 
     pub fn cluster(&self) -> &Arc<Cluster> {
         &self.cluster
-    }
-
-    pub(crate) fn phys_to_virt(&self, node_ix: NodeIx, tenant_id: TenantId) -> NodeIx {
-        *self
-            .phys_to_virt
-            .get(&(node_ix, tenant_id))
-            .unwrap_or_else(|| {
-                panic!(
-                    "node_ix: {:?}, teannt_id: {} not found in physical cluster.",
-                    node_ix, tenant_id
-                )
-            })
     }
 
     pub fn make_asymmetric(&mut self, seed: u64) {
@@ -103,9 +101,26 @@ impl Brain {
             .expect("there should be no other reference to physical cluster");
 
         for link_ix in cluster.all_links() {
-            let new_bw = cluster[link_ix].bandwidth * rng.gen_range(1, 11) / 10;
-            cluster[link_ix] = Link::new(new_bw);
-            cluster[LinkIx::new(link_ix.index() ^ 1)] = Link::new(new_bw);
+            if link_ix.index() & 1 == 1 {
+                let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1, 6));
+                cluster[link_ix] = Link::new(new_bw);
+                cluster[LinkIx::new(link_ix.index() ^ 1)] = Link::new(new_bw);
+            }
+        }
+    }
+
+    pub fn mark_broken(&mut self, seed: u64, ratio: f64) {
+        use rand::{rngs::StdRng, Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let cluster = Arc::get_mut(&mut self.cluster)
+            .expect("there should be no other reference to physical cluster");
+
+        for i in 0..cluster.num_hosts() {
+            let node_ix = cluster.get_node_index(&format!("host_{}", i));
+            if rng.gen_range(0., 1.) < ratio {
+                self.used.entry(node_ix).and_modify(|e| *e = MAX_SLOTS);
+            }
         }
     }
 
@@ -115,7 +130,13 @@ impl Brain {
         nhosts: usize,
         strategy: PlacementStrategy,
     ) -> Result<VirtCluster, Error> {
-        if self.used.len() + nhosts > self.cluster.num_hosts() {
+        if tenant_id > 0 && tenant_id % 100 == 0 {
+            self.garbage_collect(tenant_id - 100);
+        }
+
+        if self.used.values().cloned().sum::<usize>() + nhosts
+            > self.cluster.num_hosts() * MAX_SLOTS
+        {
             return Err(Error::NoHost(self.cluster.num_hosts(), nhosts));
         }
 
@@ -125,6 +146,18 @@ impl Brain {
             PlacementStrategy::Random(seed) => self.place_random(nhosts, seed),
         };
 
+        if let Ok(path) = std::env::var("NETHINT_PROVISION_LOG_FILE") {
+            use std::io::{Seek, Write};
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path)
+                .unwrap();
+            f.seek(std::io::SeekFrom::End(0)).unwrap();
+            writeln!(f, "{:?}", virt_to_phys).unwrap();
+        }
+
+
         let vcluster = VirtCluster {
             inner,
             virt_to_phys,
@@ -132,18 +165,6 @@ impl Brain {
         };
 
         let ret = vcluster.clone();
-
-        // update mapping from physical node to virtual node
-        vcluster
-            .virt_to_phys
-            .iter()
-            .for_each(|(virt_name, phys_name)| {
-                let vnode_ix = vcluster.get_node_index(&virt_name);
-                let pnode_ix = self.cluster.get_node_index(&phys_name);
-                self.phys_to_virt
-                    .insert((pnode_ix, tenant_id), vnode_ix)
-                    .unwrap_none();
-            });
 
         // update link mappings
         for vlink_ix in vcluster.all_links() {
@@ -179,31 +200,48 @@ impl Brain {
         Ok(ret)
     }
 
-    pub fn destroy(&mut self, tenant_id: TenantId) {
-        let vcluster = self
-            .vclusters
-            .remove(&tenant_id)
-            .unwrap_or_else(|| panic!("tenant_id: {}", tenant_id));
+    pub fn garbage_collect(&mut self, until: TenantId) {
+        self.gc_queue.sort();
+        self.gc_queue.reverse();
+        while let Some(tenant_id) = self.gc_queue.pop() {
+            if tenant_id >= until {
+                self.gc_queue.push(tenant_id);
+                break;
+            }
 
-        vcluster.borrow().all_links().for_each(|vlink_ix| {
-            let plink_ix = self.vlink_to_plink[&(tenant_id, vlink_ix)];
-            let v = self.plink_to_vlinks.get_mut(&plink_ix).unwrap();
-            v.remove(v.iter().position(|&x| x == (tenant_id, vlink_ix)).unwrap());
-        });
-        vcluster.borrow().all_links().for_each(|vlink_ix| {
-            self.vlink_to_plink.remove(&(tenant_id, vlink_ix));
-        });
+            let vcluster = self
+                .vclusters
+                .remove(&tenant_id)
+                .unwrap_or_else(|| panic!("tenant_id: {}", tenant_id));
 
-        vcluster
-            .borrow()
-            .virt_to_phys
-            .iter()
-            .for_each(|(_, phys_name)| {
-                let pnode_ix = self.cluster.get_node_index(&phys_name);
-                self.used.remove(&pnode_ix);
-                let flag = self.phys_to_virt.remove(&(pnode_ix, tenant_id)).is_some();
-                assert!(flag);
+            vcluster.borrow().all_links().for_each(|vlink_ix| {
+                let plink_ix = self.vlink_to_plink[&(tenant_id, vlink_ix)];
+                let v = self.plink_to_vlinks.get_mut(&plink_ix).unwrap();
+                v.remove(v.iter().position(|&x| x == (tenant_id, vlink_ix)).unwrap());
             });
+
+            vcluster.borrow().all_links().for_each(|vlink_ix| {
+                self.vlink_to_plink.remove(&(tenant_id, vlink_ix));
+            });
+
+            vcluster
+                .borrow()
+                .virt_to_phys
+                .iter()
+                .for_each(|(_, phys_name)| {
+                    let pnode_ix = self.cluster.get_node_index(&phys_name);
+                    self.used.entry(pnode_ix).and_modify(|e| *e -= 1);
+                    // let flag = self.phys_to_virt.remove(&(pnode_ix, tenant_id)).is_some();
+                    // assert!(flag);
+                });
+        }
+    }
+
+    pub fn destroy(&mut self, tenant_id: TenantId) {
+        // lazily destroy
+        // NOTE that this lazily destroy mechanism still cannot guarantee that
+        // all jobs from different strategies to see the same environment (allocation status).
+        self.gc_queue.push(tenant_id);
     }
 
     fn place_random(&mut self, nhosts: usize, seed: u64) -> (Cluster, HashMap<String, String>) {
@@ -222,7 +260,7 @@ impl Brain {
             let avail_hosts = (0..self.cluster.num_hosts())
                 .into_iter()
                 .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
-                .filter(|node_ix| !self.used.contains(&node_ix));
+                .filter(|node_ix| self.used[node_ix] < MAX_SLOTS);
             let mut choosed: Vec<NodeIx> = avail_hosts.choose_multiple(&mut rng, nhosts);
             choosed.shuffle(&mut rng);
             choosed
@@ -251,7 +289,7 @@ impl Brain {
             // connect the host to the ToR
             inner.add_node(Node::new(host_name, 3, NodeType::Host));
             inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
-            self.used.insert(host_ix);
+            self.used.entry(host_ix).and_modify(|e| *e += 1);
         }
 
         tor_alloc
@@ -274,23 +312,6 @@ impl Brain {
         // Vec<(slots, tor_ix)>
         let root = "virtual_cloud";
 
-        let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches() - 1)
-            .map(|i| {
-                let name = format!("tor_{}", i);
-                let tor_ix = self.cluster.get_node_index(&name);
-                let cap = self
-                    .cluster
-                    .get_downlinks(tor_ix)
-                    .filter(|&link_ix| {
-                        let host_ix = self.cluster.get_target(*link_ix);
-                        !self.used.contains(&host_ix)
-                    })
-                    .count();
-                (cap, tor_ix)
-            })
-            .collect();
-        tors.sort_by_key(|x| x.0);
-
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
 
@@ -298,42 +319,67 @@ impl Brain {
         let mut inner = Cluster::new();
         inner.add_node(Node::new(root, 1, NodeType::Switch));
 
-        for (w, tor_ix) in tors.into_iter().rev() {
-            let tor_len = tor_alloc.len();
-            let tor_name = tor_alloc
-                .entry(tor_ix)
-                .or_insert(format!("tor_{}", tor_len));
+        while allocated < nhosts {
+            let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches() - 1)
+                .map(|i| {
+                    let name = format!("tor_{}", i);
+                    let tor_ix = self.cluster.get_node_index(&name);
+                    let cap: usize = self
+                        .cluster
+                        .get_downlinks(tor_ix)
+                        .map(|&link_ix| {
+                            let host_ix = self.cluster.get_target(link_ix);
+                            MAX_SLOTS - self.used[&host_ix]
+                        })
+                        .sum();
+                    (cap, tor_ix)
+                })
+                .collect();
+            tors.sort_by_key(|x| x.0);
 
-            inner.add_node(Node::new(tor_name, 2, NodeType::Switch));
-            inner.add_link_by_name(root, tor_name, 0.gbps());
-            let mut to_pick = w.min(nhosts - allocated);
+            for (w, tor_ix) in tors.into_iter().rev() {
+                let tor_len = tor_alloc.len();
+                let tor_name = tor_alloc
+                    .entry(tor_ix)
+                    .or_insert(format!("tor_{}", tor_len));
 
-            // traverse the tor and pick up w.min(nhosts) nodes
-            for &link_ix in self.cluster.get_downlinks(tor_ix) {
-                if to_pick == 0 {
+                inner.add_node(Node::new(tor_name, 2, NodeType::Switch));
+                inner.add_link_by_name(root, tor_name, 0.gbps());
+                let mut to_pick = w.min(nhosts - allocated);
+
+                // traverse the tor and pick up w.min(nhosts) nodes
+                let mut avail_host_ixs: Vec<_> = self
+                    .cluster
+                    .get_downlinks(tor_ix)
+                    .map(|&link_ix| self.cluster.get_target(link_ix))
+                    .collect();
+                avail_host_ixs.sort_by_key(|host_ix| self.used[host_ix]);
+
+                for host_ix in avail_host_ixs {
+                    if to_pick == 0 {
+                        break;
+                    }
+                    if self.used[&host_ix] < MAX_SLOTS {
+                        let n = &self.cluster[host_ix];
+                        assert_eq!(n.depth, 3); // this doesn't have to be true
+
+                        // allocate a new name, make sure host_id is continuous and start from 0
+                        let host_len = host_alloc.len();
+                        let host_name = host_alloc
+                            .entry(host_ix)
+                            .or_insert(format!("host_{}", host_len));
+
+                        inner.add_node(Node::new(host_name, 3, NodeType::Host));
+                        inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
+                        to_pick -= 1;
+                        allocated += 1;
+                        self.used.entry(host_ix).and_modify(|e| *e += 1);
+                    }
+                }
+
+                if allocated >= nhosts {
                     break;
                 }
-                let host_ix = self.cluster.get_target(link_ix);
-                if !self.used.contains(&host_ix) {
-                    let n = &self.cluster[host_ix];
-                    assert_eq!(n.depth, 3); // this doesn't have to be true
-
-                    // allocate a new name, make sure host_id is continuous and start from 0
-                    let host_len = host_alloc.len();
-                    let host_name = host_alloc
-                        .entry(host_ix)
-                        .or_insert(format!("host_{}", host_len));
-
-                    inner.add_node(Node::new(host_name, 3, NodeType::Host));
-                    inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
-                    to_pick -= 1;
-                    allocated += 1;
-                    self.used.insert(host_ix);
-                }
-            }
-
-            if allocated >= nhosts {
-                break;
             }
         }
 

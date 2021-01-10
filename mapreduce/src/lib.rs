@@ -40,12 +40,14 @@ pub trait PlaceReducer {
     // input2: job/reduce task specification
     // input3: mapper placement
     // input4: shuffle flows
+    // input5: whether to collocate mapper and reducer
     fn place(
         &mut self,
         vcluster: &dyn Topology,
         job_spec: &JobSpec,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
+        collocate: bool,
     ) -> Placement;
 }
 

@@ -16,12 +16,12 @@ where
     T: Default + Clone + std::fmt::Debug,
 {
     pub fn new(nhosts: usize, app: Box<dyn Application<Output = T> + 'a>) -> Self {
-        let dur_ms = (nhosts * 100) as _;
+        let dur_ms = (nhosts * 10) as _;
         let background_flow = Box::new(BackgroundFlowApp::new(
             nhosts,
             dur_ms,
             BackgroundFlowPattern::PlinkProbe,
-            Some(1_000_000_000), // 80ms on 100G
+            Some(100_000_000), // 8ms on 100G
             T::default(),
         ));
 

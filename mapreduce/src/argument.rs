@@ -66,6 +66,14 @@ pub struct Opt {
     /// Nethint level.
     #[structopt(short = "l", long = "nethint_level", default_value = "1")]
     pub nethint_level: usize,
+
+    /// Collocate or De-collocate
+    #[structopt(short = "c", long = "collocate")]
+    pub collocate: bool,
+
+    /// Mark some nodes as Broken to be more realistic
+    #[structopt(short = "b", long = "broken")]
+    pub broken: bool,
 }
 
 // impl Opt {
