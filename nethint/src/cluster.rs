@@ -37,6 +37,7 @@ pub trait Topology:
         &self,
         src: &str,
         dst: &str,
+        hint: &RouteHint,
         load_balancer: Option<Box<dyn LoadBalancer>>,
     ) -> Route;
     fn num_hosts(&self) -> usize;
@@ -121,9 +122,10 @@ impl Topology for VirtCluster {
         &self,
         src: &str,
         dst: &str,
+        hint: &RouteHint,
         load_balancer: Option<Box<dyn LoadBalancer>>,
     ) -> Route {
-        self.inner.resolve_route(src, dst, load_balancer)
+        self.inner.resolve_route(src, dst, hint, load_balancer)
     }
 
     #[inline]
@@ -274,10 +276,16 @@ impl Topology for Cluster {
         self.graph.find_edge(ix, iy)
     }
 
+    /// Tenants' are segregated, so there must be no flow between two different tenants.
+    /// There two some special cases that should be paid attention to.
+    /// Then, when psrc == pdst && vsrc == vdst, the flow is intra-Vm flow, return empty path.
+    /// When psrc == pdst && vsrc != vdst, the flow is inter-VM but the VM colocates, let the flow goes througth the access port of the switch.
+    /// Otherwise, resolve the route as normal.
     fn resolve_route(
         &self,
         src: &str,
         dst: &str,
+        hint: &RouteHint,
         load_balancer: Option<Box<dyn LoadBalancer>>,
     ) -> Route {
         let g = &self.graph;
@@ -289,11 +297,31 @@ impl Topology for Cluster {
         assert_eq!(g[src_id].depth, g[dst_id].depth);
         let mut depth = g[src_id].depth;
 
+        if src_id == dst_id {
+            match hint {
+                RouteHint::VirtAddr(Some(vsrc), Some(vdst)) if vsrc != vdst => {
+                    // psrc == pdst && vsrc != vdst
+                    let mut path = Vec::with_capacity(2);
+                    let x = src_id;
+                    let parx = g[x].parent.unwrap();
+                    path.push(g[parx].clone());
+                    path.push(g[EdgeIndex::new(parx.index() ^ 1)].clone());
+                    debug!("find a route from {}[{}] to {}[{}]", src, vsrc, dst, vdst);
+                    return Route {
+                        from: src_id,
+                        to: dst_id,
+                        path,
+                    };
+                }
+                RouteHint::VirtAddr(_, _) => {}
+            }
+        }
+
         let mut path1 = Vec::new();
         let mut path2 = Vec::new();
 
-        let mut x = self.node_map[src];
-        let mut y = self.node_map[dst];
+        let mut x = src_id;
+        let mut y = dst_id;
         while x != y && depth > 1 {
             let parx = g[x].parent.unwrap();
             let pary = g[y].parent.unwrap();
@@ -460,4 +488,10 @@ pub struct Route {
     pub(crate) from: NodeIndex,
     pub(crate) to: NodeIndex,
     pub(crate) path: Vec<Link>,
+}
+
+#[derive(Debug, Clone)]
+pub enum RouteHint<'a> {
+    // vsrc, vdst
+    VirtAddr(Option<&'a str>, Option<&'a str>),
 }

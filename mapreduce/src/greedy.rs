@@ -105,6 +105,8 @@ impl PlaceReducer for GreedyReducerScheduler {
 
                     let host_bottleneck = if m == best_node_ix {
                         // collocate
+                        assert!(collocate);
+                        // TODO(cjr): make this configurable
                         shuffle_pairs.0[mi][j] as f64 / 400.gbps().val() as f64
                     } else {
                         shuffle_pairs.0[mi][j] as f64 / r_bw.val() as f64
@@ -124,7 +126,7 @@ impl PlaceReducer for GreedyReducerScheduler {
                     }
                 }
 
-                if min_est > est {
+                if min_est > est || min_est + 1e-10 > est && min_traffic > traffic{
                     min_est = est;
                     min_traffic = traffic;
                     best_rack = i;

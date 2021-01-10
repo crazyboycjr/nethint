@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::{
@@ -17,7 +16,6 @@ pub struct Tenant<'a, T> {
     nhosts: usize,
     brain: Rc<RefCell<Brain>>,
     vcluster: Option<VirtCluster>,
-    pname_to_vname: HashMap<String, String>,
 }
 
 impl<'a, T> std::fmt::Debug for Tenant<'a, T> {
@@ -43,20 +41,11 @@ impl<'a, T> Tenant<'a, T> {
             brain,
             nhosts,
             vcluster: None,
-            pname_to_vname: HashMap::default(),
         }
     }
 
     fn virt_to_phys(&mut self, vname: &str) -> String {
-        let pname = self.vcluster.as_ref().unwrap().translate(vname);
-        self.pname_to_vname
-            .entry(pname.clone())
-            .or_insert_with(|| vname.to_owned());
-        pname
-    }
-
-    fn phys_to_virt(&self, pname: &str) -> String {
-        self.pname_to_vname[pname].clone()
+        self.vcluster.as_ref().unwrap().translate(vname)
     }
 }
 
@@ -79,8 +68,9 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
             AppEventKind::FlowComplete(mut raw_flows) => {
                 // translate raw_flows to app flows
                 for f in &mut raw_flows {
-                    f.flow.src = self.phys_to_virt(&f.flow.src);
-                    f.flow.dst = self.phys_to_virt(&f.flow.dst);
+                    assert!(f.flow.vsrc.is_some() && f.flow.vdst.is_some());
+                    f.flow.src = f.flow.vsrc.take().unwrap();
+                    f.flow.dst = f.flow.vdst.take().unwrap();
                     f.flow.tenant_id = None;
                 }
                 self.app
@@ -105,6 +95,9 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                         for f in &mut virt_flows {
                             assert!(f.flow.tenant_id.is_none());
                             f.flow.tenant_id = Some(self.tenant_id);
+                            assert!(f.flow.vsrc.is_none() && f.flow.vdst.is_none());
+                            f.flow.vsrc = Some(f.flow.src.clone());
+                            f.flow.vdst = Some(f.flow.src.clone());
                             f.flow.src = self.virt_to_phys(&f.flow.src);
                             f.flow.dst = self.virt_to_phys(&f.flow.dst);
                         }

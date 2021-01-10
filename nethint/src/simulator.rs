@@ -10,7 +10,7 @@ use smallvec::{smallvec, SmallVec};
 use thiserror::Error;
 
 use crate::brain::{Brain, TenantId};
-use crate::cluster::{Cluster, Link, Route, Topology};
+use crate::cluster::{Cluster, Link, Route, RouteHint, Topology};
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     hint::{Estimator, NetHintVersion, SimpleEstimator},
@@ -26,6 +26,9 @@ type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 type HashMapValues<'a, K, V> = indexmap::map::Values<'a, K, V>;
 type HashMapValuesMut<'a, K, V> = indexmap::map::ValuesMut<'a, K, V>;
 
+pub const LOOPBACK_SPEED_GBPS: u64 = 400; // 400Gbps
+pub const SAMPLE_INTERVAL_NS: u64 = 100_000_000; // 100ms
+
 /// The simulator driver API
 pub trait Executor<'a> {
     fn run_with_trace(&mut self, trace: Trace) -> Trace;
@@ -39,6 +42,7 @@ pub struct SimulatorBuilder {
     enable_nethint: bool,
     brain: Option<Rc<RefCell<Brain>>>,
     sample_interval_ns: Duration,
+    loopback_speed: Bandwidth,
 }
 
 #[derive(Debug, Error)]
@@ -56,7 +60,8 @@ impl SimulatorBuilder {
             fairness: FairnessModel::default(),
             enable_nethint: false,
             brain: None,
-            sample_interval_ns: 100_000_000, // 100ms
+            sample_interval_ns: SAMPLE_INTERVAL_NS,
+            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
         }
     }
 
@@ -82,6 +87,11 @@ impl SimulatorBuilder {
 
     pub fn sample_interval_ns(&mut self, sample_interval_ns: Duration) -> &mut Self {
         self.sample_interval_ns = sample_interval_ns;
+        self
+    }
+
+    pub fn loopback_speed(&mut self, loopback_speed: Bandwidth) -> &mut Self {
+        self.loopback_speed = loopback_speed;
         self
     }
 
@@ -113,6 +123,7 @@ impl SimulatorBuilder {
                 state,
                 timers,
                 fairness: self.fairness,
+                loopback_speed: self.loopback_speed,
                 enable_nethint: self.enable_nethint,
                 estimator: Some(estimator),
             }
@@ -123,6 +134,7 @@ impl SimulatorBuilder {
                 state: NetState::default(),
                 timers: BinaryHeap::new(),
                 fairness: self.fairness,
+                loopback_speed: self.loopback_speed,
                 enable_nethint: self.enable_nethint,
                 estimator: None,
             }
@@ -140,6 +152,7 @@ pub struct Simulator {
     timers: BinaryHeap<Box<dyn Timer>>,
     // fairness model
     fairness: FairnessModel,
+    loopback_speed: Bandwidth,
     // nethint
     enable_nethint: bool,
     estimator: Option<Box<dyn Estimator>>,
@@ -153,6 +166,7 @@ impl Simulator {
             state: Default::default(),
             timers: BinaryHeap::new(),
             fairness: FairnessModel::default(),
+            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
             enable_nethint: false,
             estimator: None,
         }
@@ -160,7 +174,7 @@ impl Simulator {
 
     pub fn with_brain(brain: Rc<RefCell<Brain>>) -> Self {
         let cluster = (**brain.borrow().cluster()).clone();
-        let interval = 100_000_000; // 100ms
+        let interval = SAMPLE_INTERVAL_NS;
         let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain), interval));
         let timers =
             std::iter::once(Box::new(RepeatTimer::new(interval, interval)) as Box<dyn Timer>)
@@ -173,6 +187,7 @@ impl Simulator {
             state,
             timers,
             fairness: FairnessModel::default(),
+            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
             enable_nethint: true,
             estimator: Some(estimator),
         }
@@ -192,11 +207,6 @@ impl Simulator {
         self.timers
             .push(Box::new(OnceTimer::new(next_ready, token)));
     }
-
-    // fn register_repeat(&mut self, next_ready: Timestamp, dura: Duration) {
-    //     self.timers
-    //         .push(Box::new(RepeatTimer::new(next_ready, dura)));
-    // }
 
     #[inline]
     fn calc_delta_per_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
@@ -310,10 +320,10 @@ impl Simulator {
         let active_flows = self.state.running_flows.len();
         self.state.running_flows.iter().for_each(|f| {
             let mut f = f.borrow_mut();
-            if f.route.path.is_empty() {
-                f.speed_bound = 400.gbps().val() as f64;
+            if f.is_loopback() {
+                f.speed_bound = self.loopback_speed.val() as f64;
                 f.converged = true;
-                f.speed = 400.gbps().val() as f64;
+                f.speed = self.loopback_speed.val() as f64;
                 converged += 1;
             } else {
                 f.speed_bound = f64::MAX;
@@ -666,14 +676,15 @@ impl NetState {
                 .or_insert_with(|| FlowSet::new(fairness))
                 .push(Rc::clone(&fs));
         }
-        if fs.borrow().route.path.is_empty() {
+        if fs.borrow().is_loopback() {
             self.loopback_flows.push(Rc::clone(&fs));
         }
     }
 
     fn add_flow(&mut self, r: TraceRecord, cluster: &Cluster, sim_ts: Timestamp) {
         let start = std::time::Instant::now();
-        let route = cluster.resolve_route(&r.flow.src, &r.flow.dst, None);
+        let hint = RouteHint::VirtAddr(r.flow.vsrc.as_deref(), r.flow.vdst.as_deref());
+        let route = cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None);
         let end = std::time::Instant::now();
         self.resolve_route_time += end - start;
 
@@ -714,7 +725,7 @@ impl NetState {
             f.bytes_sent += delta;
 
             // update counters for nethint
-            if !f.route.path.is_empty() {
+            if !f.is_loopback() {
                 self.update_counters(&*f, delta);
             }
 
@@ -752,11 +763,14 @@ impl NetState {
             use crate::app::AppGroupTokenCoding;
             let token = f.flow.token.unwrap_or_else(|| 0.into());
             let (tenant_id, _) = token.decode();
-            let src_ix = f.route.from;
-            let dst_ix = f.route.to;
-            let vsrc_ix = brain.borrow().phys_to_virt(src_ix, tenant_id);
-            let vdst_ix = brain.borrow().phys_to_virt(dst_ix, tenant_id);
             if let Some(vcluster) = brain.borrow().vclusters.get(&tenant_id) {
+                assert!(f.flow.vsrc.is_some() && f.flow.vdst.is_some());
+                let vsrc_ix = vcluster
+                    .borrow()
+                    .get_node_index(f.flow.vsrc.as_deref().unwrap());
+                let vdst_ix = vcluster
+                    .borrow()
+                    .get_node_index(f.flow.vdst.as_deref().unwrap());
                 vcluster.borrow_mut()[vsrc_ix].counters.update_tx(f, delta);
                 vcluster.borrow_mut()[vdst_ix].counters.update_rx(f, delta);
             }
@@ -808,6 +822,11 @@ impl FlowState {
     fn completed(&self) -> bool {
         // TODO(cjr): check the precision of this condition
         self.bytes_sent >= self.flow.bytes
+    }
+
+    #[inline]
+    fn is_loopback(&self) -> bool {
+        self.route.path.is_empty()
     }
 }
 

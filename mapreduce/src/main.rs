@@ -11,6 +11,7 @@ use structopt::StructOpt;
 
 use nethint::{
     app::{AppGroup, Application},
+    bandwidth::BandwidthTrait,
     brain::Brain,
     cluster::{Cluster, Topology},
     multitenant::Tenant,
@@ -39,11 +40,11 @@ fn main() {
     let brain = Brain::build_cloud(opt.topo.clone());
 
     if opt.asym {
-        brain.borrow_mut().make_asymmetric(0);
+        brain.borrow_mut().make_asymmetric(1);
     }
 
     if opt.broken {
-        brain.borrow_mut().mark_broken(0, 0.1);
+        brain.borrow_mut().mark_broken(1, 0.1);
     }
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -242,6 +243,7 @@ fn run_experiments_multitenant(
         // .fairness(FairnessModel::PerFlowMinMax)
         .fairness(FairnessModel::TenantFlowMinMax)
         .sample_interval_ns(100_000_000)
+        .loopback_speed(400.gbps())
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
@@ -265,6 +267,7 @@ fn run_experiments_multitenant(
         })
         .collect();
 
+    brain.borrow_mut().garbage_collect(ncases);
     (app_stats, max_jct.unwrap())
 }
 
@@ -309,7 +312,6 @@ fn run_experiments(
                 task::spawn(async move {
                     info!("testcase: {}", id);
                     let jct = run_map_reduce(&cluster, &job_spec, policy, id as _);
-                    // let time = output.recs.into_iter().map(|r| r.dura.unwrap()).max();
                     info!(
                         "{:?}, job_finish_time: {:?}",
                         policy,
