@@ -9,10 +9,10 @@ use structopt::StructOpt;
 
 use nethint::{
     app::AppGroup,
-    brain::{Brain, PlacementStrategy},
+    brain::Brain,
     multitenant::Tenant,
-    simulator::{Executor, Simulator, SimulatorBuilder},
-    FairnessModel, ToStdDuration,
+    simulator::{Executor, SimulatorBuilder},
+    FairnessModel,
 };
 
 extern crate allreduce;
@@ -66,7 +66,7 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
     };
 
     let mut t = 0;
-    for i in 0..opt.ncases {
+    for _i in 0..opt.ncases {
         let job_spec = JobSpec::new(get_random_job_size(), opt.buffer_size, opt.num_iterations);
         let next = get_random_arrival_time(opt.poisson_lambda);
         t += next;
@@ -100,7 +100,6 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
