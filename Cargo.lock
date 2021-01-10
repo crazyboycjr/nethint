@@ -16,6 +16,7 @@ dependencies = [
  "gnuplot",
  "log",
  "logging",
+ "mapreduce",
  "nethint",
  "rand 0.7.3",
  "structopt",

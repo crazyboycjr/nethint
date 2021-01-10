@@ -40,9 +40,7 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
         for i in 0..vcluster.num_hosts() {
             let sender = format!("host_{}", ring.get(i).unwrap());
             let receiver = format!("host_{}", ring.get((i + 1) % vcluster.num_hosts()).unwrap());
-            let phy_sender = vcluster.translate(&sender);
-            let phy_receiver = vcluster.translate(&receiver);
-            let flow = Flow::new(size as usize, &phy_sender, &phy_receiver, None);
+            let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
         }
         flows
