@@ -14,6 +14,7 @@ pub use genetic::GeneticReducerScheduler;
 
 pub mod greedy;
 pub use greedy::GreedyReducerScheduler;
+pub use greedy::ImprovedGreedyReducerScheduler;
 
 pub mod plot;
 

@@ -5,7 +5,7 @@ use crate::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
     },
-    GreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
+    ImprovedGreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
     RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
 };
 use log::info;
@@ -95,7 +95,7 @@ impl<'c> MapReduceApp<'c> {
                 panic!("do not use genetic algorithm");
                 // Box::new(GeneticReducerScheduler::new())
             }
-            ReducerPlacementPolicy::HierarchicalGreedy => Box::new(GreedyReducerScheduler::new()),
+            ReducerPlacementPolicy::HierarchicalGreedy => Box::new(ImprovedGreedyReducerScheduler::new()),
         };
 
         let reducers = reduce_scheduler.place(
