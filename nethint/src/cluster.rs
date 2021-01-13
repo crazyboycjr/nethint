@@ -31,6 +31,7 @@ pub trait Topology:
     fn get_source(&self, ix: LinkIx) -> NodeIx;
     fn get_uplink(&self, ix: NodeIx) -> LinkIx;
     fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx>;
+    fn get_reverse_link(&self, ix: LinkIx) -> LinkIx;
     fn all_links(&self) -> EdgeIndices;
     fn find_link(&self, ix: NodeIx, iy: NodeIx) -> Option<LinkIx>;
     fn resolve_route(
@@ -108,6 +109,11 @@ impl Topology for VirtCluster {
     #[inline]
     fn get_downlinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx> {
         self.inner.get_downlinks(ix)
+    }
+
+    #[inline]
+    fn get_reverse_link(&self, ix: LinkIx) -> LinkIx {
+        self.inner.get_reverse_link(ix)
     }
 
     fn all_links(&self) -> EdgeIndices {
@@ -268,6 +274,11 @@ impl Topology for Cluster {
         self.graph[ix].children.iter()
     }
 
+    #[inline]
+    fn get_reverse_link(&self, ix: LinkIx) -> LinkIx {
+        LinkIx::new(ix.index() ^ 1)
+    }
+
     fn all_links(&self) -> EdgeIndices {
         self.graph.edge_indices()
     }
@@ -305,7 +316,7 @@ impl Topology for Cluster {
                     let x = src_id;
                     let parx = g[x].parent.unwrap();
                     path.push(g[parx].clone());
-                    path.push(g[EdgeIndex::new(parx.index() ^ 1)].clone());
+                    path.push(g[self.get_reverse_link(parx)].clone());
                     debug!("find a route from {}[{}] to {}[{}]", src, vsrc, dst, vdst);
                     return Route {
                         from: src_id,
@@ -329,7 +340,7 @@ impl Topology for Cluster {
             y = g.raw_edges()[pary.index()].target();
             depth -= 1;
             path1.push(g[parx].clone());
-            path2.push(g[EdgeIndex::new(pary.index() ^ 1)].clone());
+            path2.push(g[self.get_reverse_link(pary)].clone());
         }
 
         assert!(x == y, format!("route from {} to {} not found", src, dst));

@@ -104,7 +104,8 @@ impl Brain {
             if link_ix.index() & 1 == 1 {
                 let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1, 6));
                 cluster[link_ix] = Link::new(new_bw);
-                cluster[LinkIx::new(link_ix.index() ^ 1)] = Link::new(new_bw);
+                let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                cluster[reverse_link_ix] = Link::new(new_bw);
             }
         }
     }
@@ -201,6 +202,7 @@ impl Brain {
     }
 
     pub fn garbage_collect(&mut self, until: TenantId) {
+        #[allow(clippy::stable_sort_primitive)]
         self.gc_queue.sort();
         self.gc_queue.reverse();
         while let Some(tenant_id) = self.gc_queue.pop() {

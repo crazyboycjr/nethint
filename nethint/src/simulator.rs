@@ -53,6 +53,12 @@ pub enum Error {
     EmptyClusterOrBrain,
 }
 
+impl Default for SimulatorBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimulatorBuilder {
     pub fn new() -> Self {
         SimulatorBuilder {
