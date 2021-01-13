@@ -41,7 +41,7 @@ fn main() {
 }
 
 fn get_random_job_size() -> usize {
-    let job_sizes = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]];
+    let job_sizes = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]];
     let mut rng = rand::thread_rng();
     let mut n = rng.gen_range(0, 240);
     let mut i = 0;
