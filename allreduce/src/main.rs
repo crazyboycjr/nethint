@@ -65,8 +65,9 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
     let mut app_group = AppGroup::new();
 
     let all_reduce_policy = match opt.nethint_level {
+        0 => AllReducePolicy::Random,
         1 => AllReducePolicy::TopologyAware,
-        _ => AllReducePolicy::Random,
+        _ => panic!("unexpected nethint_level: {}", opt.nethint_level),
     };
 
     let mut t = 0;
@@ -74,6 +75,7 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         let job_spec = JobSpec::new(get_random_job_size(), opt.buffer_size, opt.num_iterations);
         let next = get_random_arrival_time(opt.poisson_lambda);
         t += next;
+        info! ("{:?}", job_spec);
         jobs.push((t, job_spec));
     }
 
