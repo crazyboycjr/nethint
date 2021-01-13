@@ -45,7 +45,7 @@ fn main() {
         let job_spec = JobSpec::new(get_random_job_size(), opt.buffer_size, opt.num_iterations);
         let next = get_random_arrival_time(opt.poisson_lambda);
         t += next;
-        // info! ("{:?}", job_spec);
+        info! ("{:?}", job_spec);
         jobs.push((t, job_spec));
     }
 

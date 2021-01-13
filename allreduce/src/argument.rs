@@ -13,7 +13,7 @@ pub struct Opt {
     pub num_workers: usize,
 
     /// Buffer size of allreduce.
-    #[structopt(short = "s", long = "buffer_size", default_value = "1000000")]
+    #[structopt(short = "s", long = "buffer_size", default_value = "500000000")]
     pub buffer_size: usize,
 
     /// Number of allreduce iterations.
