@@ -13,7 +13,7 @@ pub struct Opt {
     pub num_workers: usize,
 
     /// Buffer size of allreduce.
-    #[structopt(short = "s", long = "buffer_size", default_value = "1000000")]
+    #[structopt(short = "s", long = "buffer_size", default_value = "100000000")]
     pub buffer_size: usize,
 
     /// Number of allreduce iterations.
@@ -29,6 +29,6 @@ pub struct Opt {
     pub nethint_level: usize,
 
     /// Poisson arrival lambda.
-    #[structopt(short = "p", long = "poisson_lambda", default_value = "1.0")]
+    #[structopt(short = "p", long = "poisson_lambda", default_value = "24000000000")]
     pub poisson_lambda: f64,
 }

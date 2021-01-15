@@ -25,7 +25,7 @@ use allreduce::{app::AllReduceApp, argument::Opt, AllReducePolicy, JobSpec};
 fn main() {
     logging::init_log();
 
-    let opt = Opt::from_args();
+    let mut opt = Opt::from_args();
     // info!("Opts: {:#?}", opt);
 
     let brain = Brain::build_cloud(opt.topo.clone());
@@ -37,11 +37,30 @@ fn main() {
         .unwrap()
         .as_secs();
     info!("seed = {}", seed);
-    run_experiments(&opt, brain, seed, false);
+
+    let mut jobs = Vec::new();
+
+    let mut t = 0;
+    for _i in 0..opt.ncases {
+        let job_spec = JobSpec::new(get_random_job_size(), opt.buffer_size, opt.num_iterations);
+        let next = get_random_arrival_time(opt.poisson_lambda);
+        t += next;
+        info! ("{:?}", job_spec);
+        jobs.push((t, job_spec));
+    }
+
+    // random
+    opt.nethint_level = 0;
+    run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
+    // plink
+    opt.nethint_level = 1;
+    run_experiments(&opt, Rc::clone(&brain), seed, true, &jobs);
+    // nethint1
+    run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
 }
 
 fn get_random_job_size() -> usize {
-    let job_sizes = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]];
+    let job_sizes = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]];
     let mut rng = rand::thread_rng();
     let mut n = rng.gen_range(0, 240);
     let mut i = 0;
@@ -60,22 +79,16 @@ fn get_random_arrival_time(lambda: f64) -> u64 {
     poi.sample(&mut rand::thread_rng())
 }
 
-fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: bool) {
-    let mut jobs = Vec::new();
+fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: bool, jobs : &[(u64, JobSpec)]) {
+    brain.borrow_mut().garbage_collect(opt.ncases);
+
     let mut app_group = AppGroup::new();
 
     let all_reduce_policy = match opt.nethint_level {
+        0 => AllReducePolicy::Random,
         1 => AllReducePolicy::TopologyAware,
-        _ => AllReducePolicy::Random,
+        _ => panic!("unexpected nethint_level: {}", opt.nethint_level),
     };
-
-    let mut t = 0;
-    for _i in 0..opt.ncases {
-        let job_spec = JobSpec::new(get_random_job_size(), opt.buffer_size, opt.num_iterations);
-        let next = get_random_arrival_time(opt.poisson_lambda);
-        t += next;
-        jobs.push((t, job_spec));
-    }
 
     for i in 0..opt.ncases {
         let tenant_id = i;
@@ -110,10 +123,11 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
-    let app_stats: Vec<_> = app_jct
+    let mut app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
         .collect();
+    app_stats.sort();
 
     println!("{:?}", app_stats);
     // let mut simulator = Simulator::new((**brain.borrow().cluster()).clone());

@@ -90,6 +90,7 @@ impl<'c> Application for AllReduceApp<'c> {
                 AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
                     return match self.nethint_level {
+                        0 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
                         1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
                         2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
                         _ => panic!("unexpected nethint_level: {}", self.nethint_level),
@@ -97,10 +98,10 @@ impl<'c> Application for AllReduceApp<'c> {
                 }
                 AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
-                    info!(
-                        "nethint response: {}",
-                        self.cluster.as_ref().unwrap().to_dot()
-                    );
+                    // info!(
+                    //     "nethint response: {}",
+                    //     self.cluster.as_ref().unwrap().to_dot()
+                    // );
                     // since we have the cluster, start and schedule the app again
                     self.start();
                     return self
