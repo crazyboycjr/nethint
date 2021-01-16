@@ -1,3 +1,5 @@
+#![feature(option_unwrap_none)]
+#![feature(map_into_keys_values)]
 pub mod argument;
 
 pub mod app;
@@ -5,6 +7,8 @@ pub mod app;
 pub mod random_ring;
 
 pub mod topology_aware;
+
+pub mod rat;
 
 use nethint:: {
   cluster::Topology,
@@ -32,6 +36,8 @@ impl JobSpec {
 pub enum AllReducePolicy {
     Random,
     TopologyAware,
+    /// Resilient Aggregation Tree
+    RAT,
 }
 
 pub trait AllReduceAlgorithm {

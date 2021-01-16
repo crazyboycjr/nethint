@@ -57,6 +57,9 @@ fn main() {
     run_experiments(&opt, Rc::clone(&brain), seed, true, &jobs);
     // nethint1
     run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
+    // nethint2
+    opt.nethint_level = 2;
+    run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
 }
 
 fn get_random_job_size() -> usize {
@@ -87,6 +90,7 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
     let all_reduce_policy = match opt.nethint_level {
         0 => AllReducePolicy::Random,
         1 => AllReducePolicy::TopologyAware,
+        2 => AllReducePolicy::RAT,
         _ => panic!("unexpected nethint_level: {}", opt.nethint_level),
     };
 

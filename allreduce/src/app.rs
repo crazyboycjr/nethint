@@ -1,4 +1,3 @@
-use log::info;
 use std::rc::Rc;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
@@ -9,7 +8,7 @@ use nethint::{
 };
 
 use crate::{
-    random_ring::RandomRingAllReduce, topology_aware::TopologyAwareRingAllReduce,
+    random_ring::RandomRingAllReduce, topology_aware::TopologyAwareRingAllReduce, rat::RatAllReduce,
     AllReduceAlgorithm, AllReducePolicy, JobSpec,
 };
 
@@ -64,6 +63,7 @@ impl<'c> AllReduceApp<'c> {
         let mut allreduce_algorithm: Box<dyn AllReduceAlgorithm> = match self.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
             AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
+            AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
         };
 
         let flows =
