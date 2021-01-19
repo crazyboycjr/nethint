@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, str::from_utf8};
 
 use crate::AllReduceAlgorithm;
 use nethint::{
-    cluster::{NodeIx, Topology},
+    cluster::Topology,
     Flow,
 };
 

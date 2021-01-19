@@ -246,10 +246,7 @@ impl Brain {
         self.gc_queue.push(tenant_id);
     }
 
-    fn place_random(&mut self, nhosts: usize, seed: u64) -> (Cluster, HashMap<String, String>) {
-        use rand::seq::{IteratorRandom, SliceRandom};
-        use rand::{rngs::StdRng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(seed);
+    fn place_specified(&mut self, hosts_spec: &[NodeIx]) -> (Cluster, HashMap<String, String>) {
 
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
@@ -258,19 +255,7 @@ impl Brain {
         let root = "virtual_cloud";
         inner.add_node(Node::new(root, 1, NodeType::Switch));
 
-        let alloced_hosts = {
-            let avail_hosts = (0..self.cluster.num_hosts())
-                .into_iter()
-                .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
-                .filter(|node_ix| self.used[node_ix] < MAX_SLOTS);
-            let mut choosed: Vec<NodeIx> = avail_hosts.choose_multiple(&mut rng, nhosts);
-            choosed.shuffle(&mut rng);
-            choosed
-        };
-
-        assert_eq!(alloced_hosts.len(), nhosts);
-
-        for host_ix in alloced_hosts {
+        for &host_ix in hosts_spec {
             let uplink_ix = self.cluster.get_uplink(host_ix);
             let tor_ix = self.cluster.get_target(uplink_ix);
 
@@ -310,16 +295,29 @@ impl Brain {
         (inner, virt_to_phys)
     }
 
+    fn place_random(&mut self, nhosts: usize, seed: u64) -> (Cluster, HashMap<String, String>) {
+        use rand::seq::{IteratorRandom, SliceRandom};
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let alloced_hosts = {
+            let avail_hosts = (0..self.cluster.num_hosts())
+                .into_iter()
+                .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
+                .filter(|node_ix| self.used[node_ix] < MAX_SLOTS);
+            let mut choosed: Vec<NodeIx> = avail_hosts.choose_multiple(&mut rng, nhosts);
+            choosed.shuffle(&mut rng);
+            choosed
+        };
+
+        assert_eq!(alloced_hosts.len(), nhosts);
+
+        self.place_specified(&alloced_hosts)
+    }
+
     fn place_compact(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
-        // Vec<(slots, tor_ix)>
-        let root = "virtual_cloud";
-
-        let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
-        let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
-
         let mut allocated = 0;
-        let mut inner = Cluster::new();
-        inner.add_node(Node::new(root, 1, NodeType::Switch));
+        let mut alloced_hosts = Vec::new();
 
         while allocated < nhosts {
             let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches() - 1)
@@ -340,13 +338,6 @@ impl Brain {
             tors.sort_by_key(|x| x.0);
 
             for (w, tor_ix) in tors.into_iter().rev() {
-                let tor_len = tor_alloc.len();
-                let tor_name = tor_alloc
-                    .entry(tor_ix)
-                    .or_insert(format!("tor_{}", tor_len));
-
-                inner.add_node(Node::new(tor_name, 2, NodeType::Switch));
-                inner.add_link_by_name(root, tor_name, 0.gbps());
                 let mut to_pick = w.min(nhosts - allocated);
 
                 // traverse the tor and pick up w.min(nhosts) nodes
@@ -365,16 +356,9 @@ impl Brain {
                         let n = &self.cluster[host_ix];
                         assert_eq!(n.depth, 3); // this doesn't have to be true
 
-                        // allocate a new name, make sure host_id is continuous and start from 0
-                        let host_len = host_alloc.len();
-                        let host_name = host_alloc
-                            .entry(host_ix)
-                            .or_insert(format!("host_{}", host_len));
-
-                        inner.add_node(Node::new(host_name, 3, NodeType::Host));
-                        inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
                         to_pick -= 1;
                         allocated += 1;
+                        alloced_hosts.push(host_ix);
                         self.used.entry(host_ix).and_modify(|e| *e += 1);
                     }
                 }
@@ -385,19 +369,11 @@ impl Brain {
             }
         }
 
-        tor_alloc
-            .insert(
-                self.cluster().get_node_index("cloud"),
-                "virtual_cloud".to_owned(),
-            )
-            .unwrap_none();
+        use rand::seq::SliceRandom;
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(0); // use a constant seed
+        alloced_hosts.shuffle(&mut rng);
 
-        let virt_to_phys = host_alloc
-            .into_iter()
-            .chain(tor_alloc)
-            .map(|(k, v)| (v, self.cluster[k].name.clone()))
-            .collect();
-
-        (inner, virt_to_phys)
+        self.place_specified(&alloced_hosts)
     }
 }

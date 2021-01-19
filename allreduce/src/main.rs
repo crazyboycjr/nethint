@@ -30,6 +30,10 @@ fn main() {
 
     let brain = Brain::build_cloud(opt.topo.clone());
 
+    if opt.asym {
+        brain.borrow_mut().make_asymmetric(1);
+    }
+
     // info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     let seed = std::time::SystemTime::now()
