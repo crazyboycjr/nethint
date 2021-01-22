@@ -64,6 +64,10 @@ fn main() {
     // nethint2
     opt.nethint_level = 2;
     run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
+    // nethint2
+    opt.nethint_level = 2;
+    opt.tune = Some(10); // tune after 10 iterations
+    run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
 }
 
 fn get_random_job_size() -> usize {
@@ -103,7 +107,7 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         let (start_ts, job_spec) = jobs.get(i).unwrap();
 
         let allreduce_app =
-            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy, opt.nethint_level));
+            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy, opt.nethint_level, opt.tune));
 
         let nhosts_to_acquire = job_spec.num_workers;
 

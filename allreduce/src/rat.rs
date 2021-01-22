@@ -2,10 +2,7 @@ use lpsolve;
 use std::{collections::BTreeMap, str::from_utf8};
 
 use crate::AllReduceAlgorithm;
-use nethint::{
-    cluster::Topology,
-    Flow,
-};
+use nethint::{cluster::Topology, Flow};
 
 #[derive(Debug, Default)]
 pub struct RatAllReduce {}
@@ -125,7 +122,160 @@ fn generate_rats(vcluster: &dyn Topology) -> Vec<Tree> {
     tree_set
 }
 
-fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree]) -> Vec<f64> {
+// min: +C17;
+//
+// /* Constraints */
+// +8 C1 +C2 +C3 +C4 +C5 +C6 +C7 +C8 +8 C9 +C10 +C11 +C12 +C13 +C14 +C15 +C16 -25000000000 C17 <= 0;
+// +8 C1 +C2 +C3 +C4 +C5 +C6 +C7 +C8 +8 C9 +C10 +C11 +C12 +C13 +C14 +C15 +C16 -17127014614 C17 <= 0;
+// +C1 +8 C2 +C3 +C4 +C5 +C6 +C7 +C8 +C9 +8 C10 +C11 +C12 +C13 +C14 +C15 +C16 -69365801680 C17 <= 0;
+// +C1 +C2 +8 C3 +C4 +C5 +C6 +C7 +C8 +C9 +C10 +8 C11 +C12 +C13 +C14 +C15 +C16 -100000000000 C17 <= 0;
+// +C1 +C2 +C3 +8 C4 +C5 +C6 +C7 +C8 +C9 +C10 +C11 +8 C12 +C13 +C14 +C15 +C16 -12898901680 C17 <= 0;
+// +C1 +8 C2 +C3 +C4 +C5 +C6 +C7 +C8 +C9 +8 C10 +C11 +C12 +C13 +C14 +C15 +C16 -33333333333 C17 <= 0;
+// +C1 +C2 +C3 +C4 +8 C5 +C6 +C7 +C8 +C9 +C10 +C11 +C12 +8 C13 +C14 +C15 +C16 -25000000000 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +8 C6 +C7 +C8 +C9 +C10 +C11 +C12 +C13 +8 C14 +C15 +C16 -87931984080 C17 <= 0;
+// +C1 +C2 +8 C3 +C4 +C5 +C6 +C7 +C8 +C9 +C10 +8 C11 +C12 +C13 +C14 +C15 +C16 -20000000000 C17 <= 0;
+// +C1 +C2 +C3 +8 C4 +C5 +C6 +C7 +C8 +C9 +C10 +C11 +8 C12 +C13 +C14 +C15 +C16 -12895425360 C17 <= 0;
+// +C1 +C2 +C3 +C4 +8 C5 +C6 +C7 +C8 +C9 +C10 +C11 +C12 +8 C13 +C14 +C15 +C16 -50000000000 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +8 C6 +C7 +C8 +C9 +C10 +C11 +C12 +C13 +8 C14 +C15 +C16 -12890072400 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +C6 +8 C7 +C8 +C9 +C10 +C11 +C12 +C13 +C14 +8 C15 +C16 -12890072400 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +C6 +8 C7 +C8 +C9 +C10 +C11 +C12 +C13 +C14 +8 C15 +C16 -21248039653 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +C6 +C7 +8 C8 +C9 +C10 +C11 +C12 +C13 +C14 +C15 +8 C16 -20000000000 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +C6 +C7 +8 C8 +C9 +C10 +C11 +C12 +C13 +C14 +C15 +8 C16 -20000000000 C17 <= 0;
+// +C1 +C2 +C3 +C4 +C5 +C6 +C7 +C8 +C9 +C10 +C11 +C12 +C13 +C14 +C15 +C16 = 1;
+// R18: +C1 >= 0;
+// R19: +C2 >= 0;
+// R20: +C3 >= 0;
+// R21: +C4 >= 0;
+// R22: +C5 >= 0;
+// R23: +C6 >= 0;
+// R24: +C7 >= 0;
+// R25: +C8 >= 0;
+// R26: +C9 >= 0;
+// R27: +C10 >= 0;
+// R28: +C11 >= 0;
+// R29: +C12 >= 0;
+// R30: +C13 >= 0;
+// R31: +C14 >= 0;
+// R32: +C15 >= 0;
+// R33: +C16 >= 0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_lp() {
+        let n = 16;
+        let mut lp = lpsolve::Problem::new(0, n as i32 + 1).unwrap();
+
+        let bw = vec![
+            25000000000.0,
+            17127014614.0,
+            69365801680.0,
+            100000000000.0,
+            12898901680.0,
+            33333333333.0,
+            25000000000.0,
+            87931984080.0,
+            20000000000.0,
+            12895425360.0,
+            50000000000.0,
+            12890072400.0,
+            12890072400.0,
+            21248039653.0,
+            20000000000.0,
+            20000000000.0,
+        ];
+
+        let coeff = [
+            [
+                8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0,
+            ],
+            [
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 8.0,
+            ],
+        ];
+
+        let mut obj_func = vec![0.; n + 1];
+        obj_func.push(1.);
+        lp.set_objective_function(&obj_func);
+
+        for (i, co) in coeff.iter().enumerate() {
+            let mut constraint: Vec<f64> = co.clone().into();
+            constraint.insert(0, 0.);
+            // COMMENT(cjr): precision issue here, if we do not divide 10_000_000.0, the lpsolve will just refuse to work
+            constraint.push(-1.0 * bw[i] / 10_000_000.0);
+            lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
+        }
+
+        let mut constraint = vec![1.; n + 1];
+        constraint.push(0.);
+        lp.add_constraint(&constraint, 1., lpsolve::ConstraintType::Eq);
+
+        // \vec{w} >= 0
+        for i in 0..n {
+            let mut constraint = vec![0.; n + 2];
+            constraint[i + 1] = 1.;
+            lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Ge);
+        }
+
+        let mut buffer = Vec::new();
+        lp.write_lp(&mut buffer);
+        let problem_str = from_utf8(&buffer).unwrap();
+        println!("{}", problem_str);
+
+        let status = lp.solve();
+        assert_eq!(status, lpsolve::SolveStatus::Optimal);
+        println!("status: {:?}", status);
+
+        let mut w = vec![0.; n + 1];
+        lp.get_solution_variables(&mut w);
+        println!("weights: {:?}", w);
+    }
+}
+
+fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
     let n = vcluster.num_hosts();
     let mut lp = lpsolve::Problem::new(0, n as i32 + 1).unwrap();
 
@@ -160,7 +310,7 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree]) -> Vec<f64> {
     // Bw^{-1} \cdot D \cdot \vec{w} <= \vec{y}
     for (i, deg) in deg.iter().enumerate() {
         let mut constraint = deg.clone();
-        constraint.push(-1.0 * bw[i]);
+        constraint.push(-1.0 * bw[i] / size as f64);
         lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
     }
 
@@ -170,9 +320,9 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree]) -> Vec<f64> {
     lp.add_constraint(&constraint, 1., lpsolve::ConstraintType::Eq);
 
     // \vec{w} >= 0
-    for _ in 0..n {
-        let mut constraint = vec![0.; n + 1];
-        constraint.push(1.);
+    for i in 0..n {
+        let mut constraint = vec![0.; n + 2];
+        constraint[i + 1] = 1.;
         lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Ge);
     }
 
@@ -188,14 +338,16 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree]) -> Vec<f64> {
     let mut w = vec![0.; n + 1];
     lp.get_solution_variables(&mut w);
     log::debug!("weights: {:?}", w);
-    w
+
+    // adjust if w[i] < 0
+    w.into_iter().map(|x| x.max(0.)).collect()
 }
 
 impl AllReduceAlgorithm for RatAllReduce {
     fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
         let tree_set = generate_rats(vcluster);
         // log::info!("tree_set: {:#?}", tree_set);
-        let weights = linear_programming(vcluster, &tree_set);
+        let weights = linear_programming(vcluster, &tree_set, size);
         let mut flows = Vec::new();
         for (w, tree) in weights.into_iter().zip(tree_set) {
             // traverse all edges in the tree

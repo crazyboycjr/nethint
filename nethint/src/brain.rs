@@ -138,7 +138,7 @@ impl Brain {
         if self.used.values().cloned().sum::<usize>() + nhosts
             > self.cluster.num_hosts() * MAX_SLOTS
         {
-            return Err(Error::NoHost(self.cluster.num_hosts(), nhosts));
+            return Err(Error::NoHost(self.cluster.num_hosts() * MAX_SLOTS, nhosts));
         }
 
         let (inner, virt_to_phys) = match strategy {
@@ -233,8 +233,6 @@ impl Brain {
                 .for_each(|(_, phys_name)| {
                     let pnode_ix = self.cluster.get_node_index(&phys_name);
                     self.used.entry(pnode_ix).and_modify(|e| *e -= 1);
-                    // let flag = self.phys_to_virt.remove(&(pnode_ix, tenant_id)).is_some();
-                    // assert!(flag);
                 });
         }
     }
@@ -243,6 +241,7 @@ impl Brain {
         // lazily destroy
         // NOTE that this lazily destroy mechanism still cannot guarantee that
         // all jobs from different strategies to see the same environment (allocation status).
+        log::info!("destroy: {}", tenant_id);
         self.gc_queue.push(tenant_id);
     }
 
@@ -373,6 +372,10 @@ impl Brain {
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(0); // use a constant seed
         alloced_hosts.shuffle(&mut rng);
+
+        for &host_ix in &alloced_hosts {
+            self.used.entry(host_ix).and_modify(|e| *e -= 1);
+        }
 
         self.place_specified(&alloced_hosts)
     }

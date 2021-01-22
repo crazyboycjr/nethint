@@ -35,4 +35,8 @@ pub struct Opt {
     /// Asymmetric bandwidth
     #[structopt(short = "a", long = "asymmetric")]
     pub asym: bool,
+
+    /// Auto tune after some itertions.
+    #[structopt(long = "autotune")]
+    pub tune: Option<usize>,
 }

@@ -22,6 +22,7 @@ pub struct AllReduceApp<'c> {
     remaining_iterations: usize,
     remaining_flows: usize,
     nethint_level: usize,
+    autotune: Option<usize>,
 }
 
 impl<'c> std::fmt::Debug for AllReduceApp<'c> {
@@ -37,6 +38,7 @@ impl<'c> AllReduceApp<'c> {
         seed: u64,
         allreduce_policy: &'c AllReducePolicy,
         nethint_level: usize,
+        autotune: Option<usize>,
     ) -> Self {
         let trace = Trace::new();
         AllReduceApp {
@@ -46,9 +48,10 @@ impl<'c> AllReduceApp<'c> {
             jct: None,
             seed,
             allreduce_policy,
-            remaining_iterations: 0,
+            remaining_iterations: job_spec.num_iterations,
             remaining_flows: 0,
             nethint_level,
+            autotune,
         }
     }
 
@@ -79,6 +82,15 @@ impl<'c> AllReduceApp<'c> {
 
         self.replayer = Replayer::new(trace);
     }
+
+    fn request_nethint(&self) -> Events {
+        match self.nethint_level {
+            0 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
+            1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
+            2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
+            _ => panic!("unexpected nethint_level: {}", self.nethint_level),
+        }
+    }
 }
 
 impl<'c> Application for AllReduceApp<'c> {
@@ -89,12 +101,7 @@ impl<'c> Application for AllReduceApp<'c> {
             match event.event {
                 AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return match self.nethint_level {
-                        0 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
-                        1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
-                        2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
-                        _ => panic!("unexpected nethint_level: {}", self.nethint_level),
-                    };
+                    return self.request_nethint();
                 }
                 AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
@@ -103,7 +110,7 @@ impl<'c> Application for AllReduceApp<'c> {
                     //     self.cluster.as_ref().unwrap().to_dot()
                     // );
                     // since we have the cluster, start and schedule the app again
-                    self.start();
+                    self.allreduce(event.ts);
                     return self
                         .replayer
                         .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
@@ -118,6 +125,10 @@ impl<'c> Application for AllReduceApp<'c> {
             self.remaining_flows -= flows.len();
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
+                if self.autotune.is_some() && self.autotune.unwrap() > 0 && self.remaining_iterations % self.autotune.unwrap() == 0 {
+                    self.cluster = None;
+                    return self.request_nethint();
+                }
                 self.allreduce(self.jct.unwrap());
                 return self
                     .replayer
