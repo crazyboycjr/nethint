@@ -30,6 +30,10 @@ fn main() {
 
     let brain = Brain::build_cloud(opt.topo.clone());
 
+    if opt.asym {
+        brain.borrow_mut().make_asymmetric(1);
+    }
+
     // info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     let seed = std::time::SystemTime::now()
@@ -56,6 +60,13 @@ fn main() {
     opt.nethint_level = 1;
     run_experiments(&opt, Rc::clone(&brain), seed, true, &jobs);
     // nethint1
+    run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
+    // nethint2
+    opt.nethint_level = 2;
+    run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
+    // nethint2
+    opt.nethint_level = 2;
+    opt.tune = Some(10); // tune after 10 iterations
     run_experiments(&opt, Rc::clone(&brain), seed, false, &jobs);
 }
 
@@ -87,6 +98,7 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
     let all_reduce_policy = match opt.nethint_level {
         0 => AllReducePolicy::Random,
         1 => AllReducePolicy::TopologyAware,
+        2 => AllReducePolicy::RAT,
         _ => panic!("unexpected nethint_level: {}", opt.nethint_level),
     };
 
@@ -95,7 +107,7 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         let (start_ts, job_spec) = jobs.get(i).unwrap();
 
         let allreduce_app =
-            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy, opt.nethint_level));
+            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy, opt.nethint_level, opt.tune));
 
         let nhosts_to_acquire = job_spec.num_workers;
 

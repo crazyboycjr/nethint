@@ -31,4 +31,12 @@ pub struct Opt {
     /// Poisson arrival lambda.
     #[structopt(short = "p", long = "poisson_lambda", default_value = "24000000000")]
     pub poisson_lambda: f64,
+
+    /// Asymmetric bandwidth
+    #[structopt(short = "a", long = "asymmetric")]
+    pub asym: bool,
+
+    /// Auto tune after some itertions.
+    #[structopt(long = "autotune")]
+    pub tune: Option<usize>,
 }

@@ -37,12 +37,16 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
 
         let mut flows = Vec::new();
 
-        for i in 0..vcluster.num_hosts() {
-            let sender = format!("host_{}", ring.get(i).unwrap());
-            let receiver = format!("host_{}", ring.get((i + 1) % vcluster.num_hosts()).unwrap());
-            let flow = Flow::new(size as usize, &sender, &receiver, None);
-            flows.push(flow);
+        let n = vcluster.num_hosts();
+        for _ in 0..2 {
+            for i in 0..n {
+                let sender = format!("host_{}", ring[i]);
+                let receiver = format!("host_{}", ring[(i + 1) % n]);
+                let flow = Flow::new(size as usize * (n - 1) / n, &sender, &receiver, None);
+                flows.push(flow);
+            }
         }
+
         flows
     }
 }
