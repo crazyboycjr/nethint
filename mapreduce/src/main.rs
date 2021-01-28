@@ -216,7 +216,7 @@ fn run_experiments_multitenant(
         };
 
         let app: Box<dyn Application<Output = _>> = if use_plink {
-            Box::new(PlinkApp::new(nhosts_to_acquire, mapreduce_app))
+            Box::new(PlinkApp::new(nhosts_to_acquire, 10, mapreduce_app))
         } else {
             mapreduce_app
         };

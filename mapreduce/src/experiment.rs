@@ -110,8 +110,16 @@ fn main() {
     let brain = Brain::build_cloud(config.brain.clone());
 
     log::info!("cluster:\n{}", brain.borrow().cluster().to_dot());
+
+    // create the output directory if it does not exist
     if let Some(path) = &config.directory {
         std::fs::create_dir_all(path).expect("fail to create directory");
+        let mut file = path.clone();
+        file.push("result.txt");
+        // remove the previous result file
+        if file.exists() {
+            std::fs::remove_file(file).unwrap();
+        }
     };
 
     for i in 0..config.batches.len() {
@@ -131,6 +139,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
 
     let ncases = std::cmp::min(config.ncases, job_trace.count);
 
+    // Read job information (start_ts, job_spec) from file
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
     for i in 0..ncases {
@@ -157,6 +166,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
     }
 
     // Build the application by combination
+    // AppGroup[Tenant[PlinkApp[MapReduceApp]]]
     let batch = config.batches[batch_id].clone();
     for i in 0..ncases {
         let seed = i as _;
@@ -189,7 +199,11 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
         };
 
         let app: Box<dyn Application<Output = _>> = if batch.probe.enable {
-            Box::new(PlinkApp::new(nhosts_to_acquire, mapreduce_app))
+            Box::new(PlinkApp::new(
+                nhosts_to_acquire,
+                batch.probe.round_ms,
+                mapreduce_app,
+            ))
         } else {
             mapreduce_app
         };
@@ -206,12 +220,14 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
 
     log::debug!("app_group: {:?}", app_group);
 
+    // setup simulator
     let mut simulator = SimulatorBuilder::new()
         .brain(Rc::clone(&brain))
         .with_setting(config.simulator)
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
 
+    // run application in simulator
     let app_jct = simulator.run_with_appliation(Box::new(app_group));
     let app_stats: Vec<_> = app_jct
         .iter()
@@ -228,10 +244,12 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
         })
         .collect();
 
+    // remember to garbage collect remaining jobs
     brain.borrow_mut().garbage_collect(ncases);
 
     println!("{:?}", app_stats);
 
+    // save result to config.directory
     if let Some(mut path) = config.directory.clone() {
         use std::io::Write;
         path.push("result.txt");

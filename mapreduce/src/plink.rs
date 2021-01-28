@@ -15,8 +15,8 @@ impl<'a, T: 'a> PlinkApp<'a, T>
 where
     T: Default + Clone + std::fmt::Debug,
 {
-    pub fn new(nhosts: usize, app: Box<dyn Application<Output = T> + 'a>) -> Self {
-        let dur_ms = (nhosts * 10) as _;
+    pub fn new(nhosts: usize, round_ms: u64, app: Box<dyn Application<Output = T> + 'a>) -> Self {
+        let dur_ms = (nhosts as u64 * round_ms) as _;
         let background_flow = Box::new(BackgroundFlowApp::new(
             nhosts,
             dur_ms,

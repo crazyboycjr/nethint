@@ -124,7 +124,7 @@ fn run_experiments(
         let nhosts_to_acquire = job_spec.num_workers;
 
         let app: Box<dyn Application<Output = _>> = if use_plink {
-            Box::new(PlinkApp::new(nhosts_to_acquire, allreduce_app))
+            Box::new(PlinkApp::new(nhosts_to_acquire, 100, allreduce_app))
         } else {
             allreduce_app
         };
