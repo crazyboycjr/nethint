@@ -4,7 +4,7 @@
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
-ncases = 10
+ncases = 100
 
 # Number of map tasks and reduce tasks
 # When running from trace, these parameters become scale factors
@@ -41,7 +41,7 @@ nethint_level = 1
 
 [[batch]]
 reducer_policy = "HierarchicalGreedy"
-probe = { enable = true, round_ms = 100 }
+probe = { enable = true, round_ms = 10 }
 nethint_level = 1
 
 [[batch]]
@@ -60,16 +60,18 @@ sample_interval_ns = 100_000_000 # 100ms
 loopback_speed = 400
 fairness = "TenantFlowMinMax"
 # fairness = "PerFlowMinMax"
+
 # emulate background flow by substrate a bandwidth to each link
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.1 }
+# background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
 [brain]
 # Random seed for multiple uses
 seed = 1
 # Whether the cluster's bandwidth is asymmetric
-asymmetric = true
+asymmetric = false
 # The percentage of nodes marked broken
 broken = 0.1
 # The slots of each physical machine
@@ -86,7 +88,7 @@ type = "Arbitrary"  # another possible value is "FatTree"
 
 [brain.topology.args]         # When type = "Arbitrary"
 nracks = 150        # the number of racks
-rack_size = 8       # the number of hosts under a rack
+rack_size = 20      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 200       # bandwidth of a ToR switch, in Gbps
 

@@ -118,8 +118,11 @@ fn main() {
         file.push("result.txt");
         // remove the previous result file
         if file.exists() {
-            std::fs::remove_file(file).unwrap();
+            std::fs::remove_file(file.clone()).unwrap();
         }
+
+        // then write parsed configuration to it
+        std::fs::write(file, format!("{:#?}\n", config)).unwrap();
     };
 
     for i in 0..config.batches.len() {

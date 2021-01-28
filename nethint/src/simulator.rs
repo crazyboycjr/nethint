@@ -410,6 +410,7 @@ impl Simulator {
                         Err(any_timer) => {
                             match any_timer.downcast::<PoissonTimer>() {
                                 Ok(mut poisson_timer) => {
+                                    assert!(self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable);
                                     // ask brain to update background flow
                                     let brain = self.state.brain.as_ref().unwrap().clone();
                                     brain.borrow_mut().update_background_flow_hard(self.background_flow_hard.unwrap().probability);
