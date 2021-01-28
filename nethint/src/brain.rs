@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
-use crate::bandwidth::BandwidthTrait;
+use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
 
 pub type TenantId = usize;
@@ -36,6 +36,8 @@ pub struct Brain {
     setting: BrainSetting,
     /// physical clsuter
     cluster: Arc<Cluster>,
+    /// original bandwidth
+    orig_bw: HashMap<LinkIx, Bandwidth>,
     /// used set of nodes in phycisal cluster, the value
     /// represents how much VM has been allocated on this physical node
     used: HashMap<NodeIx, usize>,
@@ -96,9 +98,15 @@ impl Brain {
             })
             .collect();
 
+        let orig_bw = cluster
+            .all_links()
+            .map(|link_ix| (link_ix, cluster[link_ix].bandwidth))
+            .collect();
+
         let mut brain = Brain {
             setting,
             cluster: Arc::new(cluster),
+            orig_bw,
             used,
             vclusters: Default::default(),
             // phys_to_virt: Default::default(),
@@ -129,12 +137,18 @@ impl Brain {
 
         for link_ix in cluster.all_links() {
             if link_ix.index() & 1 == 1 {
-                let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1, 6));
+                let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1..=5));
                 cluster[link_ix] = Link::new(new_bw);
                 let reverse_link_ix = cluster.get_reverse_link(link_ix);
                 cluster[reverse_link_ix] = Link::new(new_bw);
             }
         }
+
+        // also update orig_bw
+        self.orig_bw = cluster
+            .all_links()
+            .map(|link_ix| (link_ix, cluster[link_ix].bandwidth))
+            .collect();
     }
 
     fn mark_broken(&mut self, seed: u64, ratio: f64) {
@@ -147,8 +161,37 @@ impl Brain {
         let max_slots = self.setting.max_slots;
         for i in 0..cluster.num_hosts() {
             let node_ix = cluster.get_node_index(&format!("host_{}", i));
-            if rng.gen_range(0., 1.) < ratio {
+            if rng.gen_range(0.0..1.0) < ratio {
                 self.used.entry(node_ix).and_modify(|e| *e = max_slots);
+            }
+        }
+    }
+
+    pub fn update_background_flow_hard(&mut self, probability: f64) {
+        use rand::{rngs::StdRng, Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(self.setting.seed);
+
+        let cluster = Arc::get_mut(&mut self.cluster)
+            .expect("there should be no other reference to physical cluster");
+
+        for link_ix in cluster.all_links() {
+            if link_ix.index() & 1 == 1 {
+                if rng.gen_range(0.0..1.0) < probability {
+                    let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
+                    let total_slots = self.setting.max_slots;
+                    let mut empty_slots = total_slots - current_tenants;
+                    // guarantee each tenant can have total/current_tenants bandwidth
+                    if empty_slots <= 1 {
+                        continue;
+                    }
+                    // do not zero new_bw
+                    empty_slots -= 1;
+                    let new_bw = self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+
+                    cluster[link_ix] = Link::new(new_bw);
+                    let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                    cluster[reverse_link_ix] = Link::new(new_bw);
+                }
             }
         }
     }

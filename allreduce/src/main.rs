@@ -1,5 +1,5 @@
 #![feature(box_patterns)]
-use rand::distributions::{Distribution, Poisson};
+use rand_distr::{Distribution, Poisson};
 use rand::Rng;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -86,7 +86,7 @@ fn get_random_job_size() -> usize {
 }
 
 fn get_random_arrival_time(lambda: f64) -> u64 {
-    let poi = Poisson::new(lambda);
+    let poi = Poisson::new(lambda).unwrap();
     poi.sample(&mut rand::thread_rng())
 }
 
