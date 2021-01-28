@@ -6,6 +6,8 @@ use std::rc::Rc;
 use nethint::cluster::Topology;
 use rand::{self, rngs::StdRng, SeedableRng};
 
+use serde::{Serialize, Deserialize};
+
 pub mod random;
 pub use random::RandomReducerScheduler;
 
@@ -59,7 +61,7 @@ pub trait PlaceMapper {
     fn place(&mut self, vcluster: &dyn Topology, job_spec: &JobSpec) -> Placement;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReducerPlacementPolicy {
     Random,
     GeneticAlgorithm,
@@ -109,10 +111,12 @@ pub fn get_rack_id(cluster: &dyn Topology, h: &str) -> usize {
     rack_id
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "args")]
 pub enum ShufflePattern {
     Uniform(u64),
     Zipf(u64, f64),
+    #[serde(skip)]
     FromTrace(Box<trace::Record>),
 }
 

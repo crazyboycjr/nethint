@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use lazy_static::lazy_static;
 use rand::{rngs::StdRng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 const RAND_SEED: u64 = 0;
 thread_local! {
@@ -38,7 +39,7 @@ pub mod hint;
 
 pub mod background_flow;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FairnessModel {
     PerFlowMinMax,
     TenantFlowMinMax,

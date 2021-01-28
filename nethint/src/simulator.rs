@@ -6,6 +6,7 @@ use std::rc::Rc;
 use fnv::FnvBuildHasher;
 use indexmap::IndexMap;
 use log::{debug, trace};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::{smallvec, SmallVec};
 use thiserror::Error;
 
@@ -35,14 +36,49 @@ pub trait Executor<'a> {
     fn run_with_appliation<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SimulatorSetting {
+    #[serde(rename = "nethint")]
+    pub enable_nethint: bool,
+    pub sample_interval_ns: Duration,
+    #[serde(serialize_with = "serialize_bandwidth")]
+    #[serde(deserialize_with = "deserialize_bandwidth")]
+    pub loopback_speed: Bandwidth,
+    pub fairness: FairnessModel,
+}
+
+impl Default for SimulatorSetting {
+    fn default() -> Self {
+        Self {
+            fairness: FairnessModel::default(),
+            enable_nethint: false,
+            sample_interval_ns: SAMPLE_INTERVAL_NS,
+            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
+        }
+    }
+}
+
+fn serialize_bandwidth<S>(bw: &Bandwidth, se: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = bw.to_string();
+    s.serialize(se)
+}
+
+fn deserialize_bandwidth<'de, D>(de: D) -> Result<Bandwidth, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let f: f64 = Deserialize::deserialize(de)?;
+    Ok(f.gbps())
+}
+
 #[derive(Debug, Clone)]
 pub struct SimulatorBuilder {
     cluster: Option<Cluster>,
-    fairness: FairnessModel,
-    enable_nethint: bool,
     brain: Option<Rc<RefCell<Brain>>>,
-    sample_interval_ns: Duration,
-    loopback_speed: Bandwidth,
+    setting: SimulatorSetting,
 }
 
 #[derive(Debug, Error)]
@@ -63,12 +99,14 @@ impl SimulatorBuilder {
     pub fn new() -> Self {
         SimulatorBuilder {
             cluster: None,
-            fairness: FairnessModel::default(),
-            enable_nethint: false,
             brain: None,
-            sample_interval_ns: SAMPLE_INTERVAL_NS,
-            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
+            setting: Default::default(),
         }
+    }
+
+    pub fn with_setting(&mut self, setting: SimulatorSetting) -> &mut Self {
+        self.setting = setting;
+        self
     }
 
     pub fn cluster(&mut self, cluster: Cluster) -> &mut Self {
@@ -77,7 +115,7 @@ impl SimulatorBuilder {
     }
 
     pub fn enable_nethint(&mut self, enable: bool) -> &mut Self {
-        self.enable_nethint = enable;
+        self.setting.enable_nethint = enable;
         self
     }
 
@@ -87,50 +125,50 @@ impl SimulatorBuilder {
     }
 
     pub fn fairness(&mut self, fairness: FairnessModel) -> &mut Self {
-        self.fairness = fairness;
+        self.setting.fairness = fairness;
         self
     }
 
     pub fn sample_interval_ns(&mut self, sample_interval_ns: Duration) -> &mut Self {
-        self.sample_interval_ns = sample_interval_ns;
+        self.setting.sample_interval_ns = sample_interval_ns;
         self
     }
 
     pub fn loopback_speed(&mut self, loopback_speed: Bandwidth) -> &mut Self {
-        self.loopback_speed = loopback_speed;
+        self.setting.loopback_speed = loopback_speed;
         self
     }
 
     pub fn build(&mut self) -> Result<Simulator, Error> {
-        if self.enable_nethint && self.brain.is_none() {
+        if self.setting.enable_nethint && self.brain.is_none() {
             return Err(Error::EmptyBrain);
         }
         if self.cluster.is_none() && self.brain.is_none() {
             return Err(Error::EmptyClusterOrBrain);
         }
 
-        let simulator = if self.enable_nethint {
+        let simulator = if self.setting.enable_nethint {
             let brain = self.brain.as_ref().unwrap();
             let estimator = Box::new(SimpleEstimator::new(
                 Rc::clone(brain),
-                self.sample_interval_ns,
+                self.setting.sample_interval_ns,
             ));
             let timers = std::iter::once(Box::new(RepeatTimer::new(
-                self.sample_interval_ns,
-                self.sample_interval_ns,
+                self.setting.sample_interval_ns,
+                self.setting.sample_interval_ns,
             )) as Box<dyn Timer>)
             .collect();
             let mut state = NetState::default();
             state.brain = Some(Rc::clone(brain));
-            state.fairness = self.fairness;
+            state.fairness = self.setting.fairness;
             Simulator {
                 cluster: (**brain.borrow().cluster()).clone(),
                 ts: 0,
                 state,
                 timers,
-                fairness: self.fairness,
-                loopback_speed: self.loopback_speed,
-                enable_nethint: self.enable_nethint,
+                fairness: self.setting.fairness,
+                loopback_speed: self.setting.loopback_speed,
+                enable_nethint: self.setting.enable_nethint,
                 estimator: Some(estimator),
             }
         } else {
@@ -139,9 +177,9 @@ impl SimulatorBuilder {
                 ts: 0,
                 state: NetState::default(),
                 timers: BinaryHeap::new(),
-                fairness: self.fairness,
-                loopback_speed: self.loopback_speed,
-                enable_nethint: self.enable_nethint,
+                fairness: self.setting.fairness,
+                loopback_speed: self.setting.loopback_speed,
+                enable_nethint: self.setting.enable_nethint,
                 estimator: None,
             }
         };

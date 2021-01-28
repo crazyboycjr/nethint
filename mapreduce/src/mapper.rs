@@ -1,14 +1,17 @@
 use crate::{trace::Record, JobSpec, PlaceMapper, Placement, ShufflePattern};
 use nethint::{bandwidth::Bandwidth, cluster::Topology};
 use rand::{self, rngs::StdRng, seq::SliceRandom, SeedableRng};
+use serde::{Serialize, Deserialize};
 use std::collections::HashSet;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "args")]
 pub enum MapperPlacementPolicy {
     Random(u64),
-    FromTrace(Record),
     Greedy,
     RandomSkew(u64, f64), // seed, s
+    #[serde(skip)]
+    FromTrace(Record),
 }
 
 #[derive(Debug, Default)]

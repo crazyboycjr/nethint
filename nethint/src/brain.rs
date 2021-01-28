@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use fnv::FnvHashMap as HashMap;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
@@ -11,13 +12,28 @@ use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, Vi
 
 pub type TenantId = usize;
 
-/// TODO(cjr): make this configurable
-const MAX_SLOTS: usize = 4;
+pub const MAX_SLOTS: usize = 4;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrainSetting {
+    /// Random seed for multiple uses
+    pub seed: u64,
+    /// Asymmetric bandwidth
+    pub asymmetric: bool,
+    /// Mark some nodes as broken to be more realistic
+    pub broken: f64,
+    /// The slots of each physical machine
+    pub max_slots: usize,
+    /// The parameters of the cluster's physical topology
+    pub topology: TopoArgs,
+}
 
 /// Brain is the cloud controller. It knows the underlay physical
 /// topology and decides how to provision VMs for tenants.
 #[derive(Debug)]
 pub struct Brain {
+    /// Brain settings
+    setting: BrainSetting,
     /// physical clsuter
     cluster: Arc<Cluster>,
     /// used set of nodes in phycisal cluster, the value
@@ -34,7 +50,8 @@ pub struct Brain {
 }
 
 /// Similar to AWS Placement Groups.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "args")]
 pub enum PlacementStrategy {
     /// Prefer to choose hosts within the same rack.
     Compact,
@@ -53,8 +70,8 @@ pub enum Error {
 }
 
 impl Brain {
-    pub fn build_cloud(topo: TopoArgs) -> Rc<RefCell<Self>> {
-        let cluster = match topo {
+    pub fn build_cloud(setting: BrainSetting) -> Rc<RefCell<Self>> {
+        let cluster = match setting.topology {
             TopoArgs::FatTree {
                 nports,
                 bandwidth,
@@ -78,7 +95,9 @@ impl Brain {
                 (host_ix, 0)
             })
             .collect();
-        Rc::new(RefCell::new(Brain {
+
+        let mut brain = Brain {
+            setting,
             cluster: Arc::new(cluster),
             used,
             vclusters: Default::default(),
@@ -86,14 +105,22 @@ impl Brain {
             plink_to_vlinks: Default::default(),
             vlink_to_plink: Default::default(),
             gc_queue: Default::default(),
-        }))
+        };
+
+        if brain.setting.asymmetric {
+            brain.make_asymmetric(brain.setting.seed)
+        }
+
+        brain.mark_broken(brain.setting.seed, brain.setting.broken);
+
+        Rc::new(RefCell::new(brain))
     }
 
     pub fn cluster(&self) -> &Arc<Cluster> {
         &self.cluster
     }
 
-    pub fn make_asymmetric(&mut self, seed: u64) {
+    fn make_asymmetric(&mut self, seed: u64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
 
@@ -110,17 +137,18 @@ impl Brain {
         }
     }
 
-    pub fn mark_broken(&mut self, seed: u64, ratio: f64) {
+    fn mark_broken(&mut self, seed: u64, ratio: f64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
 
+        let max_slots = self.setting.max_slots;
         for i in 0..cluster.num_hosts() {
             let node_ix = cluster.get_node_index(&format!("host_{}", i));
             if rng.gen_range(0., 1.) < ratio {
-                self.used.entry(node_ix).and_modify(|e| *e = MAX_SLOTS);
+                self.used.entry(node_ix).and_modify(|e| *e = max_slots);
             }
         }
     }
@@ -136,9 +164,12 @@ impl Brain {
         }
 
         if self.used.values().cloned().sum::<usize>() + nhosts
-            > self.cluster.num_hosts() * MAX_SLOTS
+            > self.cluster.num_hosts() * self.setting.max_slots
         {
-            return Err(Error::NoHost(self.cluster.num_hosts() * MAX_SLOTS, nhosts));
+            return Err(Error::NoHost(
+                self.cluster.num_hosts() * self.setting.max_slots,
+                nhosts,
+            ));
         }
 
         let (inner, virt_to_phys) = match strategy {
@@ -157,7 +188,6 @@ impl Brain {
             f.seek(std::io::SeekFrom::End(0)).unwrap();
             writeln!(f, "{:?}", virt_to_phys).unwrap();
         }
-
 
         let vcluster = VirtCluster {
             inner,
@@ -246,7 +276,6 @@ impl Brain {
     }
 
     fn place_specified(&mut self, hosts_spec: &[NodeIx]) -> (Cluster, HashMap<String, String>) {
-
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
 
@@ -303,7 +332,7 @@ impl Brain {
             let avail_hosts = (0..self.cluster.num_hosts())
                 .into_iter()
                 .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
-                .filter(|node_ix| self.used[node_ix] < MAX_SLOTS);
+                .filter(|node_ix| self.used[node_ix] < self.setting.max_slots);
             let mut choosed: Vec<NodeIx> = avail_hosts.choose_multiple(&mut rng, nhosts);
             choosed.shuffle(&mut rng);
             choosed
@@ -328,7 +357,7 @@ impl Brain {
                         .get_downlinks(tor_ix)
                         .map(|&link_ix| {
                             let host_ix = self.cluster.get_target(link_ix);
-                            MAX_SLOTS - self.used[&host_ix]
+                            self.setting.max_slots - self.used[&host_ix]
                         })
                         .sum();
                     (cap, tor_ix)
@@ -351,7 +380,7 @@ impl Brain {
                     if to_pick == 0 {
                         break;
                     }
-                    if self.used[&host_ix] < MAX_SLOTS {
+                    if self.used[&host_ix] < self.setting.max_slots {
                         let n = &self.cluster[host_ix];
                         assert_eq!(n.depth, 3); // this doesn't have to be true
 

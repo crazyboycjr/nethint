@@ -12,7 +12,7 @@ use structopt::StructOpt;
 use nethint::{
     app::{AppGroup, Application},
     bandwidth::BandwidthTrait,
-    brain::Brain,
+    brain::{Brain, BrainSetting},
     cluster::{Cluster, Topology},
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
@@ -37,15 +37,13 @@ fn main() {
     let opt = Opt::from_args();
     info!("Opts: {:#?}", opt);
 
-    let brain = Brain::build_cloud(opt.topo.clone());
-
-    if opt.asym {
-        brain.borrow_mut().make_asymmetric(1);
-    }
-
-    if opt.broken {
-        brain.borrow_mut().mark_broken(1, 0.1);
-    }
+    let brain = Brain::build_cloud(BrainSetting {
+        asymmetric: opt.asym,
+        broken: if opt.broken { 0.1 } else { 0.0 },
+        seed: 1,
+        max_slots: nethint::brain::MAX_SLOTS,
+        topology: opt.topo.clone(),
+    });
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 

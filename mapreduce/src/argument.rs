@@ -35,7 +35,7 @@ pub struct Opt {
     #[structopt(short = "n", long = "ncases", default_value = "10")]
     pub ncases: usize,
 
-    /// Traffic scale, multiple the traffic size by a number to allow job overlaps
+    /// Traffic scale, multiply the traffic size by a number to allow job overlaps
     #[structopt(short = "t", long = "traffic-scale", default_value = "1.0")]
     pub traffic_scale: f64,
 
@@ -75,12 +75,6 @@ pub struct Opt {
     #[structopt(short = "b", long = "broken")]
     pub broken: bool,
 }
-
-// impl Opt {
-//     fn to_title(&self, prefix: &str) -> String {
-//         format!("MapReduce CDF ")
-//     }
-// }
 
 impl Opt {
     pub fn to_filename(&self, prefix: &str) -> String {
