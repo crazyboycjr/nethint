@@ -1,4 +1,4 @@
-# Specifiation of a MapReduce application experiment 
+# Specifiation of a MapReduce application experiment
 
 # Run the experiments from trace file
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
