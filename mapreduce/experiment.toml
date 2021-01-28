@@ -37,7 +37,7 @@ collocate = true
 reducer_policy = "Random"
 probe = { enable = false }
 # NetHint level, possible values are 0, 1, 2
-nethint_level = 0
+nethint_level = 1
 
 [[batch]]
 reducer_policy = "HierarchicalGreedy"
@@ -60,6 +60,7 @@ sample_interval_ns = 100000000
 loopback_speed = 400
 fairness = "TenantFlowMinMax"
 # fairness = "PerFlowMinMax"
+# nethint_delay_ms = 100
 
 [brain]
 # Random seed for multiple uses

@@ -173,7 +173,7 @@ fn run_experiments_multitenant(
             .as_ref()
             .map(|job_trace| {
                 let mut record = job_trace.records[id].clone();
-                // mutiple traffic by a number
+                // mutiply traffic by a number
                 record.reducers = record
                     .reducers
                     .into_iter()
