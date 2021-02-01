@@ -1,6 +1,3 @@
-# NetHint
-
-```toml
 # Specifiation of a MapReduce application experiment
 
 # Run the experiments from trace file
@@ -97,8 +94,3 @@ rack_bw = 200       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # NETHINT_PROVISION_LOG_FILE = "/tmp/f"
-```
-
-```
-RUST_LOG=debug,nethint::cluster=info cargo run --bin mapreduce_experiment --release -- -c mapreduce/experiment.toml
-```

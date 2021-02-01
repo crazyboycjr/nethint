@@ -37,6 +37,36 @@ impl RepeatTimer {
     }
 }
 
+use rand_distr::{Distribution, Poisson};
+use rand::SeedableRng;
+
+/// A timer triggered event accroding to a possion distribution since registration.
+#[derive(Debug)]
+pub(crate) struct PoissonTimer {
+    kind: TimerKind,
+    next_ready: Timestamp,
+    lambda: f64,
+    poi: Poisson<f64>,
+    rng: rand::rngs::StdRng,
+}
+
+impl PoissonTimer {
+    pub(crate) fn new(next_ready: Timestamp, lambda: f64) -> Self {
+        PoissonTimer {
+            kind: TimerKind::Repeat,
+            next_ready,
+            lambda,
+            poi: Poisson::new(lambda).unwrap(),
+            rng: rand::rngs::StdRng::seed_from_u64(0),
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        let v = self.poi.sample(&mut self.rng);
+        self.next_ready += v as Duration;
+    }
+}
+
 /// A timer triggered after dura only once since registration.
 #[derive(Debug)]
 pub struct OnceTimer {
@@ -116,4 +146,4 @@ impl Ord for Box<dyn Timer> {
     }
 }
 
-impl_timer_for!(RepeatTimer, OnceTimer);
+impl_timer_for!(RepeatTimer, PoissonTimer, OnceTimer);

@@ -6,6 +6,7 @@ use std::rc::Rc;
 use fnv::FnvBuildHasher;
 use indexmap::IndexMap;
 use log::{debug, trace};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::{smallvec, SmallVec};
 use thiserror::Error;
 
@@ -14,7 +15,7 @@ use crate::cluster::{Cluster, Link, Route, RouteHint, Topology};
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     hint::{Estimator, NetHintVersion, SimpleEstimator},
-    timer::{OnceTimer, RepeatTimer, Timer, TimerKind},
+    timer::{OnceTimer, PoissonTimer, RepeatTimer, Timer, TimerKind},
 };
 use crate::{
     bandwidth::{Bandwidth, BandwidthTrait},
@@ -35,14 +36,78 @@ pub trait Executor<'a> {
     fn run_with_appliation<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundFlowHard {
+    enable: bool,
+    // the lambda of poisson distribution
+    #[serde(default)]
+    frequency_ns: Duration,
+    // how bad is the influence, should be an other distribution
+    // currently we use uniform distribution, the minimum unit is link_bw / max_slots
+    // weight: Bandwidth,
+    // each link will have a probability to be influenced
+    #[serde(default)]
+    probability: f64,
+}
+
+impl Default for BackgroundFlowHard {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            frequency_ns: 0,
+            probability: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SimulatorSetting {
+    #[serde(rename = "nethint")]
+    pub enable_nethint: bool,
+    pub sample_interval_ns: Duration,
+    #[serde(serialize_with = "serialize_bandwidth")]
+    #[serde(deserialize_with = "deserialize_bandwidth")]
+    pub loopback_speed: Bandwidth,
+    pub fairness: FairnessModel,
+    /// emulate background flow by substrate a bandwidth to each link
+    /// note that the remaining bandwidth must not smaller than link_bw / current_tenants
+    pub background_flow_hard: BackgroundFlowHard,
+}
+
+impl Default for SimulatorSetting {
+    fn default() -> Self {
+        Self {
+            fairness: FairnessModel::default(),
+            enable_nethint: false,
+            sample_interval_ns: SAMPLE_INTERVAL_NS,
+            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
+            background_flow_hard: Default::default(),
+        }
+    }
+}
+
+fn serialize_bandwidth<S>(bw: &Bandwidth, se: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = bw.to_string();
+    s.serialize(se)
+}
+
+fn deserialize_bandwidth<'de, D>(de: D) -> Result<Bandwidth, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let f: f64 = Deserialize::deserialize(de)?;
+    Ok(f.gbps())
+}
+
 #[derive(Debug, Clone)]
 pub struct SimulatorBuilder {
     cluster: Option<Cluster>,
-    fairness: FairnessModel,
-    enable_nethint: bool,
     brain: Option<Rc<RefCell<Brain>>>,
-    sample_interval_ns: Duration,
-    loopback_speed: Bandwidth,
+    setting: SimulatorSetting,
 }
 
 #[derive(Debug, Error)]
@@ -63,12 +128,14 @@ impl SimulatorBuilder {
     pub fn new() -> Self {
         SimulatorBuilder {
             cluster: None,
-            fairness: FairnessModel::default(),
-            enable_nethint: false,
             brain: None,
-            sample_interval_ns: SAMPLE_INTERVAL_NS,
-            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
+            setting: Default::default(),
         }
+    }
+
+    pub fn with_setting(&mut self, setting: SimulatorSetting) -> &mut Self {
+        self.setting = setting;
+        self
     }
 
     pub fn cluster(&mut self, cluster: Cluster) -> &mut Self {
@@ -77,7 +144,7 @@ impl SimulatorBuilder {
     }
 
     pub fn enable_nethint(&mut self, enable: bool) -> &mut Self {
-        self.enable_nethint = enable;
+        self.setting.enable_nethint = enable;
         self
     }
 
@@ -87,61 +154,85 @@ impl SimulatorBuilder {
     }
 
     pub fn fairness(&mut self, fairness: FairnessModel) -> &mut Self {
-        self.fairness = fairness;
+        self.setting.fairness = fairness;
         self
     }
 
     pub fn sample_interval_ns(&mut self, sample_interval_ns: Duration) -> &mut Self {
-        self.sample_interval_ns = sample_interval_ns;
+        self.setting.sample_interval_ns = sample_interval_ns;
         self
     }
 
     pub fn loopback_speed(&mut self, loopback_speed: Bandwidth) -> &mut Self {
-        self.loopback_speed = loopback_speed;
+        self.setting.loopback_speed = loopback_speed;
         self
     }
 
     pub fn build(&mut self) -> Result<Simulator, Error> {
-        if self.enable_nethint && self.brain.is_none() {
+        if self.setting.enable_nethint && self.brain.is_none() {
             return Err(Error::EmptyBrain);
         }
         if self.cluster.is_none() && self.brain.is_none() {
             return Err(Error::EmptyClusterOrBrain);
         }
 
-        let simulator = if self.enable_nethint {
+        let simulator = if self.setting.enable_nethint {
             let brain = self.brain.as_ref().unwrap();
             let estimator = Box::new(SimpleEstimator::new(
                 Rc::clone(brain),
-                self.sample_interval_ns,
+                self.setting.sample_interval_ns,
             ));
-            let timers = std::iter::once(Box::new(RepeatTimer::new(
-                self.sample_interval_ns,
-                self.sample_interval_ns,
-            )) as Box<dyn Timer>)
-            .collect();
+            let mut timers: BinaryHeap<Box<dyn Timer>> =
+                std::iter::once(Box::new(RepeatTimer::new(
+                    self.setting.sample_interval_ns,
+                    self.setting.sample_interval_ns,
+                )) as Box<dyn Timer>)
+                .collect();
+            if self.setting.background_flow_hard.enable {
+                timers.push(Box::new(PoissonTimer::new(
+                    0,
+                    self.setting.background_flow_hard.frequency_ns as f64,
+                )));
+            }
             let mut state = NetState::default();
             state.brain = Some(Rc::clone(brain));
-            state.fairness = self.fairness;
+            state.fairness = self.setting.fairness;
             Simulator {
                 cluster: (**brain.borrow().cluster()).clone(),
                 ts: 0,
                 state,
                 timers,
-                fairness: self.fairness,
-                loopback_speed: self.loopback_speed,
-                enable_nethint: self.enable_nethint,
+                fairness: self.setting.fairness,
+                loopback_speed: self.setting.loopback_speed,
+                background_flow_hard: if self.setting.background_flow_hard.enable {
+                    Some(self.setting.background_flow_hard)
+                } else {
+                    None
+                },
+                enable_nethint: self.setting.enable_nethint,
                 estimator: Some(estimator),
             }
         } else {
+            let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
+            if self.setting.background_flow_hard.enable {
+                timers.push(Box::new(PoissonTimer::new(
+                    0,
+                    self.setting.background_flow_hard.frequency_ns as f64,
+                )));
+            }
             Simulator {
                 cluster: self.cluster.clone().unwrap(),
                 ts: 0,
                 state: NetState::default(),
-                timers: BinaryHeap::new(),
-                fairness: self.fairness,
-                loopback_speed: self.loopback_speed,
-                enable_nethint: self.enable_nethint,
+                timers,
+                fairness: self.setting.fairness,
+                loopback_speed: self.setting.loopback_speed,
+                background_flow_hard: if self.setting.background_flow_hard.enable {
+                    Some(self.setting.background_flow_hard)
+                } else {
+                    None
+                },
+                enable_nethint: self.setting.enable_nethint,
                 estimator: None,
             }
         };
@@ -159,6 +250,7 @@ pub struct Simulator {
     // fairness model
     fairness: FairnessModel,
     loopback_speed: Bandwidth,
+    background_flow_hard: Option<BackgroundFlowHard>,
     // nethint
     enable_nethint: bool,
     estimator: Option<Box<dyn Estimator>>,
@@ -173,6 +265,7 @@ impl Simulator {
             timers: BinaryHeap::new(),
             fairness: FairnessModel::default(),
             loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
+            background_flow_hard: None,
             enable_nethint: false,
             estimator: None,
         }
@@ -194,6 +287,7 @@ impl Simulator {
             timers,
             fairness: FairnessModel::default(),
             loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
+            background_flow_hard: None,
             enable_nethint: true,
             estimator: Some(estimator),
         }
@@ -307,12 +401,25 @@ impl Simulator {
                     let timer = self.timers.pop().unwrap();
                     match timer.as_box_any().downcast::<RepeatTimer>() {
                         Ok(mut repeat_timer) => {
+                            // estimator samples
                             self.estimator.as_mut().unwrap().sample(self.ts);
 
                             repeat_timer.reset();
                             self.timers.push(repeat_timer);
                         }
-                        Err(_) => panic!("impossible"),
+                        Err(any_timer) => {
+                            match any_timer.downcast::<PoissonTimer>() {
+                                Ok(mut poisson_timer) => {
+                                    assert!(self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable);
+                                    // ask brain to update background flow
+                                    let brain = self.state.brain.as_ref().unwrap().clone();
+                                    brain.borrow_mut().update_background_flow_hard(self.background_flow_hard.unwrap().probability);
+                                    poisson_timer.reset();
+                                    self.timers.push(poisson_timer);
+                                }
+                                Err(_) => panic!("fail to downcast to RepeatTimer or PoissonTimer"),
+                            }
+                        }
                     }
                 }
             }
@@ -432,7 +539,11 @@ impl Simulator {
                         && self
                             .timers
                             .peek()
-                            .and_then(|timer| timer.as_any().downcast_ref::<RepeatTimer>())
+                            .and_then(|timer| if timer.kind() == TimerKind::Repeat {
+                                Some(())
+                            } else {
+                                None
+                            })
                             .is_some()),
                 "only Nethint timers can cause ts_inc == 0"
             );
@@ -819,7 +930,7 @@ impl FlowState {
 
     #[inline]
     fn time_to_complete(&self) -> Duration {
-        assert!(self.speed > 0.0);
+        assert!(self.speed > 0.0, format!("speed: {}", self.speed));
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
         (time_sec * 1e9).ceil() as Duration
     }

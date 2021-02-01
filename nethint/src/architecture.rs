@@ -1,8 +1,10 @@
 use crate::bandwidth::Bandwidth;
 use crate::cluster::{Cluster, Node, NodeType};
+use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, StructOpt, Serialize, Deserialize)]
+#[serde(tag = "type", content = "args")]
 pub enum TopoArgs {
     /// FatTree, parameters include the number of ports of each switch, bandwidth, and oversubscription ratio
     FatTree {

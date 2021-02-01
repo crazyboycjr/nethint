@@ -1,23 +1,21 @@
 #![feature(box_patterns)]
+use rand_distr::{Distribution, Poisson};
 use rand::Rng;
 use std::cell::RefCell;
 use std::rc::Rc;
-use rand::distributions::{Poisson, Distribution};
 
 use log::info;
 use structopt::StructOpt;
 
 use nethint::{
     app::{AppGroup, Application},
-    brain::Brain,
+    brain::{Brain, BrainSetting},
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
     FairnessModel,
 };
 
-use mapreduce::{
-    plink::PlinkApp,
-};
+use mapreduce::plink::PlinkApp;
 
 extern crate allreduce;
 use allreduce::{app::AllReduceApp, argument::Opt, AllReducePolicy, JobSpec};
@@ -28,11 +26,13 @@ fn main() {
     let mut opt = Opt::from_args();
     // info!("Opts: {:#?}", opt);
 
-    let brain = Brain::build_cloud(opt.topo.clone());
-
-    if opt.asym {
-        brain.borrow_mut().make_asymmetric(1);
-    }
+    let brain = Brain::build_cloud(BrainSetting {
+        asymmetric: opt.asym,
+        broken: 0.0,
+        seed: 1,
+        max_slots: 1, // nethint::brain::MAX_SLOTS,
+        topology: opt.topo.clone(),
+    });
 
     // info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
@@ -49,7 +49,7 @@ fn main() {
         let job_spec = JobSpec::new(get_random_job_size(), opt.buffer_size, opt.num_iterations);
         let next = get_random_arrival_time(opt.poisson_lambda);
         t += next;
-        info! ("{:?}", job_spec);
+        info!("{:?}", job_spec);
         jobs.push((t, job_spec));
     }
 
@@ -86,11 +86,17 @@ fn get_random_job_size() -> usize {
 }
 
 fn get_random_arrival_time(lambda: f64) -> u64 {
-    let poi = Poisson::new(lambda);
+    let poi = Poisson::new(lambda).unwrap();
     poi.sample(&mut rand::thread_rng())
 }
 
-fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: bool, jobs : &[(u64, JobSpec)]) {
+fn run_experiments(
+    opt: &Opt,
+    brain: Rc<RefCell<Brain>>,
+    seed: u64,
+    use_plink: bool,
+    jobs: &[(u64, JobSpec)],
+) {
     brain.borrow_mut().garbage_collect(opt.ncases);
 
     let mut app_group = AppGroup::new();
@@ -106,13 +112,19 @@ fn run_experiments(opt: &Opt, brain: Rc<RefCell<Brain>>, seed: u64, use_plink: b
         let tenant_id = i;
         let (start_ts, job_spec) = jobs.get(i).unwrap();
 
-        let allreduce_app =
-            Box::new(AllReduceApp::new(job_spec, None, seed, &all_reduce_policy, opt.nethint_level, opt.tune));
+        let allreduce_app = Box::new(AllReduceApp::new(
+            job_spec,
+            None,
+            seed,
+            &all_reduce_policy,
+            opt.nethint_level,
+            opt.tune,
+        ));
 
         let nhosts_to_acquire = job_spec.num_workers;
 
         let app: Box<dyn Application<Output = _>> = if use_plink {
-            Box::new(PlinkApp::new(nhosts_to_acquire, allreduce_app))
+            Box::new(PlinkApp::new(nhosts_to_acquire, 100, allreduce_app))
         } else {
             allreduce_app
         };
