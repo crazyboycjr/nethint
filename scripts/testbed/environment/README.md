@@ -52,6 +52,10 @@ server (aka what is not persistent).
 
 The order is important.
 
+To clear ovs setings.
+1. `ovs-vsctl del-br ovs-sriov`
+1. `ovs-dpctl show`
+
 To disable eswtich and recovery the configuation.
 1. `echo legacy | sudo tee /sys/class/net/rdma0/compat/devlink/mode`
 2. `enable_sriov.sh`

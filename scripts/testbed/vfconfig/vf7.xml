@@ -1,0 +1,8 @@
+<?xml version = "1.0" encoding = "UTF-8" ?>
+<!-- virsh attach-device -\-domain cpu0 -\-file vf.xml.example # this is notorious -->
+<hostdev mode='subsystem' type='pci' managed='yes'>
+  <source>
+    <address domain='0x0000' bus='0x18' slot='0x01' function='0x0'/>
+  </source>
+  <address type='pci' domain='0x0000' bus='0x06' slot='0x00' function='0x0'/>
+</hostdev>
