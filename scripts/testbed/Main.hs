@@ -3,7 +3,7 @@
 -- import Control.Monad.Trans.Except
 import Control.Exception
 import Control.Monad
-import Control.Monad.Extra (whenM, unlessM)
+import Control.Monad.Extra (unlessM, whenM)
 import Data.Char (isSpace)
 import Data.Functor ((<&>))
 import Data.List
@@ -101,6 +101,9 @@ sequenceRun_ f (x : xs) = do
             False -> putStrLn errmsg
     sequenceRun_ f xs
 
+listVirtualMachines :: IO ()
+listVirtualMachines = callCommandDebug "virsh list --all"
+
 virshDomCommand :: String -> Dom -> IO ()
 virshDomCommand subcmd = callCommandDebug . printf "virsh %s %s" subcmd
 
@@ -181,3 +184,9 @@ sshAndExecute dom cmd = do
 
 sshAndExecuteAll :: [Dom] -> String -> IO ()
 sshAndExecuteAll doms cmd = sequenceRun_ (`sshAndExecute` cmd) doms
+
+ssh :: Dom -> IO ()
+ssh dom = do
+    ipAddr <- getDomIfAddr dom
+    let sshCmd = printf "ssh -oStrictHostKeyChecking=no tenant@%s" ipAddr
+    callCommandDebug sshCmd
