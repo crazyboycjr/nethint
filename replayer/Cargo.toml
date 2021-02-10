@@ -1,0 +1,30 @@
+[package]
+name = "replayer"
+version = "0.1.0"
+authors = ["Jingrong Chen <crazyboycjr@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.14"
+anyhow = "1.0.38"
+thiserror = "1.0.23"
+bincode = "1.3.1"
+serde = { version = "1.0.123", features = ["derive"] }
+logging = { path = "../logging" }
+nethint = { path = "../nethint" }
+
+[dependencies.mio]
+version = "0.7.7"
+features = ["tcp", "os-poll"]
+
+
+
+[[bin]]
+name = "controller"
+path = "src/controller/main.rs"
+
+[[bin]]
+name = "worker"
+path = "src/worker/main.rs"

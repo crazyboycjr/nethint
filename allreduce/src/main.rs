@@ -73,7 +73,7 @@ fn main() {
 fn get_random_job_size() -> usize {
     let job_sizes = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]];
     let mut rng = rand::thread_rng();
-    let mut n = rng.gen_range(0, 240);
+    let mut n = rng.gen_range(0..240);
     let mut i = 0;
     while i < 5 {
         if n < job_sizes[i][0] {
@@ -87,7 +87,7 @@ fn get_random_job_size() -> usize {
 
 fn get_random_arrival_time(lambda: f64) -> u64 {
     let poi = Poisson::new(lambda).unwrap();
-    poi.sample(&mut rand::thread_rng())
+    poi.sample(&mut rand::thread_rng()) as u64
 }
 
 fn run_experiments(
