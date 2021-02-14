@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
 
 use replayer::mapreduce::MapReduceApp;
 use replayer::message;
@@ -9,35 +8,33 @@ use replayer::Node;
 fn main() -> anyhow::Result<()> {
     logging::init_log();
 
-    let num_workers: usize = std::env::var("RP_NUM_WORKER")?.parse()?;
+    let num_workers: usize = std::env::var("RP_NUM_WORKER")
+        .expect("RP_NUM_WORKER")
+        .parse()
+        .expect("RP_NUM_WORKER");
     log::debug!("num_workers: {}", num_workers);
 
-    let controller_uri = std::env::var("RP_CONTROLLER_URI")?;
+    let controller_uri = std::env::var("RP_CONTROLLER_URI").expect("RP_CONTROLLER_URI");
 
     log::debug!("binding to controller_uri: {}", controller_uri);
-    let listener = std::net::TcpListener::bind(controller_uri)?;
+    let listener = std::net::TcpListener::bind(controller_uri.clone()).expect(&controller_uri);
 
     let mut workers: HashMap<Node, std::net::TcpStream> = Default::default();
 
     // process add node event
     while workers.len() < num_workers {
         let (mut client, addr) = listener.accept()?;
-        log::debug!("accept an incoming connection from addr: {}", addr);
+        log::debug!(
+            "controller accepts an incoming connection from addr: {}",
+            addr
+        );
 
-        let payload_len = utils::read_payload_len(&mut client)? as usize;
-
-        let mut buf = Vec::with_capacity(payload_len);
-        unsafe {
-            buf.set_len(payload_len);
-        }
-        client.read_exact(&mut buf)?;
-
-        let cmd: message::Command = bincode::deserialize(&buf)?;
+        let cmd = utils::recv_cmd_sync(&mut client)?;
         log::trace!("receive a command: {:?}", cmd);
 
         use message::Command::*;
         match cmd {
-            AddNode(node) => {
+            AddNode(node, _hostname) => {
                 if workers.contains_key(&node) {
                     log::error!("repeated AddNode: {:?}", node);
                 }
@@ -56,11 +53,8 @@ fn main() -> anyhow::Result<()> {
     let bcast_cmd = message::Command::BroadcastNodes(nodes);
     log::debug!("broadcasting nodes: {:?}", bcast_cmd);
 
-    let nodes_buf = bincode::serialize(&bcast_cmd)?;
-    let nodes_len_buf = (nodes_buf.len() as u64).to_be_bytes();
     for worker in workers.values_mut() {
-        worker.write_all(&nodes_len_buf)?;
-        worker.write_all(&nodes_buf)?;
+        utils::send_cmd_sync(worker, &bcast_cmd)?;
     }
 
     // set workers to nonblocking
@@ -71,7 +65,7 @@ fn main() -> anyhow::Result<()> {
 
     let workers = workers
         .into_iter()
-        .map(|(k, v)| (k, replayer::controller::Endpoint::new(v)))
+        .map(|(k, v)| (k, replayer::endpoint::Endpoint::new(v)))
         .collect();
 
     // emit application flows
@@ -82,7 +76,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn io_loop(mut app: MapReduceApp) -> anyhow::Result<()> {
-    let mut poll = mio::Poll::new()?;
+    let poll = mio::Poll::new()?;
     let mut events = mio::Events::with_capacity(1024);
 
     let mut token_table: Vec<Node> = Default::default();
@@ -90,25 +84,27 @@ fn io_loop(mut app: MapReduceApp) -> anyhow::Result<()> {
         let new_token = mio::Token(token_table.len());
         token_table.push(node.clone());
 
-        poll.registry().register(
+        poll.register(
             ep.stream_mut(),
             new_token,
-            mio::Interest::READABLE | mio::Interest::WRITABLE,
+            mio::Ready::readable() | mio::Ready::writable(),
+            mio::PollOpt::level(),
         )?;
     }
 
     let mut handler = Handler::new(app.workers().len());
 
     'outer: loop {
+        // only call epoll_wait after read or write return EAGAIN
         poll.poll(&mut events, None)?;
         for event in events.iter() {
             assert!(event.token().0 < token_table.len());
             let node = &token_table[event.token().0];
             let ep = app.workers_mut().get_mut(node).unwrap();
-            if event.is_writable() {
+            if event.readiness().is_writable() {
                 ep.on_send_ready()?;
             }
-            if event.is_readable() {
+            if event.readiness().is_readable() {
                 match ep.on_recv_ready() {
                     Ok(cmd) => {
                         if handler.handle_cmd(cmd, &mut app)? {
@@ -120,8 +116,9 @@ fn io_loop(mut app: MapReduceApp) -> anyhow::Result<()> {
                             if io_err.kind() != std::io::ErrorKind::WouldBlock {
                                 return Err(e);
                             }
+                        } else {
+                            return Err(e);
                         }
-                        return Err(e);
                     }
                 }
             }

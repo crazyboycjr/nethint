@@ -3,8 +3,10 @@ use crate::{Node, Flow};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Command {
-    /// send by worker, processed by controller
-    AddNode(Node),
+    /// (node, hostname), send by worker, processed by controller
+    AddNode(Node, String),
+    /// send by worker, processed by worker
+    AddNodePeer(Node),
     /// send by controller, processed by worker
     BroadcastNodes(Vec<Node>),
     /// emit a flow, send by controller, processed by worker
@@ -16,5 +18,5 @@ pub enum Command {
     /// send by worker, processed by controller
     LeaveNode(Node),
     /// send by worker, processed by worker
-    Data(Vec<u8>)
+    Data(Flow, Vec<u8>)
 }

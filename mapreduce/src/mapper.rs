@@ -1,7 +1,7 @@
 use crate::{trace::Record, JobSpec, PlaceMapper, Placement, ShufflePattern};
 use nethint::{bandwidth::Bandwidth, cluster::Topology};
 use rand::{self, rngs::StdRng, seq::SliceRandom, SeedableRng};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,11 +61,9 @@ impl PlaceMapper for TraceMapperScheduler {
         self.record.mappers.iter().for_each(|&rack_id| {
             assert!(
                 rack_id < cluster.num_switches(),
-                format!(
-                    "rack_id: {}, number of switches: {}",
-                    rack_id,
-                    cluster.num_switches()
-                )
+                "rack_id: {}, number of switches: {}",
+                rack_id,
+                cluster.num_switches()
             );
             let mut selected = 0;
             let tor_ix = cluster.get_node_index(&format!("tor_{}", rack_id));
@@ -136,7 +134,6 @@ impl RandomSkewMapperScheduler {
 
 impl PlaceMapper for RandomSkewMapperScheduler {
     fn place(&mut self, vcluster: &dyn Topology, job_spec: &JobSpec) -> Placement {
-
         let mut rng = StdRng::seed_from_u64(self.seed);
         let num_racks = vcluster.num_switches() - 1;
 
@@ -150,7 +147,7 @@ impl PlaceMapper for RandomSkewMapperScheduler {
             let mut found = None;
             while found.is_none() {
                 let rack_id = zipf.sample(&mut rng) - 1;
-                assert!(rack_id < num_racks, format!("{} {}", rack_id, num_racks));
+                assert!(rack_id < num_racks, "{} vs {}", rack_id, num_racks);
 
                 let tor_name = format!("tor_{}", rack_id);
                 let tor_ix = vcluster.get_node_index(&tor_name);
@@ -177,4 +174,3 @@ impl PlaceMapper for RandomSkewMapperScheduler {
         Placement(hosts)
     }
 }
-

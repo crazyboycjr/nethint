@@ -16,8 +16,8 @@ logging = { path = "../logging" }
 nethint = { path = "../nethint" }
 
 [dependencies.mio]
-version = "0.7.7"
-features = ["tcp", "os-poll"]
+version = "0.6.23"
+# features = ["tcp", "os-poll"]
 
 
 

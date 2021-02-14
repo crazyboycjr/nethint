@@ -175,7 +175,7 @@ impl Cluster {
             let name = n.name.clone();
             let node_idx = g.add_node(n);
             let old = node_map.insert(name.clone(), node_idx);
-            assert!(old.is_none(), format!("repeated key: {}", name));
+            assert!(old.is_none(), "repeated key: {}", name);
         });
         Cluster {
             graph: g,
@@ -192,7 +192,7 @@ impl Cluster {
         let name = node.name.clone();
         let node_idx = self.graph.add_node(node);
         let old = self.node_map.insert(name.clone(), node_idx);
-        assert!(old.is_none(), format!("repeated key: {}", name));
+        assert!(old.is_none(), "repeated key: {}", name);
         node_idx
     }
 
@@ -343,7 +343,7 @@ impl Topology for Cluster {
             path2.push(g[self.get_reverse_link(pary)].clone());
         }
 
-        assert!(x == y, format!("route from {} to {} not found", src, dst));
+        assert!(x == y, "route from {} to {} not found", src, dst);
         path2.reverse();
         path1.append(&mut path2);
         let route = Route {

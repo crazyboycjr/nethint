@@ -930,7 +930,7 @@ impl FlowState {
 
     #[inline]
     fn time_to_complete(&self) -> Duration {
-        assert!(self.speed > 0.0, format!("speed: {}", self.speed));
+        assert!(self.speed > 0.0, "speed: {}", self.speed);
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
         (time_sec * 1e9).ceil() as Duration
     }

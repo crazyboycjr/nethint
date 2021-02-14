@@ -131,7 +131,9 @@ impl Sampler {
                 .unwrap();
             assert!(
                 rack_id < num_racks,
-                format!("rack_id: {}, num_racks: {}", rack_id, num_racks)
+                "rack_id: {}, num_racks: {}",
+                rack_id,
+                num_racks
             );
             agg[rack_id].tx_total += counters.tx_total;
             agg[rack_id].tx_in += counters.tx_in;
@@ -244,7 +246,9 @@ impl SimpleEstimator {
 
         assert!(
             demand_sum <= plink_capacity,
-            format!("{} vs {}", demand_sum, plink_capacity)
+            "{} vs {}",
+            demand_sum,
+            plink_capacity
         );
 
         demand.min(std::cmp::max(
