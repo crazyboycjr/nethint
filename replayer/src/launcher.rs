@@ -96,11 +96,12 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
         let mut cmd = Command::new("ssh");
         cmd.stdout(stdout).stderr(stderr);
         cmd.arg("-oStrictHostKeyChecking=no")
+            // .arg("-tt") // force allocating a tty
             .arg("-p")
             .arg(port)
             .arg(ip);
 
-        // TODO(cjr): also distributed binary program to workers
+        // TODO(cjr): also to distribute binary program to workers
         match role {
             Role::Controller => cmd.arg(format!("{} /tmp/controller", env_str)),
             Role::Worker => cmd.arg(format!("{} /tmp/worker", env_str)),
@@ -140,9 +141,16 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
             }
             // check if kill is needed
             if TERMINATE.load(SeqCst) {
+                log::warn!("killing the child process: {}", cmd_str);
+                // instead of SIGKILL, we use SIGTERM here to gracefully shutdown ssh process tree.
+                // SIGKILL can cause terminal control characters to mess up, which must be
+                // fixed later with sth like "stty sane".
+                // signal::kill(nix::unistd::Pid::from_raw(child.id() as _), signal::SIGTERM)
+                //     .unwrap_or_else(|e| panic!("Failed to kill: {}", e));
                 child
                     .kill()
                     .unwrap_or_else(|e| panic!("Failed to kill: {}", e));
+                log::warn!("child process terminated")
             }
         }
     }
@@ -198,6 +206,7 @@ use std::sync::atomic::Ordering::SeqCst;
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_sigint(sig: i32) {
+    log::warn!("sigint catched");
     assert_eq!(sig, signal::SIGINT as i32);
     TERMINATE.store(true, SeqCst);
 }
