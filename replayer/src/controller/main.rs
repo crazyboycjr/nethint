@@ -54,29 +54,24 @@ fn main() -> anyhow::Result<()> {
     log::debug!("broadcasting nodes: {:?}", bcast_cmd);
 
     for worker in workers.values_mut() {
-        utils::send_cmd_sync(worker, &bcast_cmd)?;
+        utils::send_cmd_sync(worker, &bcast_cmd).unwrap();
     }
 
-    // set workers to nonblocking
-    log::debug!("set workers to nonblocking");
-    for worker in workers.values_mut() {
-        worker.set_nonblocking(true).unwrap();
-    }
+    io_loop(workers)
+}
+
+fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
+    let poll = mio::Poll::new()?;
 
     let workers = workers
         .into_iter()
-        .map(|(k, v)| (k, replayer::endpoint::Endpoint::new(v)))
+        .map(|(k, stream)| (k, replayer::endpoint::Endpoint::new(stream, &poll)))
         .collect();
 
     // emit application flows
     let mut app = MapReduceApp::new(workers);
     app.start()?;
 
-    io_loop(app)
-}
-
-fn io_loop(mut app: MapReduceApp) -> anyhow::Result<()> {
-    let poll = mio::Poll::new()?;
     let mut events = mio::Events::with_capacity(1024);
 
     let mut token_table: Vec<Node> = Default::default();
@@ -95,14 +90,17 @@ fn io_loop(mut app: MapReduceApp) -> anyhow::Result<()> {
     let mut handler = Handler::new(app.workers().len());
 
     'outer: loop {
-        // only call epoll_wait after read or write return EAGAIN
         poll.poll(&mut events, None)?;
         for event in events.iter() {
             assert!(event.token().0 < token_table.len());
             let node = &token_table[event.token().0];
             let ep = app.workers_mut().get_mut(node).unwrap();
             if event.readiness().is_writable() {
-                ep.on_send_ready()?;
+                match ep.on_send_ready() {
+                    Ok(_) => {}
+                    Err(replayer::endpoint::Error::WouldBlock) => {}
+                    Err(e) => return Err(e.into()),
+                }
             }
             if event.readiness().is_readable() {
                 match ep.on_recv_ready() {
@@ -111,15 +109,12 @@ fn io_loop(mut app: MapReduceApp) -> anyhow::Result<()> {
                             break 'outer;
                         }
                     }
-                    Err(e) => {
-                        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                            if io_err.kind() != std::io::ErrorKind::WouldBlock {
-                                return Err(e);
-                            }
-                        } else {
-                            return Err(e);
-                        }
+                    Err(replayer::endpoint::Error::WouldBlock) => {}
+                    Err(replayer::endpoint::Error::ConnectionLost) => {
+                        // hopefully this will also call Drop for the ep
+                        app.workers_mut().remove(&node).unwrap();
                     }
+                    Err(e) => return Err(e.into()),
                 }
             }
         }
@@ -149,7 +144,8 @@ impl Handler {
             FlowComplete(ref _flow) => {
                 app.on_event(cmd)?;
             }
-            LeaveNode(_node) => {
+            LeaveNode(node) => {
+                app.workers_mut().remove(&node).unwrap();
                 self.num_remaining -= 1;
                 if self.num_remaining == 0 {
                     return Ok(true);

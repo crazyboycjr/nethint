@@ -1,13 +1,13 @@
 use crate::{endpoint::Endpoint, message, Flow, Node};
 use std::collections::HashMap;
 
-pub struct MapReduceApp {
-    workers: HashMap<Node, Endpoint>,
+pub struct MapReduceApp<'p> {
+    workers: HashMap<Node, Endpoint<'p>>,
     num_remaining_flows: usize,
 }
 
-impl MapReduceApp {
-    pub fn new(workers: HashMap<Node, Endpoint>) -> Self {
+impl<'p> MapReduceApp<'p> {
+    pub fn new(workers: HashMap<Node, Endpoint<'p>>) -> Self {
         MapReduceApp {
             workers,
             num_remaining_flows: 0,
@@ -18,7 +18,7 @@ impl MapReduceApp {
         &self.workers
     }
 
-    pub fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
+    pub fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint<'p>> {
         &mut self.workers
     }
 
@@ -31,7 +31,7 @@ impl MapReduceApp {
         // emit flows
         for m in mappers {
             for r in reducers {
-                let flow = Flow::new(100, m.clone(), r.clone(), None);
+                let flow = Flow::new(1_000_000, m.clone(), r.clone(), None);
                 let cmd = message::Command::EmitFlow(flow);
                 log::trace!("mapreduce::run, cmd: {:?}", cmd);
                 let endpoint = self.workers.get_mut(&m).unwrap();
