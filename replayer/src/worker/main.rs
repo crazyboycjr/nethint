@@ -48,6 +48,31 @@ fn find_avail_port() -> anyhow::Result<u16> {
     Ok(port)
 }
 
+fn connect_retry(uri: &String, max_retry: usize) -> anyhow::Result<TcpStream> {
+    let mut retry = max_retry;
+    let mut sleep_time = std::time::Duration::from_millis(5);
+    loop {
+        match TcpStream::connect(uri) {
+            Ok(controller) => {
+                return Ok(controller);
+            }
+            Err(e) => {
+                if retry == 0 {
+                    return Err(anyhow::anyhow!(
+                        "failed to connect to {} after {} retries: {}",
+                        uri,
+                        max_retry,
+                        e
+                    ));
+                }
+                std::thread::sleep(sleep_time);
+                sleep_time *= 2;
+                retry -= 1;
+            }
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     logging::init_log();
 
@@ -60,8 +85,7 @@ fn main() -> anyhow::Result<()> {
     let controller_uri = std::env::var("RP_CONTROLLER_URI").expect("RP_CONTROLLER_URI");
     log::info!("connecting to controller_uri: {}", controller_uri);
 
-    let mut controller =
-        TcpStream::connect(controller_uri.clone()).expect(&controller_uri);
+    let mut controller = connect_retry(&controller_uri, 5)?;
 
     let my_node = Node {
         addr: controller.local_addr()?.ip().to_string(),
@@ -98,8 +122,8 @@ fn main() -> anyhow::Result<()> {
     let my_node_copy = my_node.clone();
 
     // start an seperate thread for accepting connections is the most easy way
-    let accept_thread_handle = std::thread::spawn(
-        move || -> anyhow::Result<HashMap<Node, TcpStream>> {
+    let accept_thread_handle =
+        std::thread::spawn(move || -> anyhow::Result<HashMap<Node, TcpStream>> {
             let mut passive_peers: HashMap<_, _> = Default::default();
 
             while passive_peers.len() < num_passive {
@@ -126,8 +150,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             Ok(passive_peers)
-        },
-    );
+        });
 
     for node in &nodes {
         let mut peer = TcpStream::connect((node.addr.clone(), node.port))?;
