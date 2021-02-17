@@ -1,9 +1,10 @@
-use crate::{buffer::Buffer, message};
+use crate::buffer::Buffer;
 use mio::net::TcpStream;
 use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::io::{Read, Write};
 use thiserror::Error;
+use serde::{de::DeserializeOwned, Serialize};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -63,7 +64,7 @@ impl<'p> Endpoint<'p> {
         &mut self.stream
     }
 
-    pub fn post(&mut self, cmd: message::Command) -> anyhow::Result<()> {
+    pub fn post(&mut self, cmd: impl Serialize + std::fmt::Debug) -> anyhow::Result<()> {
         log::trace!("post a cmd: {:?}", cmd);
         let buf = bincode::serialize(&cmd)?;
         let buf_len = (buf.len() as u64).to_be_bytes();
@@ -85,7 +86,7 @@ impl<'p> Endpoint<'p> {
         Ok(())
     }
 
-    pub fn on_recv_ready(&mut self) -> Result<message::Command> {
+    pub fn on_recv_ready<T: DeserializeOwned + std::fmt::Debug>(&mut self) -> Result<T> {
         use ReceiveState::*;
         match self.state {
             RecvLength => {

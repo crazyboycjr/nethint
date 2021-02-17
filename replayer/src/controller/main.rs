@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use replayer::mapreduce::MapReduceApp;
 use replayer::message;
-use replayer::utils;
 use replayer::Node;
+use litemsg::endpoint;
 
 fn main() -> anyhow::Result<()> {
     logging::init_log();
@@ -16,48 +16,14 @@ fn main() -> anyhow::Result<()> {
 
     let controller_uri = std::env::var("RP_CONTROLLER_URI").expect("RP_CONTROLLER_URI");
 
-    log::debug!("binding to controller_uri: {}", controller_uri);
-    let listener = std::net::TcpListener::bind(controller_uri.clone()).expect(&controller_uri);
+    let workers = litemsg::accept_peers(&controller_uri, num_workers)?;
 
-    let mut workers: HashMap<Node, std::net::TcpStream> = Default::default();
+    let start = std::time::Instant::now();
+    io_loop(workers)?;
+    let end = std::time::Instant::now();
+    println!("duration: {:?}", end - start);
 
-    // process add node event
-    while workers.len() < num_workers {
-        let (mut client, addr) = listener.accept()?;
-        log::debug!(
-            "controller accepts an incoming connection from addr: {}",
-            addr
-        );
-
-        let cmd = utils::recv_cmd_sync(&mut client)?;
-        log::trace!("receive a command: {:?}", cmd);
-
-        use message::Command::*;
-        match cmd {
-            AddNode(node, _hostname) => {
-                if workers.contains_key(&node) {
-                    log::error!("repeated AddNode: {:?}", node);
-                }
-                workers.insert(node, client);
-            }
-            _ => {
-                log::error!("received unexpected command: {:?}", cmd);
-            }
-        }
-    }
-
-    // broadcast nodes to all workers
-    let mut nodes: Vec<Node> = workers.keys().cloned().collect();
-    // an order is useful for establishing all to all connections among workers
-    nodes.sort();
-    let bcast_cmd = message::Command::BroadcastNodes(nodes);
-    log::debug!("broadcasting nodes: {:?}", bcast_cmd);
-
-    for worker in workers.values_mut() {
-        utils::send_cmd_sync(worker, &bcast_cmd).unwrap();
-    }
-
-    io_loop(workers)
+    Ok(())
 }
 
 fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
@@ -65,7 +31,7 @@ fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
 
     let workers = workers
         .into_iter()
-        .map(|(k, stream)| (k, replayer::endpoint::Endpoint::new(stream, &poll)))
+        .map(|(k, stream)| (k, endpoint::Endpoint::new(stream, &poll)))
         .collect();
 
     // emit application flows
@@ -98,7 +64,7 @@ fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
             if event.readiness().is_writable() {
                 match ep.on_send_ready() {
                     Ok(_) => {}
-                    Err(replayer::endpoint::Error::WouldBlock) => {}
+                    Err(endpoint::Error::WouldBlock) => {}
                     Err(e) => return Err(e.into()),
                 }
             }
@@ -109,8 +75,8 @@ fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
                             break 'outer;
                         }
                     }
-                    Err(replayer::endpoint::Error::WouldBlock) => {}
-                    Err(replayer::endpoint::Error::ConnectionLost) => {
+                    Err(endpoint::Error::WouldBlock) => {}
+                    Err(endpoint::Error::ConnectionLost) => {
                         // hopefully this will also call Drop for the ep
                         app.workers_mut().remove(&node).unwrap();
                     }
