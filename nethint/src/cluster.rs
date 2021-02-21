@@ -167,6 +167,17 @@ impl Cluster {
         Default::default()
     }
 
+    pub fn refresh_node_map(&mut self) {
+        let mut node_map = HashMap::default();
+        for link_ix in self.all_links() {
+            let dst = self.get_target(link_ix);
+            let dst_name = self.graph[dst].name.clone();
+            log::debug!("dst_name: {}", dst_name);
+            node_map.entry(dst_name).and_modify(|e| *e = dst).or_insert(dst);
+        }
+        self.node_map = node_map;
+    }
+
     pub fn from_nodes(nodes: Vec<Node>) -> Self {
         let mut g = Graph::new();
         let mut node_map = HashMap::default();

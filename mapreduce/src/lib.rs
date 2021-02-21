@@ -17,6 +17,7 @@ pub use genetic::GeneticReducerScheduler;
 pub mod greedy;
 pub use greedy::GreedyReducerScheduler;
 pub use greedy::ImprovedGreedyReducerScheduler;
+pub use greedy::GreedyReducerLevel1Scheduler;
 
 pub mod plot;
 
@@ -66,6 +67,7 @@ pub enum ReducerPlacementPolicy {
     Random,
     GeneticAlgorithm,
     HierarchicalGreedy,
+    HierarchicalGreedyLevel1,
 }
 
 #[derive(Debug, Clone)]

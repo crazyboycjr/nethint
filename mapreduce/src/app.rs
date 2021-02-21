@@ -1,13 +1,9 @@
 use std::rc::Rc;
 
-use crate::{
-    mapper::{
+use crate::{GreedyReducerLevel1Scheduler, ImprovedGreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern, mapper::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
-    },
-    ImprovedGreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement,
-    RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern,
-};
+    }};
 use log::info;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
@@ -96,6 +92,7 @@ impl<'c> MapReduceApp<'c> {
                 // Box::new(GeneticReducerScheduler::new())
             }
             ReducerPlacementPolicy::HierarchicalGreedy => Box::new(ImprovedGreedyReducerScheduler::new()),
+            ReducerPlacementPolicy::HierarchicalGreedyLevel1 => Box::new(GreedyReducerLevel1Scheduler::new()),
         };
 
         let reducers = reduce_scheduler.place(

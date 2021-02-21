@@ -332,7 +332,126 @@ impl PlaceReducer for ImprovedGreedyReducerScheduler {
             let best_node = cluster[best_node_ix].name.clone();
 
             // here we get the best node
-            *taken.entry(best_node_ix).or_default() += 1;
+            *taken.entry(best_node_ix).or_default() += 2;
+            placement[j] = best_node;
+        }
+
+        Placement(placement)
+    }
+}
+
+/// The only optimization goal of this scheduler is to minimize inter-rack traffic.
+/// This optimization goal makes sense because we do not know the difference of bandwidth among hosts.
+/// That means we will not put a reducer in rack A instead of rack B because of the rack B has a host with more abundant bandwidth.
+#[derive(Debug, Default)]
+pub struct GreedyReducerLevel1Scheduler {}
+
+impl GreedyReducerLevel1Scheduler {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn evaluate(
+        &self,
+        reducer_rank: usize,
+        host_id: usize,
+        cluster: &dyn Topology,
+        mapper: &Placement,
+        shuffle_pairs: &Shuffle,
+    ) -> usize {
+        let mut cross = 0;
+
+        let host_name = format!("host_{}", host_id);
+        let r_ix = cluster.get_node_index(&host_name);
+
+        let r_uplink_ix = cluster.get_uplink(r_ix);
+        let r_tor_ix = cluster.get_target(r_uplink_ix);
+
+        for (mi, m) in mapper.0.iter().enumerate() {
+            let flow_size = shuffle_pairs.0[mi][reducer_rank];
+
+            let m_ix = cluster.get_node_index(m);
+            let rack_m = cluster.get_target(cluster.get_uplink(m_ix));
+            // minimize cross rack bw
+
+            if rack_m != r_tor_ix {
+                cross += flow_size;
+            }
+        }
+
+        cross
+    }
+}
+
+impl PlaceReducer for GreedyReducerLevel1Scheduler {
+    fn place(
+        &mut self,
+        cluster: &dyn Topology,
+        job_spec: &JobSpec,
+        mapper: &Placement,
+        shuffle_pairs: &Shuffle,
+        collocate: bool,
+    ) -> Placement {
+        assert!(collocate, "assume collocation here");
+        let mut placement = vec![String::new(); job_spec.num_reduce];
+
+        let mut taken: HashMap<_, _> = mapper
+            .0
+            .iter()
+            .map(|m| (cluster.get_node_index(m), 1))
+            .collect();
+
+        // reducer rank sorted by weight
+        let mut reducer_weight = vec![0; job_spec.num_reduce];
+        debug_assert!(job_spec.num_map <= shuffle_pairs.0.len());
+        for i in 0..job_spec.num_map {
+            for (j, w) in reducer_weight.iter_mut().enumerate() {
+                *w += shuffle_pairs.0[i][j];
+            }
+        }
+
+        use std::cmp::Reverse;
+        let mut rank: Vec<_> = (0..job_spec.num_reduce).collect();
+        rank.sort_by_key(|&r| Reverse(reducer_weight[r]));
+
+        for j in rank {
+            let mut min_cross = usize::MAX;
+            let mut best_node_id = None;
+
+            for i in 0..cluster.num_hosts() {
+                let host_name = format!("host_{}", i);
+                let host_ix = cluster.get_node_index(&host_name);
+
+                if *taken.entry(host_ix).or_default() < collocate as usize + 1 {
+                    let cross = self.evaluate(
+                        j,
+                        i,
+                        cluster,
+                        mapper,
+                        shuffle_pairs,
+                    );
+
+                    if min_cross > cross {
+                        min_cross = cross;
+                        best_node_id = Some(i);
+                    }
+                }
+            }
+
+            assert!(best_node_id.is_some());
+            // get the best_node and its rack
+            let best_node_id = best_node_id.unwrap();
+            let best_node_name = format!("host_{}", best_node_id);
+            let best_node_ix = cluster.get_node_index(&best_node_name);
+            let best_rack = get_rack_id(cluster, &best_node_name);
+
+            debug!("best_rack: {}", best_rack);
+
+            // Step 2. fix the rack, find the best node in the rack
+            let best_node = cluster[best_node_ix].name.clone();
+
+            // here we get the best node
+            *taken.entry(best_node_ix).or_default() += 2;  // one host only one reducer, so just disable the host
             placement[j] = best_node;
         }
 
