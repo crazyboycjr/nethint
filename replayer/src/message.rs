@@ -12,5 +12,5 @@ pub enum Command {
     /// send by worker, processed by controller
     LeaveNode(Node),
     /// send by worker, processed by worker
-    Data(Flow, Vec<u8>)
+    Data(Flow),
 }

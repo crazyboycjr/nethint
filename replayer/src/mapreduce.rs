@@ -2,13 +2,13 @@ use crate::{message, Flow, Node};
 use std::collections::HashMap;
 use litemsg::endpoint::Endpoint;
 
-pub struct MapReduceApp<'p> {
-    workers: HashMap<Node, Endpoint<'p>>,
+pub struct MapReduceApp {
+    workers: HashMap<Node, Endpoint>,
     num_remaining_flows: usize,
 }
 
-impl<'p> MapReduceApp<'p> {
-    pub fn new(workers: HashMap<Node, Endpoint<'p>>) -> Self {
+impl MapReduceApp {
+    pub fn new(workers: HashMap<Node, Endpoint>) -> Self {
         MapReduceApp {
             workers,
             num_remaining_flows: 0,
@@ -19,7 +19,7 @@ impl<'p> MapReduceApp<'p> {
         &self.workers
     }
 
-    pub fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint<'p>> {
+    pub fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
         &mut self.workers
     }
 
@@ -32,11 +32,11 @@ impl<'p> MapReduceApp<'p> {
         // emit flows
         for m in mappers {
             for r in reducers {
-                let flow = Flow::new(1_000_000_00, m.clone(), r.clone(), None);
+                let flow = Flow::new(1_000_000_000, m.clone(), r.clone(), None);
                 let cmd = message::Command::EmitFlow(flow);
                 log::trace!("mapreduce::run, cmd: {:?}", cmd);
                 let endpoint = self.workers.get_mut(&m).unwrap();
-                endpoint.post(cmd)?;
+                endpoint.post(cmd, None)?;
                 self.num_remaining_flows += 1;
             }
         }
@@ -46,7 +46,7 @@ impl<'p> MapReduceApp<'p> {
 
     fn finish(&mut self) -> anyhow::Result<()> {
         for worker in self.workers.values_mut() {
-            worker.post(message::Command::AppFinish)?;
+            worker.post(message::Command::AppFinish, None)?;
         }
         Ok(())
     }

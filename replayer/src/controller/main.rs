@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use litemsg::endpoint;
 use replayer::mapreduce::MapReduceApp;
 use replayer::message;
 use replayer::Node;
-use litemsg::endpoint;
 
 fn main() -> anyhow::Result<()> {
     logging::init_log();
@@ -31,7 +31,18 @@ fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
 
     let workers = workers
         .into_iter()
-        .map(|(k, stream)| (k, endpoint::Endpoint::new(stream, &poll)))
+        .map(|(k, stream)| {
+            (
+                k.clone(),
+                endpoint::Builder::new()
+                    .stream(stream)
+                    .readable(true)
+                    .writable(true)
+                    .node(k)
+                    .build()
+                    .unwrap(),
+            )
+        })
         .collect();
 
     // emit application flows
@@ -64,14 +75,15 @@ fn io_loop(workers: HashMap<Node, std::net::TcpStream>) -> anyhow::Result<()> {
             if event.readiness().is_writable() {
                 match ep.on_send_ready() {
                     Ok(_) => {}
+                    Err(endpoint::Error::NothingToSend) => {}
                     Err(endpoint::Error::WouldBlock) => {}
                     Err(e) => return Err(e.into()),
                 }
             }
             if event.readiness().is_readable() {
                 match ep.on_recv_ready() {
-                    Ok(cmd) => {
-                        if handler.handle_cmd(cmd, &mut app)? {
+                    Ok((cmd, _)) => {
+                        if handler.on_recv_complete(cmd, &mut app)? {
                             break 'outer;
                         }
                     }
@@ -100,7 +112,7 @@ impl Handler {
         }
     }
 
-    fn handle_cmd(
+    fn on_recv_complete(
         &mut self,
         cmd: message::Command,
         app: &mut MapReduceApp,

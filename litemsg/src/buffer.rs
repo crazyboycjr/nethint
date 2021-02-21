@@ -15,11 +15,14 @@ impl Buffer {
 
     pub fn with_len(len: usize) -> Self {
         let mut inner = Vec::with_capacity(len);
-        unsafe { inner.set_len(len); }
-        Buffer {
-            inner,
-            cur_pos: 0,
+        unsafe {
+            inner.set_len(len);
         }
+        Buffer { inner, cur_pos: 0 }
+    }
+
+    pub fn take(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.inner)
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -49,3 +52,8 @@ impl Buffer {
         &mut self.inner[self.cur_pos..]
     }
 }
+
+// /// Zero-copied buffer with reference counting.
+// #[derive(Debug, Default)]
+// struct ZBuffer {
+// }

@@ -1,4 +1,5 @@
 #![feature(option_unwrap_none)]
+#![feature(str_split_once)]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
@@ -12,6 +13,31 @@ pub mod utils;
 pub struct Node {
     pub addr: String,
     pub port: u16,
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.addr, self.port)
+    }
+}
+
+impl std::str::FromStr for Node {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.rsplit_once(':')
+            .map(|(addr, port)| Node {
+                addr: addr.to_owned(),
+                port: port.parse().unwrap(),
+            })
+            .ok_or(())
+    }
+}
+
+impl std::net::ToSocketAddrs for Node {
+    type Iter = std::vec::IntoIter<std::net::SocketAddr>;
+    fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
+        (&*self.addr, self.port).to_socket_addrs()
+    }
 }
 
 pub fn accept_peers(
@@ -91,6 +117,51 @@ pub fn connect_controller(
     }
 }
 
+// Every endpoint connects to all other endpoints except itself.
+pub fn connect_peers2(
+    nodes: &[Node],
+    my_node: &Node,
+    listener: &mut TcpListener,
+) -> anyhow::Result<Vec<endpoint::Builder>> {
+    // two stage
+    // everyone first listens connections from who has rank smaller than my_rank,
+    // then it actively connects to the rank bigger than my_rank, in an order of
+    // from small to large
+
+    let mut peers: Vec<endpoint::Builder> = Vec::new();
+
+    let my_rank = nodes
+        .iter()
+        .position(|n| n == my_node)
+        .unwrap_or_else(|| panic!("my_node: {:?} not found in nodes: {:?}", my_node, nodes));
+    log::debug!("number of connections to accept: {}", my_rank);
+
+    for i in 0..my_rank {
+        let (stream, addr) = listener.accept()?;
+        log::debug!("worker accepts an incoming connection from addr: {}", addr);
+
+        // assert_eq!(addr.to_string(), nodes[i].to_string());
+
+        let builder = endpoint::Builder::new()
+            .stream(stream)
+            .readable(true)
+            .node(nodes[i].clone());
+        peers.push(builder);
+    }
+
+    for i in my_rank + 1..nodes.len() {
+        let stream = TcpStream::connect(&nodes[i])?;
+
+        let builder = endpoint::Builder::new()
+            .stream(stream)
+            .writable(true)
+            .node(nodes[i].clone());
+        peers.push(builder);
+    }
+
+    Ok(peers)
+}
+
 // peers
 pub fn connect_peers(
     nodes: &[Node],
@@ -145,7 +216,7 @@ pub fn connect_peers(
         });
 
     for node in nodes {
-        let mut peer = TcpStream::connect((node.addr.clone(), node.port))?;
+        let mut peer = TcpStream::connect(&node)?;
 
         utils::send_cmd_sync(&mut peer, &command::Command::AddNodePeer(my_node.clone()))?;
 

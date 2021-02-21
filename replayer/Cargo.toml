@@ -17,6 +17,8 @@ nethint = { path = "../nethint" }
 litemsg = { path = "../litemsg" }
 structopt = "0.3.21"
 nix = "0.19.1"
+serde_bytes = "0.11.5"
+num_cpus = "1.13.0"
 
 [dependencies.mio]
 version = "0.6.23"
