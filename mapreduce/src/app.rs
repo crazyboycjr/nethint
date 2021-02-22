@@ -1,9 +1,14 @@
 use std::rc::Rc;
 
-use crate::{GreedyReducerLevel1Scheduler, ImprovedGreedyReducerScheduler, JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle, ShufflePattern, mapper::{
+use crate::{
+    mapper::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
-    }};
+    },
+    GreedyReducerLevel1Scheduler, ImprovedGreedyReducerScheduler, JobSpec, PlaceMapper,
+    PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    ShufflePattern,
+};
 use log::info;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
@@ -91,8 +96,12 @@ impl<'c> MapReduceApp<'c> {
                 panic!("do not use genetic algorithm");
                 // Box::new(GeneticReducerScheduler::new())
             }
-            ReducerPlacementPolicy::HierarchicalGreedy => Box::new(ImprovedGreedyReducerScheduler::new()),
-            ReducerPlacementPolicy::HierarchicalGreedyLevel1 => Box::new(GreedyReducerLevel1Scheduler::new()),
+            ReducerPlacementPolicy::HierarchicalGreedy => {
+                Box::new(ImprovedGreedyReducerScheduler::new())
+            }
+            ReducerPlacementPolicy::HierarchicalGreedyLevel1 => {
+                Box::new(GreedyReducerLevel1Scheduler::new())
+            }
         };
 
         let reducers = reduce_scheduler.place(

@@ -177,8 +177,13 @@ impl Brain {
         for link_ix in cluster.all_links() {
             if link_ix.index() & 1 == 1 {
                 if rng.gen_range(0.0..1.0) < probability {
+                    // integer overflow will only be checked in debug mode, so I should have detected an error here.
                     let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
                     let total_slots = self.setting.max_slots;
+                    if current_tenants >= total_slots {
+                        // that means this is an inter-rack linnk
+                        continue;
+                    }
                     let mut empty_slots = total_slots - current_tenants;
                     // guarantee each tenant can have total/current_tenants bandwidth
                     if empty_slots <= 1 {
@@ -186,7 +191,15 @@ impl Brain {
                     }
                     // do not zero new_bw
                     empty_slots -= 1;
-                    let new_bw = self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+                    let new_bw = self.orig_bw[&link_ix]
+                        * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+                    assert!(
+                        new_bw.val() > 0,
+                        "current_tenants: {}, total_slots: {}, empty_slots: {}",
+                        current_tenants,
+                        total_slots,
+                        empty_slots
+                    );
 
                     cluster[link_ix] = Link::new(new_bw);
                     let reverse_link_ix = cluster.get_reverse_link(link_ix);

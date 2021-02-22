@@ -64,7 +64,7 @@ loopback_speed = 400
 fairness = "TenantFlowMinMax"
 # fairness = "PerFlowMinMax"
 
-# emulate background flow by substrate a bandwidth to each link
+# emulate background flow by subtracting a bandwidth to each link
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.1 }
 # background_flow_hard = { enable = false }

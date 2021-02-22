@@ -70,7 +70,7 @@ pub struct SimulatorSetting {
     #[serde(deserialize_with = "deserialize_bandwidth")]
     pub loopback_speed: Bandwidth,
     pub fairness: FairnessModel,
-    /// emulate background flow by substrate a bandwidth to each link
+    /// emulate background flow by subtracting a bandwidth to each link
     /// note that the remaining bandwidth must not smaller than link_bw / current_tenants
     pub background_flow_hard: BackgroundFlowHard,
 }
@@ -471,6 +471,8 @@ impl Simulator {
                     if f.speed + 1e-10 >= f.speed_bound {
                         f.converged = true;
                         converged += 1;
+                    } else {
+                        f.speed_bound = f64::MAX;
                     }
                 }
             }
@@ -930,7 +932,7 @@ impl FlowState {
 
     #[inline]
     fn time_to_complete(&self) -> Duration {
-        assert!(self.speed > 0.0, "speed: {}", self.speed);
+        assert!(self.speed > 0.0, "speed: {}, speed_bound: {}", self.speed, self.speed_bound);
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
         (time_sec * 1e9).ceil() as Duration
     }
