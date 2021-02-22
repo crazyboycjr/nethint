@@ -25,6 +25,8 @@ pub fn init_cluster() -> Cluster {
         cluster[node_ix].name = format!("danyang-{:02}", i + 1);
     }
 
+    cluster.refresh_node_map();
+
     cluster
 }
 
@@ -32,7 +34,7 @@ lazy_static! {
     static ref HOSTNAME: String = {
         let result = Command::new("hostname").output().unwrap();
         assert!(result.status.success());
-        std::str::from_utf8(&result.stdout).unwrap().to_owned()
+        std::str::from_utf8(&result.stdout).unwrap().trim().to_owned()
     };
 }
 

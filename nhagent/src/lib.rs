@@ -1,4 +1,5 @@
 #![feature(str_split_once)]
+#![feature(option_unwrap_none)]
 
 pub mod cluster;
 pub mod sampler;

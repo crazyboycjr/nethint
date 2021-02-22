@@ -50,7 +50,7 @@ fn get_hostname() -> String {
     use std::process::Command;
     let result = Command::new("hostname").output().unwrap();
     assert!(result.status.success());
-    std::str::from_utf8(&result.stdout).unwrap().to_owned()
+    std::str::from_utf8(&result.stdout).unwrap().trim().to_owned()
 }
 
 pub fn add_node(my_node: Node, controller: &mut TcpStream) -> anyhow::Result<()> {
