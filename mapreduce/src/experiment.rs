@@ -70,6 +70,9 @@ struct ExperimentConfig {
     /// Collocate or De-collocate
     collocate: bool,
 
+    /// Number of repeats for each batch of experiments
+    batch_repeat: usize,
+
     #[serde(rename = "batch")]
     batches: Vec<BatchConfig>,
 
@@ -125,12 +128,17 @@ fn main() {
         std::fs::write(file, format!("{:#?}\n", config)).unwrap();
     };
 
+    let mut estimator = nethint::runtime_est::RunningTimeEstimator::new();
+    estimator.set_total_trials(config.batches.len() * config.batch_repeat);
     for i in 0..config.batches.len() {
-        run_batch(&config, i, Rc::clone(&brain));
+        for trial_id in 0..config.batch_repeat {
+            estimator.bench_single_start();
+            run_batch(&config, i, trial_id, Rc::clone(&brain));
+        }
     }
 }
 
-fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain>>) {
+fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain: Rc<RefCell<Brain>>) {
     let job_trace = config
         .trace
         .as_ref()
@@ -172,7 +180,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
     // AppGroup[Tenant[PlinkApp[MapReduceApp]]]
     let batch = config.batches[batch_id].clone();
     for i in 0..ncases {
-        let seed = i as _;
+        let seed = (ncases * trial_id + i) as _;
         let tenant_id = i;
         let (start_ts, job_spec) = job.get(i).unwrap();
         let mapper_policy = {
