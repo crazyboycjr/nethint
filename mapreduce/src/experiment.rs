@@ -256,7 +256,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
         .collect();
 
     // remember to garbage collect remaining jobs
-    brain.borrow_mut().garbage_collect(ncases);
+    brain.borrow_mut().reset();
 
     println!("{:?}", app_stats);
 

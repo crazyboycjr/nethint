@@ -49,6 +49,8 @@ pub struct Brain {
     pub(crate) vlink_to_plink: HashMap<(TenantId, LinkIx), LinkIx>,
     /// a queue to enforce FIFO order to destroy VMs
     gc_queue: Vec<TenantId>,
+    /// save the state of updating background flow traffic
+    background_flow_update_cnt: u64,
 }
 
 /// Similar to AWS Placement Groups.
@@ -113,6 +115,7 @@ impl Brain {
             plink_to_vlinks: Default::default(),
             vlink_to_plink: Default::default(),
             gc_queue: Default::default(),
+            background_flow_update_cnt: 0,
         };
 
         if brain.setting.asymmetric {
@@ -167,9 +170,28 @@ impl Brain {
         }
     }
 
+    fn reset_link_bandwidth(&mut self) {
+        let cluster = Arc::get_mut(&mut self.cluster)
+            .expect("there should be no other reference to physical cluster");
+
+        for link_ix in cluster.all_links() {
+            if link_ix.index() & 1 == 1 {
+                // recover the link's capacity
+                let bw = self.orig_bw[&link_ix];
+                cluster[link_ix] = Link::new(bw);
+                let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                cluster[reverse_link_ix] = Link::new(bw);
+            }
+        }
+    }
+
     pub fn update_background_flow_hard(&mut self, probability: f64) {
+        self.background_flow_update_cnt += 1;
+
         use rand::{rngs::StdRng, Rng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(self.setting.seed);
+        let mut rng = StdRng::seed_from_u64(self.setting.seed + self.background_flow_update_cnt);
+
+        self.reset_link_bandwidth();
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
@@ -180,25 +202,33 @@ impl Brain {
                     // integer overflow will only be checked in debug mode, so I should have detected an error here.
                     let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
                     let total_slots = self.setting.max_slots;
-                    if current_tenants >= total_slots {
+                    let new_bw = if cluster[cluster.get_target(link_ix)].depth == 1
+                        || cluster[cluster.get_source(link_ix)].depth == 1
+                    {
                         // that means this is an inter-rack linnk
-                        continue;
-                    }
-                    let mut empty_slots = total_slots - current_tenants;
-                    // guarantee each tenant can have total/current_tenants bandwidth
-                    if empty_slots <= 1 {
-                        continue;
-                    }
-                    // do not zero new_bw
-                    empty_slots -= 1;
-                    let new_bw = self.orig_bw[&link_ix]
-                        * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+                        // take (1..5)/10 of capacity from the link
+                        // TODO(cjr): introduce amplitude in experiment config
+                        let new_bw =
+                            self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1.0..=7.) / 10.0);
+                        new_bw
+                    } else {
+                        let mut empty_slots = total_slots - current_tenants;
+                        // guarantee each tenant can have total/current_tenants bandwidth
+                        if empty_slots <= 1 {
+                            continue;
+                        }
+                        // do not zero new_bw
+                        empty_slots -= 1;
+                        let new_bw = self.orig_bw[&link_ix]
+                            * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+                        new_bw
+                    };
+
                     assert!(
                         new_bw.val() > 0,
-                        "current_tenants: {}, total_slots: {}, empty_slots: {}",
+                        "current_tenants: {}, total_slots: {}",
                         current_tenants,
-                        total_slots,
-                        empty_slots
+                        total_slots
                     );
 
                     cluster[link_ix] = Link::new(new_bw);
@@ -287,7 +317,7 @@ impl Brain {
         Ok(ret)
     }
 
-    pub fn garbage_collect(&mut self, until: TenantId) {
+    fn garbage_collect(&mut self, until: TenantId) {
         #[allow(clippy::stable_sort_primitive)]
         self.gc_queue.sort();
         self.gc_queue.reverse();
@@ -321,6 +351,12 @@ impl Brain {
                     self.used.entry(pnode_ix).and_modify(|e| *e -= 1);
                 });
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.background_flow_update_cnt = 0;
+        self.reset_link_bandwidth();
+        self.garbage_collect(TenantId::MAX);
     }
 
     pub fn destroy(&mut self, tenant_id: TenantId) {
