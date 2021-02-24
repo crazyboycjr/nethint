@@ -185,7 +185,7 @@ impl Brain {
         }
     }
 
-    pub fn update_background_flow_hard(&mut self, probability: f64) {
+    pub fn update_background_flow_hard(&mut self, probability: f64, amplitude: usize) {
         self.background_flow_update_cnt += 1;
 
         use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -206,10 +206,15 @@ impl Brain {
                         || cluster[cluster.get_source(link_ix)].depth == 1
                     {
                         // that means this is an inter-rack linnk
-                        // take (1..5)/10 of capacity from the link
+                        // take (1..amplitude)/10 of capacity from the link
                         // TODO(cjr): introduce amplitude in experiment config
-                        let new_bw =
-                            self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1.0..=5.0) / 10.0);
+                        assert!(
+                            amplitude < 10,
+                            "amplitude must be range in [1, 9], got {}",
+                            amplitude
+                        );
+                        let new_bw = self.orig_bw[&link_ix]
+                            * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0);
                         // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
                         new_bw
                     } else {

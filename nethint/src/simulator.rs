@@ -49,6 +49,9 @@ pub struct BackgroundFlowHard {
     // each link will have a probability to be influenced
     #[serde(default)]
     probability: f64,
+    // the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
+    // for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
+    amplitude: usize,
 }
 
 impl Default for BackgroundFlowHard {
@@ -57,6 +60,7 @@ impl Default for BackgroundFlowHard {
             enable: false,
             frequency_ns: 0,
             probability: 0.0,
+            amplitude: 0,
         }
     }
 }
@@ -410,6 +414,7 @@ impl Simulator {
                                     let brain = self.state.brain.as_ref().unwrap().clone();
                                     brain.borrow_mut().update_background_flow_hard(
                                         self.background_flow_hard.unwrap().probability,
+                                        self.background_flow_hard.unwrap().amplitude,
                                     );
                                     poisson_timer.reset();
                                     self.timers.push(poisson_timer);
@@ -579,9 +584,10 @@ impl<'a> Executor<'a> for Simulator {
         if self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable {
             // ask brain to update background flow
             let brain = Rc::clone(&self.state.brain.as_ref().unwrap());
-            brain
-                .borrow_mut()
-                .update_background_flow_hard(self.background_flow_hard.unwrap().probability);
+            brain.borrow_mut().update_background_flow_hard(
+                self.background_flow_hard.unwrap().probability,
+                self.background_flow_hard.unwrap().amplitude,
+            );
         }
 
         let start = std::time::Instant::now();
@@ -816,12 +822,12 @@ impl NetState {
         let route = if let Some(cluster) = cluster {
             cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None)
         } else {
-            self.brain.as_ref().unwrap().borrow().cluster().resolve_route(
-                &r.flow.src,
-                &r.flow.dst,
-                &hint,
-                None,
-            )
+            self.brain
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .cluster()
+                .resolve_route(&r.flow.src, &r.flow.dst, &hint, None)
         };
 
         let end = std::time::Instant::now();
