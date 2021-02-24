@@ -175,6 +175,13 @@ impl SimulatorBuilder {
         if self.cluster.is_none() && self.brain.is_none() {
             return Err(Error::EmptyClusterOrBrain);
         }
+        let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
+        if self.setting.background_flow_hard.enable {
+            timers.push(Box::new(PoissonTimer::new(
+                self.setting.background_flow_hard.frequency_ns,
+                self.setting.background_flow_hard.frequency_ns as f64,
+            )));
+        }
 
         let simulator = if self.setting.enable_nethint {
             let brain = self.brain.as_ref().unwrap();
@@ -182,23 +189,15 @@ impl SimulatorBuilder {
                 Rc::clone(brain),
                 self.setting.sample_interval_ns,
             ));
-            let mut timers: BinaryHeap<Box<dyn Timer>> =
-                std::iter::once(Box::new(RepeatTimer::new(
-                    self.setting.sample_interval_ns,
-                    self.setting.sample_interval_ns,
-                )) as Box<dyn Timer>)
-                .collect();
-            if self.setting.background_flow_hard.enable {
-                timers.push(Box::new(PoissonTimer::new(
-                    0,
-                    self.setting.background_flow_hard.frequency_ns as f64,
-                )));
-            }
+            timers.push(Box::new(RepeatTimer::new(
+                self.setting.sample_interval_ns,
+                self.setting.sample_interval_ns,
+            )) as Box<dyn Timer>);
             let mut state = NetState::default();
             state.brain = Some(Rc::clone(brain));
             state.fairness = self.setting.fairness;
             Simulator {
-                cluster: (**brain.borrow().cluster()).clone(),
+                cluster: None,
                 ts: 0,
                 state,
                 timers,
@@ -213,15 +212,8 @@ impl SimulatorBuilder {
                 estimator: Some(estimator),
             }
         } else {
-            let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
-            if self.setting.background_flow_hard.enable {
-                timers.push(Box::new(PoissonTimer::new(
-                    0,
-                    self.setting.background_flow_hard.frequency_ns as f64,
-                )));
-            }
             Simulator {
-                cluster: self.cluster.clone().unwrap(),
+                cluster: None,
                 ts: 0,
                 state: NetState::default(),
                 timers,
@@ -243,7 +235,7 @@ impl SimulatorBuilder {
 
 /// The flow-level simulator.
 pub struct Simulator {
-    cluster: Cluster,
+    cluster: Option<Cluster>,
     ts: Timestamp,
     state: NetState,
     timers: BinaryHeap<Box<dyn Timer>>,
@@ -259,7 +251,7 @@ pub struct Simulator {
 impl Simulator {
     pub fn new(cluster: Cluster) -> Self {
         Simulator {
-            cluster,
+            cluster: Some(cluster),
             ts: 0,
             state: Default::default(),
             timers: BinaryHeap::new(),
@@ -272,7 +264,7 @@ impl Simulator {
     }
 
     pub fn with_brain(brain: Rc<RefCell<Brain>>) -> Self {
-        let cluster = (**brain.borrow().cluster()).clone();
+        let cluster = None;
         let interval = SAMPLE_INTERVAL_NS;
         let estimator = Box::new(SimpleEstimator::new(Rc::clone(&brain), interval));
         let timers =
@@ -410,10 +402,15 @@ impl Simulator {
                         Err(any_timer) => {
                             match any_timer.downcast::<PoissonTimer>() {
                                 Ok(mut poisson_timer) => {
-                                    assert!(self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable);
+                                    assert!(
+                                        self.background_flow_hard.is_some()
+                                            && self.background_flow_hard.unwrap().enable
+                                    );
                                     // ask brain to update background flow
                                     let brain = self.state.brain.as_ref().unwrap().clone();
-                                    brain.borrow_mut().update_background_flow_hard(self.background_flow_hard.unwrap().probability);
+                                    brain.borrow_mut().update_background_flow_hard(
+                                        self.background_flow_hard.unwrap().probability,
+                                    );
                                     poisson_timer.reset();
                                     self.timers.push(poisson_timer);
                                 }
@@ -578,6 +575,15 @@ impl<'a> Executor<'a> for Simulator {
             }};
         }
 
+        // set background flow hard at the very beginning
+        if self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable {
+            // ask brain to update background flow
+            let brain = Rc::clone(&self.state.brain.as_ref().unwrap());
+            brain
+                .borrow_mut()
+                .update_background_flow_hard(self.background_flow_hard.unwrap().probability);
+        }
+
         let start = std::time::Instant::now();
         let mut events = app.on_event(app_event!(AppEventKind::AppStart));
         let mut new_events = Events::new();
@@ -594,7 +600,11 @@ impl<'a> Executor<'a> for Simulator {
                         assert!(!recs.is_empty(), "No flow arrives.");
                         // 1. find path for each flow and add to current net state
                         for r in recs {
-                            self.state.add_flow(r, &self.cluster, self.ts);
+                            if let Some(cluster) = self.cluster.as_ref() {
+                                self.state.add_flow(r, Some(cluster), self.ts);
+                            } else {
+                                self.state.add_flow(r, None, self.ts);
+                            }
                         }
                     }
                     Event::AppFinish => {
@@ -800,10 +810,20 @@ impl NetState {
         }
     }
 
-    fn add_flow(&mut self, r: TraceRecord, cluster: &Cluster, sim_ts: Timestamp) {
+    fn add_flow(&mut self, r: TraceRecord, cluster: Option<&Cluster>, sim_ts: Timestamp) {
         let start = std::time::Instant::now();
         let hint = RouteHint::VirtAddr(r.flow.vsrc.as_deref(), r.flow.vdst.as_deref());
-        let route = cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None);
+        let route = if let Some(cluster) = cluster {
+            cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None)
+        } else {
+            self.brain.as_ref().unwrap().borrow().cluster().resolve_route(
+                &r.flow.src,
+                &r.flow.dst,
+                &hint,
+                None,
+            )
+        };
+
         let end = std::time::Instant::now();
         self.resolve_route_time += end - start;
 
@@ -932,7 +952,12 @@ impl FlowState {
 
     #[inline]
     fn time_to_complete(&self) -> Duration {
-        assert!(self.speed > 0.0, "speed: {}, speed_bound: {}", self.speed, self.speed_bound);
+        assert!(
+            self.speed > 0.0,
+            "speed: {}, speed_bound: {}",
+            self.speed,
+            self.speed_bound
+        );
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
         (time_sec * 1e9).ceil() as Duration
     }

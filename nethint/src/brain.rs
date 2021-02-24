@@ -131,7 +131,7 @@ impl Brain {
         &self.cluster
     }
 
-    fn make_asymmetric(&mut self, seed: u64) {
+    pub fn make_asymmetric(&mut self, seed: u64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
 
@@ -156,7 +156,7 @@ impl Brain {
 
     fn mark_broken(&mut self, seed: u64, ratio: f64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StdRng::seed_from_u64(seed + 10000);
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
@@ -202,16 +202,18 @@ impl Brain {
                     // integer overflow will only be checked in debug mode, so I should have detected an error here.
                     let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
                     let total_slots = self.setting.max_slots;
-                    let new_bw = if cluster[cluster.get_target(link_ix)].depth == 1
+                    let new_bw: Bandwidth = if cluster[cluster.get_target(link_ix)].depth == 1
                         || cluster[cluster.get_source(link_ix)].depth == 1
                     {
                         // that means this is an inter-rack linnk
                         // take (1..5)/10 of capacity from the link
                         // TODO(cjr): introduce amplitude in experiment config
                         let new_bw =
-                            self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1.0..=7.) / 10.0);
+                            self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1.0..=5.0) / 10.0);
+                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
                         new_bw
                     } else {
+                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
                         let mut empty_slots = total_slots - current_tenants;
                         // guarantee each tenant can have total/current_tenants bandwidth
                         if empty_slots <= 1 {
