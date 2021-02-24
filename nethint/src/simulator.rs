@@ -11,7 +11,7 @@ use smallvec::{smallvec, SmallVec};
 use thiserror::Error;
 
 use crate::brain::{Brain, TenantId};
-use crate::cluster::{Cluster, Link, Route, RouteHint, Topology};
+use crate::cluster::{Cluster, Link, LinkIx, Route, RouteHint, Topology};
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     hint::{Estimator, NetHintVersion, SimpleEstimator},
@@ -450,6 +450,7 @@ impl Simulator {
         let fairness = self.fairness;
         while converged < active_flows {
             // find the bottleneck link
+            let brain = &self.state.brain.as_ref().unwrap().borrow();
             let res = self
                 .state
                 .link_flows
@@ -457,7 +458,8 @@ impl Simulator {
                 .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged)) // this seems to be redundant
                 .map(|(l, fs)| {
                     assert!(!fs.is_empty());
-                    Self::calc_delta(fairness, l, fs)
+                    let link = &brain.cluster()[*l];
+                    Self::calc_delta(fairness, link, fs)
                 })
                 .min();
 
@@ -792,7 +794,7 @@ struct NetState {
     flow_bufs: BinaryHeap<Reverse<FlowStateRef>>,
     // emitted flows
     running_flows: Vec<FlowStateRef>,
-    link_flows: HashMap<Link, FlowSet>,
+    link_flows: HashMap<LinkIx, FlowSet>,
     loopback_flows: Vec<FlowStateRef>,
     resolve_route_time: std::time::Duration,
     // for nethint use
@@ -805,9 +807,9 @@ impl NetState {
     fn emit_flow(&mut self, fs: FlowStateRef) {
         self.running_flows.push(Rc::clone(&fs));
         let fairness = self.fairness;
-        for l in &fs.borrow().route.path {
+        for &l in &fs.borrow().route.path {
             self.link_flows
-                .entry(l.clone())
+                .entry(l)
                 .or_insert_with(|| FlowSet::new(fairness))
                 .push(Rc::clone(&fs));
         }

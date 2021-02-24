@@ -299,8 +299,8 @@ impl Topology for Cluster {
     }
 
     /// Tenants' are segregated, so there must be no flow between two different tenants.
-    /// There two some special cases that should be paid attention to.
-    /// Then, when psrc == pdst && vsrc == vdst, the flow is intra-Vm flow, return empty path.
+    /// There two some special cases that should be noted.
+    /// When psrc == pdst && vsrc == vdst, the flow is intra-Vm flow, return empty path.
     /// When psrc == pdst && vsrc != vdst, the flow is inter-VM but the VM colocates, let the flow goes througth the access port of the switch.
     /// Otherwise, resolve the route as normal.
     fn resolve_route(
@@ -326,8 +326,8 @@ impl Topology for Cluster {
                     let mut path = Vec::with_capacity(2);
                     let x = src_id;
                     let parx = g[x].parent.unwrap();
-                    path.push(g[parx].clone());
-                    path.push(g[self.get_reverse_link(parx)].clone());
+                    path.push(parx);
+                    path.push(self.get_reverse_link(parx));
                     debug!("find a route from {}[{}] to {}[{}]", src, vsrc, dst, vdst);
                     return Route {
                         from: src_id,
@@ -350,8 +350,8 @@ impl Topology for Cluster {
             x = g.raw_edges()[parx.index()].target();
             y = g.raw_edges()[pary.index()].target();
             depth -= 1;
-            path1.push(g[parx].clone());
-            path2.push(g[self.get_reverse_link(pary)].clone());
+            path1.push(parx);
+            path2.push(self.get_reverse_link(pary));
         }
 
         assert!(x == y, "route from {} to {} not found", src, dst);
@@ -507,13 +507,19 @@ impl std::fmt::Display for Node {
 /// A route is a network path that a flow goes through
 #[derive(Debug, Clone)]
 pub struct Route {
-    pub(crate) from: NodeIndex,
-    pub(crate) to: NodeIndex,
-    pub(crate) path: Vec<Link>,
+    pub from: NodeIndex,
+    pub to: NodeIndex,
+    pub path: Vec<LinkIx>,
 }
 
 #[derive(Debug, Clone)]
 pub enum RouteHint<'a> {
     // vsrc, vdst
     VirtAddr(Option<&'a str>, Option<&'a str>),
+}
+
+impl<'a> Default for RouteHint<'a> {
+    fn default() -> Self {
+        RouteHint::VirtAddr(None, None)
+    }
 }
