@@ -148,10 +148,10 @@ impl Brain {
         }
 
         // also update orig_bw
-        // self.orig_bw = cluster
-        //     .all_links()
-        //     .map(|link_ix| (link_ix, cluster[link_ix].bandwidth))
-        //     .collect();
+        self.orig_bw = cluster
+            .all_links()
+            .map(|link_ix| (link_ix, cluster[link_ix].bandwidth))
+            .collect();
     }
 
     fn mark_broken(&mut self, seed: u64, ratio: f64) {
@@ -208,21 +208,21 @@ impl Brain {
                         // that means this is an inter-rack linnk
                         // take (1..5)/10 of capacity from the link
                         // TODO(cjr): introduce amplitude in experiment config
-                        // let new_bw =
-                        //     self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1.0..=7.0) / 10.0);
-                        let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
+                        let new_bw =
+                            self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1.0..=5.0) / 10.0);
+                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
                         new_bw
                     } else {
-                        let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
-                        // let mut empty_slots = total_slots - current_tenants;
-                        // // guarantee each tenant can have total/current_tenants bandwidth
-                        // if empty_slots <= 1 {
-                        //     continue;
-                        // }
-                        // // do not zero new_bw
-                        // empty_slots -= 1;
-                        // let new_bw = self.orig_bw[&link_ix]
-                        //     * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
+                        let mut empty_slots = total_slots - current_tenants;
+                        // guarantee each tenant can have total/current_tenants bandwidth
+                        if empty_slots <= 1 {
+                            continue;
+                        }
+                        // do not zero new_bw
+                        empty_slots -= 1;
+                        let new_bw = self.orig_bw[&link_ix]
+                            * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
                         new_bw
                     };
 
