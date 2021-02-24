@@ -175,6 +175,13 @@ impl SimulatorBuilder {
         if self.cluster.is_none() && self.brain.is_none() {
             return Err(Error::EmptyClusterOrBrain);
         }
+        let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
+        if self.setting.background_flow_hard.enable {
+            timers.push(Box::new(PoissonTimer::new(
+                self.setting.background_flow_hard.frequency_ns,
+                self.setting.background_flow_hard.frequency_ns as f64,
+            )));
+        }
 
         let simulator = if self.setting.enable_nethint {
             let brain = self.brain.as_ref().unwrap();
@@ -182,18 +189,10 @@ impl SimulatorBuilder {
                 Rc::clone(brain),
                 self.setting.sample_interval_ns,
             ));
-            let mut timers: BinaryHeap<Box<dyn Timer>> =
-                std::iter::once(Box::new(RepeatTimer::new(
-                    self.setting.sample_interval_ns,
-                    self.setting.sample_interval_ns,
-                )) as Box<dyn Timer>)
-                .collect();
-            if self.setting.background_flow_hard.enable {
-                timers.push(Box::new(PoissonTimer::new(
-                    0,
-                    self.setting.background_flow_hard.frequency_ns as f64,
-                )));
-            }
+            timers.push(Box::new(RepeatTimer::new(
+                self.setting.sample_interval_ns,
+                self.setting.sample_interval_ns,
+            )) as Box<dyn Timer>);
             let mut state = NetState::default();
             state.brain = Some(Rc::clone(brain));
             state.fairness = self.setting.fairness;
@@ -213,13 +212,6 @@ impl SimulatorBuilder {
                 estimator: Some(estimator),
             }
         } else {
-            let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
-            if self.setting.background_flow_hard.enable {
-                timers.push(Box::new(PoissonTimer::new(
-                    0,
-                    self.setting.background_flow_hard.frequency_ns as f64,
-                )));
-            }
             Simulator {
                 cluster: self.cluster.clone().unwrap(),
                 ts: 0,
@@ -410,10 +402,16 @@ impl Simulator {
                         Err(any_timer) => {
                             match any_timer.downcast::<PoissonTimer>() {
                                 Ok(mut poisson_timer) => {
-                                    assert!(self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable);
+                                    panic!("");
+                                    assert!(
+                                        self.background_flow_hard.is_some()
+                                            && self.background_flow_hard.unwrap().enable
+                                    );
                                     // ask brain to update background flow
                                     let brain = self.state.brain.as_ref().unwrap().clone();
-                                    brain.borrow_mut().update_background_flow_hard(self.background_flow_hard.unwrap().probability);
+                                    brain.borrow_mut().update_background_flow_hard(
+                                        self.background_flow_hard.unwrap().probability,
+                                    );
                                     poisson_timer.reset();
                                     self.timers.push(poisson_timer);
                                 }
@@ -577,6 +575,19 @@ impl<'a> Executor<'a> for Simulator {
                 AppEvent::new(self.ts, kind)
             }};
         }
+
+        if true {
+            let brain = Rc::clone(&self.state.brain.as_ref().unwrap());
+            brain.borrow_mut().make_asymmetric(1);
+        }
+
+        // // set background flow hard at the very beginning
+        // if self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable {
+        //     // ask brain to update background flow
+        //     // brain
+        //     //     .borrow_mut()
+        //     //     .update_background_flow_hard(self.background_flow_hard.unwrap().probability);
+        // }
 
         let start = std::time::Instant::now();
         let mut events = app.on_event(app_event!(AppEventKind::AppStart));
@@ -932,7 +943,12 @@ impl FlowState {
 
     #[inline]
     fn time_to_complete(&self) -> Duration {
-        assert!(self.speed > 0.0, "speed: {}, speed_bound: {}", self.speed, self.speed_bound);
+        assert!(
+            self.speed > 0.0,
+            "speed: {}, speed_bound: {}",
+            self.speed,
+            self.speed_bound
+        );
         let time_sec = (self.flow.bytes - self.bytes_sent) as f64 * 8.0 / self.speed;
         (time_sec * 1e9).ceil() as Duration
     }

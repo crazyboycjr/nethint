@@ -4,7 +4,7 @@
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
-ncases = 200
+ncases = 100
 
 # Number of map tasks and reduce tasks
 # When running from trace, these parameters become scale factors
@@ -66,8 +66,8 @@ fairness = "TenantFlowMinMax"
 
 # emulate background flow by subtracting a bandwidth to each link
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
-background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.9 }
-# background_flow_hard = { enable = false }
+# background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 1.0 }
+background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
 [brain]
