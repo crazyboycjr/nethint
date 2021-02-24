@@ -235,5 +235,5 @@ pub fn run_map_reduce(
     ));
     app.start();
 
-    simulator.run_with_appliation(app)
+    simulator.run_with_application(app)
 }

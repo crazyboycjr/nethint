@@ -33,7 +33,7 @@ pub const SAMPLE_INTERVAL_NS: u64 = 100_000_000; // 100ms
 /// The simulator driver API
 pub trait Executor<'a> {
     fn run_with_trace(&mut self, trace: Trace) -> Trace;
-    fn run_with_appliation<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
+    fn run_with_application<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -564,10 +564,10 @@ impl Simulator {
 impl<'a> Executor<'a> for Simulator {
     fn run_with_trace(&mut self, trace: Trace) -> Trace {
         let app = Box::new(Replayer::new(trace));
-        self.run_with_appliation(app)
+        self.run_with_application(app)
     }
 
-    fn run_with_appliation<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
+    fn run_with_application<T>(&mut self, mut app: Box<dyn Application<Output = T> + 'a>) -> T {
         macro_rules! app_event {
             ($kind:expr) => {{
                 let kind = $kind;

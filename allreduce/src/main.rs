@@ -146,7 +146,7 @@ fn run_experiments(
         .sample_interval_ns(100_000_000)
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
-    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let app_jct = simulator.run_with_application(Box::new(app_group));
     let mut app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
@@ -155,7 +155,7 @@ fn run_experiments(
 
     println!("{:?}", app_stats);
     // let mut simulator = Simulator::new((**brain.borrow().cluster()).clone());
-    // let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    // let app_jct = simulator.run_with_application(Box::new(app_group));
     // info!("{:?}", app_jct);
     // println!("{:?}", app_jct);
 }

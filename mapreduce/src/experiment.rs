@@ -239,7 +239,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
         .unwrap_or_else(|e| panic!("{}", e));
 
     // run application in simulator
-    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let app_jct = simulator.run_with_application(Box::new(app_group));
     let app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))

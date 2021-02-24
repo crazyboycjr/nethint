@@ -244,7 +244,7 @@ fn run_experiments_multitenant(
         .loopback_speed(400.gbps())
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
-    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let app_jct = simulator.run_with_application(Box::new(app_group));
     let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct
         .iter()
