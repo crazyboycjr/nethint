@@ -97,7 +97,7 @@ fn run_experiments(
     use_plink: bool,
     jobs: &[(u64, JobSpec)],
 ) {
-    brain.borrow_mut().garbage_collect(opt.ncases);
+    brain.borrow_mut().reset();
 
     let mut app_group = AppGroup::new();
 

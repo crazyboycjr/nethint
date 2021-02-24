@@ -5,9 +5,9 @@ use crate::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
     },
-    GreedyReducerLevel1Scheduler, ImprovedGreedyReducerScheduler, JobSpec, PlaceMapper,
-    PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
-    ShufflePattern,
+    GreedyReducerLevel1Scheduler, GreedyReducerSchedulerPaper,
+    JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy,
+    Shuffle, ShufflePattern,
 };
 use log::info;
 use nethint::{
@@ -97,7 +97,7 @@ impl<'c> MapReduceApp<'c> {
                 // Box::new(GeneticReducerScheduler::new())
             }
             ReducerPlacementPolicy::HierarchicalGreedy => {
-                Box::new(ImprovedGreedyReducerScheduler::new())
+                Box::new(GreedyReducerSchedulerPaper::new())
             }
             ReducerPlacementPolicy::HierarchicalGreedyLevel1 => {
                 Box::new(GreedyReducerLevel1Scheduler::new())

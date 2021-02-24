@@ -51,6 +51,7 @@ pub struct BackgroundFlowHard {
     probability: f64,
     // the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
     // for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
+    #[serde(default)]
     amplitude: usize,
 }
 

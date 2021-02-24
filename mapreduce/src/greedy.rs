@@ -3,9 +3,25 @@ use std::collections::HashMap;
 use log::debug;
 
 use nethint::bandwidth::BandwidthTrait;
-use nethint::cluster::{NodeIx, Topology};
+use nethint::cluster::{LinkIx, NodeIx, RouteHint, Topology};
 
 use crate::{get_rack_id, JobSpec, PlaceReducer, Placement, Shuffle};
+
+fn sort_reducers_by_weight(job_spec: &JobSpec, shuffle_pairs: &Shuffle) -> Vec<usize> {
+    // reducer rank sorted by weight
+    let mut reducer_weight = vec![0; job_spec.num_reduce];
+    debug_assert!(job_spec.num_map <= shuffle_pairs.0.len());
+    for i in 0..job_spec.num_map {
+        for (j, w) in reducer_weight.iter_mut().enumerate() {
+            *w += shuffle_pairs.0[i][j];
+        }
+    }
+
+    use std::cmp::Reverse;
+    let mut rank: Vec<_> = (0..job_spec.num_reduce).collect();
+    rank.sort_by_key(|&r| Reverse(reducer_weight[r]));
+    rank
+}
 
 #[derive(Debug, Default)]
 pub struct GreedyReducerScheduler {}
@@ -73,17 +89,7 @@ impl PlaceReducer for GreedyReducerScheduler {
         }
 
         // reducer rank sorted by weight
-        let mut reducer_weight = vec![0; job_spec.num_reduce];
-        debug_assert!(job_spec.num_map <= shuffle_pairs.0.len());
-        for i in 0..job_spec.num_map {
-            for (j, w) in reducer_weight.iter_mut().enumerate() {
-                *w += shuffle_pairs.0[i][j];
-            }
-        }
-
-        use std::cmp::Reverse;
-        let mut rank: Vec<_> = (0..job_spec.num_reduce).collect();
-        rank.sort_by_key(|&r| Reverse(reducer_weight[r]));
+        let rank = sort_reducers_by_weight(&job_spec, &shuffle_pairs);
 
         for j in rank {
             let mut min_est = f64::MAX;
@@ -171,6 +177,10 @@ impl PlaceReducer for GreedyReducerScheduler {
 pub struct ImprovedGreedyReducerScheduler {}
 
 impl ImprovedGreedyReducerScheduler {
+    #[deprecated(
+        since = "0.1.0",
+        note = "Despite good performane, it has certain issues, please do not use it. Use GreedyReducerSchedulerPaper instead."
+    )]
     pub fn new() -> Self {
         Default::default()
     }
@@ -268,17 +278,7 @@ impl PlaceReducer for ImprovedGreedyReducerScheduler {
             .collect();
 
         // reducer rank sorted by weight
-        let mut reducer_weight = vec![0; job_spec.num_reduce];
-        debug_assert!(job_spec.num_map <= shuffle_pairs.0.len());
-        for i in 0..job_spec.num_map {
-            for (j, w) in reducer_weight.iter_mut().enumerate() {
-                *w += shuffle_pairs.0[i][j];
-            }
-        }
-
-        use std::cmp::Reverse;
-        let mut rank: Vec<_> = (0..job_spec.num_reduce).collect();
-        rank.sort_by_key(|&r| Reverse(reducer_weight[r]));
+        let rank = sort_reducers_by_weight(&job_spec, &shuffle_pairs);
 
         for j in rank {
             let mut min_est = f64::MAX;
@@ -402,17 +402,7 @@ impl PlaceReducer for GreedyReducerLevel1Scheduler {
             .collect();
 
         // reducer rank sorted by weight
-        let mut reducer_weight = vec![0; job_spec.num_reduce];
-        debug_assert!(job_spec.num_map <= shuffle_pairs.0.len());
-        for i in 0..job_spec.num_map {
-            for (j, w) in reducer_weight.iter_mut().enumerate() {
-                *w += shuffle_pairs.0[i][j];
-            }
-        }
-
-        use std::cmp::Reverse;
-        let mut rank: Vec<_> = (0..job_spec.num_reduce).collect();
-        rank.sort_by_key(|&r| Reverse(reducer_weight[r]));
+        let rank = sort_reducers_by_weight(&job_spec, &shuffle_pairs);
 
         for j in rank {
             let mut min_cross = usize::MAX;
@@ -423,13 +413,7 @@ impl PlaceReducer for GreedyReducerLevel1Scheduler {
                 let host_ix = cluster.get_node_index(&host_name);
 
                 if *taken.entry(host_ix).or_default() < collocate as usize + 1 {
-                    let cross = self.evaluate(
-                        j,
-                        i,
-                        cluster,
-                        mapper,
-                        shuffle_pairs,
-                    );
+                    let cross = self.evaluate(j, i, cluster, mapper, shuffle_pairs);
 
                     if min_cross > cross {
                         min_cross = cross;
@@ -451,7 +435,144 @@ impl PlaceReducer for GreedyReducerLevel1Scheduler {
             let best_node = cluster[best_node_ix].name.clone();
 
             // here we get the best node
-            *taken.entry(best_node_ix).or_default() += 2;  // one host only one reducer, so just disable the host
+            *taken.entry(best_node_ix).or_default() += 2; // one host only one reducer, so just disable the host
+            placement[j] = best_node;
+        }
+
+        Placement(placement)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct GreedyReducerSchedulerPaper {}
+
+impl GreedyReducerSchedulerPaper {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn evaluate(
+        &self,
+        reducer_rank: usize,
+        host_id: usize,
+        traffic: &HashMap<LinkIx, usize>,
+        cluster: &dyn Topology,
+        mapper: &Placement,
+        shuffle_pairs: &Shuffle,
+        collocate: bool,
+    ) -> (f64, usize) {
+        let mut cross = 0;
+        let mut est: f64 = 0.;
+
+        let host_name = format!("host_{}", host_id);
+        let r_ix = cluster.get_node_index(&host_name);
+
+        let mut new_traffic = traffic.clone();
+        let mut local_traffic = 0;
+        for (mi, m) in mapper.0.iter().enumerate() {
+            let flow_size = shuffle_pairs.0[mi][reducer_rank];
+            let m_ix = cluster.get_node_index(m);
+
+            if m_ix == r_ix {
+                assert!(collocate);
+                local_traffic += flow_size;
+            } else {
+                let route = cluster.resolve_route(m, &host_name, &RouteHint::default(), None);
+                if route.path.len() > 2 {
+                    cross += flow_size;
+                }
+                for link_ix in route.path {
+                    *new_traffic.entry(link_ix).or_insert(0) += flow_size;
+                }
+            }
+        }
+
+        for (&link_ix, &tr) in new_traffic.iter() {
+            let bw = cluster[link_ix].bandwidth;
+            est = est.max(tr as f64 / bw.val() as f64);
+        }
+
+        est = est.max(local_traffic as f64 / 400.gbps().val() as f64);
+
+        (est, cross)
+    }
+}
+
+impl PlaceReducer for GreedyReducerSchedulerPaper {
+    fn place(
+        &mut self,
+        cluster: &dyn Topology,
+        job_spec: &JobSpec,
+        mapper: &Placement,
+        shuffle_pairs: &Shuffle,
+        collocate: bool,
+    ) -> Placement {
+        // two-level allocation
+        // first, find a best rack to place the reducer
+        // second, find the best node in that rack
+        let mut placement = vec![String::new(); job_spec.num_reduce];
+
+        // existing traffic on each link during greedy running
+        let mut traffic: HashMap<LinkIx, usize> = Default::default();
+
+        let mut taken: HashMap<_, _> = mapper
+            .0
+            .iter()
+            .map(|m| (cluster.get_node_index(m), 1))
+            .collect();
+
+        // reducer rank sorted by weight
+        let rank = sort_reducers_by_weight(&job_spec, &shuffle_pairs);
+
+        for j in rank {
+            let mut min_est = f64::MAX;
+            let mut min_cross = usize::MAX;
+            let mut best_node_id = None;
+
+            for i in 0..cluster.num_hosts() {
+                let host_name = format!("host_{}", i);
+                let host_ix = cluster.get_node_index(&host_name);
+
+                if *taken.entry(host_ix).or_default() < collocate as usize + 1 {
+                    let (est, cross) =
+                        self.evaluate(j, i, &traffic, cluster, mapper, shuffle_pairs, collocate);
+
+                    if min_est > est || min_est + 1e-10 > est && min_cross > cross {
+                        min_est = est;
+                        min_cross = cross;
+                        best_node_id = Some(i);
+                    }
+                }
+            }
+
+            assert!(best_node_id.is_some());
+            // get the best_node and its rack
+            let best_node_id = best_node_id.unwrap();
+            let best_node_name = format!("host_{}", best_node_id);
+            let best_node_ix = cluster.get_node_index(&best_node_name);
+            let best_rack = get_rack_id(cluster, &best_node_name);
+
+            // update traffic on links
+            for (mi, _m) in mapper.0.iter().enumerate() {
+                let flow_size = shuffle_pairs.0[mi][j];
+                let route = cluster.resolve_route(
+                    &mapper.0[mi],
+                    &best_node_name,
+                    &RouteHint::default(),
+                    None,
+                );
+                for link_ix in route.path {
+                    *traffic.entry(link_ix).or_insert(0) += flow_size;
+                }
+            }
+
+            debug!("best_rack: {}", best_rack);
+
+            // Step 2. fix the rack, find the best node in the rack
+            let best_node = cluster[best_node_ix].name.clone();
+
+            // here we get the best node
+            *taken.entry(best_node_ix).or_default() += 2;
             placement[j] = best_node;
         }
 

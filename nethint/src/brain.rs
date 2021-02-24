@@ -131,7 +131,7 @@ impl Brain {
         &self.cluster
     }
 
-    pub fn make_asymmetric(&mut self, seed: u64) {
+    fn make_asymmetric(&mut self, seed: u64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
 

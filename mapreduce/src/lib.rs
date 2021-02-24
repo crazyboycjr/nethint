@@ -18,6 +18,7 @@ pub mod greedy;
 pub use greedy::GreedyReducerScheduler;
 pub use greedy::ImprovedGreedyReducerScheduler;
 pub use greedy::GreedyReducerLevel1Scheduler;
+pub use greedy::GreedyReducerSchedulerPaper;
 
 pub mod plot;
 

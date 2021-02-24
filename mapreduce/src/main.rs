@@ -265,7 +265,7 @@ fn run_experiments_multitenant(
         })
         .collect();
 
-    brain.borrow_mut().garbage_collect(ncases);
+    brain.borrow_mut().reset();
     (app_stats, max_jct.unwrap())
 }
 
