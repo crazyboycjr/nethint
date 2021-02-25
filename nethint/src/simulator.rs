@@ -1,7 +1,7 @@
-use std::cell::RefCell;
-use std::cmp::Reverse;
+use std::{cmp::Reverse, fmt::Debug};
 use std::collections::BinaryHeap;
 use std::rc::Rc;
+use std::{cell::RefCell, unimplemented};
 
 use fnv::FnvBuildHasher;
 use indexmap::IndexMap;
@@ -18,7 +18,7 @@ use crate::{
     timer::{OnceTimer, PoissonTimer, RepeatTimer, Timer, TimerKind},
 };
 use crate::{
-    bandwidth::{Bandwidth, BandwidthTrait},
+    bandwidth::{self, Bandwidth, BandwidthTrait},
     FairnessModel,
 };
 use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
@@ -206,14 +206,7 @@ impl SimulatorBuilder {
                 ts: 0,
                 state,
                 timers,
-                fairness: self.setting.fairness,
-                loopback_speed: self.setting.loopback_speed,
-                background_flow_hard: if self.setting.background_flow_hard.enable {
-                    Some(self.setting.background_flow_hard)
-                } else {
-                    None
-                },
-                enable_nethint: self.setting.enable_nethint,
+                setting: self.setting,
                 estimator: Some(estimator),
             }
         } else {
@@ -222,14 +215,7 @@ impl SimulatorBuilder {
                 ts: 0,
                 state: NetState::default(),
                 timers,
-                fairness: self.setting.fairness,
-                loopback_speed: self.setting.loopback_speed,
-                background_flow_hard: if self.setting.background_flow_hard.enable {
-                    Some(self.setting.background_flow_hard)
-                } else {
-                    None
-                },
-                enable_nethint: self.setting.enable_nethint,
+                setting: self.setting,
                 estimator: None,
             }
         };
@@ -244,12 +230,8 @@ pub struct Simulator {
     ts: Timestamp,
     state: NetState,
     timers: BinaryHeap<Box<dyn Timer>>,
-    // fairness model
-    fairness: FairnessModel,
-    loopback_speed: Bandwidth,
-    background_flow_hard: Option<BackgroundFlowHard>,
-    // nethint
-    enable_nethint: bool,
+    // setting
+    setting: SimulatorSetting,
     estimator: Option<Box<dyn Estimator>>,
 }
 
@@ -260,10 +242,7 @@ impl Simulator {
             ts: 0,
             state: Default::default(),
             timers: BinaryHeap::new(),
-            fairness: FairnessModel::default(),
-            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
-            background_flow_hard: None,
-            enable_nethint: false,
+            setting: SimulatorSetting::default(),
             estimator: None,
         }
     }
@@ -282,10 +261,7 @@ impl Simulator {
             ts: 0,
             state,
             timers,
-            fairness: FairnessModel::default(),
-            loopback_speed: LOOPBACK_SPEED_GBPS.gbps(),
-            background_flow_hard: None,
-            enable_nethint: true,
+            setting: SimulatorSetting::default(),
             estimator: Some(estimator),
         }
     }
@@ -307,21 +283,35 @@ impl Simulator {
 
     #[inline]
     fn calc_delta_per_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
-        let (num_active, consumed_bw) = fs.iter().fold((0, 0.0), |acc, f| {
+        let (num_active, consumed_bw, min_inc) = fs.iter().fold((0, 0.0, f64::MAX), |acc, f| {
             let f = f.borrow();
-            (acc.0 + !f.converged as usize, acc.1 + f.speed)
+            assert!(f.speed < f.max_rate.val() as f64);
+            (
+                acc.0 + !f.converged as usize,
+                acc.1 + f.speed,
+                acc.2.min(f.max_rate.val() as f64 - f.speed),
+            )
         });
         // COMMENT(cjr): due to precision issue, here consumed_bw can be a little bigger than bw
-        let bw_inc = if l.bandwidth < (consumed_bw / 1e9).gbps() {
+        let mut bw_inc = if l.bandwidth < (consumed_bw / 1e9).gbps() {
             0.gbps()
         } else {
             (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active as f64
         };
+
+        // some flows may reach its max_rate earlier
+        bw_inc = bw_inc.min((min_inc / 1e9).gbps());
+
         // set when a flow will converge
         fs.iter_mut()
             .map(|f| f.borrow_mut())
             .for_each(|mut f| f.speed_bound = f.speed_bound.min(f.speed + bw_inc.val() as f64));
         bw_inc
+    }
+
+    #[inline]
+    fn calc_delta_per_vm_pair(l: &Link, fs: &mut FlowSet) -> Bandwidth {
+        unimplemented!()
     }
 
     #[inline]
@@ -332,12 +322,16 @@ impl Simulator {
             let mut consumed_bw = 0.0;
             let mut num_active_tenants = 0;
             let mut num_active_flows = Vec::new();
+            let mut min_inc_to_max_rate = f64::MAX;
             for fs in m.values() {
                 let mut tenant_active_flows = 0;
                 for f in fs {
                     let f = f.borrow();
                     consumed_bw += f.speed;
                     tenant_active_flows += !f.converged as usize;
+                    assert!(f.speed < f.max_rate.val() as f64);
+                    min_inc_to_max_rate =
+                        min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
                 }
 
                 num_active_tenants += (tenant_active_flows > 0) as usize;
@@ -352,7 +346,7 @@ impl Simulator {
                 (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active_tenants as f64
             };
 
-            let mut min_inc = bw_inc_tenant;
+            let mut min_inc = bw_inc_tenant.min((min_inc_to_max_rate / 1e9).gbps());
 
             // set when a flow will converge
             for (i, fs) in m.values_mut().enumerate() {
@@ -378,8 +372,9 @@ impl Simulator {
     #[inline]
     fn calc_delta(fairness: FairnessModel, l: &Link, fs: &mut FlowSet) -> Bandwidth {
         match fairness {
-            FairnessModel::PerFlowMinMax => Self::calc_delta_per_flow(l, fs),
-            FairnessModel::TenantFlowMinMax => Self::calc_delta_tenant_flow(l, fs),
+            FairnessModel::PerFlowMaxMin => Self::calc_delta_per_flow(l, fs),
+            FairnessModel::PerVmPairMaxMin => Self::calc_delta_per_vm_pair(l, fs),
+            FairnessModel::TenantFlowMaxMin => Self::calc_delta_tenant_flow(l, fs),
         }
     }
 
@@ -392,9 +387,9 @@ impl Simulator {
         self.state.emit_ready_flows(self.ts);
 
         // nethint sampling
-        if self.enable_nethint {
+        if self.setting.enable_nethint {
             if let Some(timer) = self.timers.peek() {
-                if timer.next_alert() <= self.ts + ts_inc && timer.kind() == TimerKind::Repeat {
+                if timer.next_alert() <= self.ts && timer.kind() == TimerKind::Repeat {
                     let timer = self.timers.pop().unwrap();
                     match timer.as_box_any().downcast::<RepeatTimer>() {
                         Ok(mut repeat_timer) => {
@@ -407,15 +402,12 @@ impl Simulator {
                         Err(any_timer) => {
                             match any_timer.downcast::<PoissonTimer>() {
                                 Ok(mut poisson_timer) => {
-                                    assert!(
-                                        self.background_flow_hard.is_some()
-                                            && self.background_flow_hard.unwrap().enable
-                                    );
+                                    assert!(self.setting.background_flow_hard.enable);
                                     // ask brain to update background flow
                                     let brain = self.state.brain.as_ref().unwrap().clone();
                                     brain.borrow_mut().update_background_flow_hard(
-                                        self.background_flow_hard.unwrap().probability,
-                                        self.background_flow_hard.unwrap().amplitude,
+                                        self.setting.background_flow_hard.probability,
+                                        self.setting.background_flow_hard.amplitude,
                                     );
                                     poisson_timer.reset();
                                     self.timers.push(poisson_timer);
@@ -437,18 +429,18 @@ impl Simulator {
         self.state.running_flows.iter().for_each(|f| {
             let mut f = f.borrow_mut();
             if f.is_loopback() {
-                f.speed_bound = self.loopback_speed.val() as f64;
+                f.speed_bound = self.setting.loopback_speed.val() as f64;
                 f.converged = true;
-                f.speed = self.loopback_speed.val() as f64;
+                f.speed = self.setting.loopback_speed.val() as f64;
                 converged += 1;
             } else {
-                f.speed_bound = f64::MAX;
+                f.speed_bound = f.max_rate.val() as f64;
                 f.converged = false;
                 f.speed = 0.0;
             }
         });
 
-        let fairness = self.fairness;
+        let fairness = self.setting.fairness;
         while converged < active_flows {
             // find the bottleneck link
             let brain = &self.state.brain.as_ref().unwrap().borrow();
@@ -477,7 +469,7 @@ impl Simulator {
                         f.converged = true;
                         converged += 1;
                     } else {
-                        f.speed_bound = f64::MAX;
+                        f.speed_bound = f.max_rate.val() as f64;
                     }
                 }
             }
@@ -522,7 +514,14 @@ impl Simulator {
             assert!(
                 !(first_complete_time.is_none()
                     && first_ready_time.is_none()
-                    && (self.timers.is_empty() || self.timers.len() == 1 && self.enable_nethint))
+                    && (self.timers.is_empty() || self.timers.len() == 1 && self.setting.enable_nethint))
+            );
+            assert!(
+                ts_inc <= self.setting.sample_interval_ns,
+                "ts_inc: {}, now: {}, next timer: {:?}",
+                ts_inc,
+                self.ts,
+                self.timers.peek().map(|x| x.next_alert())
             );
 
             // it must be the timer
@@ -584,12 +583,12 @@ impl<'a> Executor<'a> for Simulator {
         }
 
         // set background flow hard at the very beginning
-        if self.background_flow_hard.is_some() && self.background_flow_hard.unwrap().enable {
+        if self.setting.background_flow_hard.enable {
             // ask brain to update background flow
             let brain = Rc::clone(&self.state.brain.as_ref().unwrap());
             brain.borrow_mut().update_background_flow_hard(
-                self.background_flow_hard.unwrap().probability,
-                self.background_flow_hard.unwrap().amplitude,
+                self.setting.background_flow_hard.probability,
+                self.setting.background_flow_hard.amplitude,
             );
         }
 
@@ -620,7 +619,7 @@ impl<'a> Executor<'a> for Simulator {
                         finished = true;
                     }
                     Event::NetHintRequest(app_id, tenant_id, version) => {
-                        assert!(self.enable_nethint, "Nethint not enabled.");
+                        assert!(self.setting.enable_nethint, "Nethint not enabled.");
                         let response = AppEventKind::NetHintResponse(
                             app_id,
                             tenant_id,
@@ -677,8 +676,9 @@ enum FlowSet {
 impl FlowSet {
     fn new(fairness: FairnessModel) -> FlowSet {
         match fairness {
-            FairnessModel::PerFlowMinMax => FlowSet::Flat(Vec::new()),
-            FairnessModel::TenantFlowMinMax => FlowSet::Groupped(HashMap::default()),
+            FairnessModel::PerFlowMaxMin => FlowSet::Flat(Vec::new()),
+            FairnessModel::PerVmPairMaxMin => unimplemented!(),
+            FairnessModel::TenantFlowMaxMin => FlowSet::Groupped(HashMap::default()),
         }
     }
 
@@ -822,21 +822,48 @@ impl NetState {
     fn add_flow(&mut self, r: TraceRecord, cluster: Option<&Cluster>, sim_ts: Timestamp) {
         let start = std::time::Instant::now();
         let hint = RouteHint::VirtAddr(r.flow.vsrc.as_deref(), r.flow.vdst.as_deref());
-        let route = if let Some(cluster) = cluster {
-            cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None)
+        let (max_rate, route) = if let Some(cluster) = cluster {
+            // only the physical cluster is what we have, no virtualization
+            let max_rate = bandwidth::MAX;
+            (
+                max_rate,
+                cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None),
+            )
         } else {
-            self.brain
-                .as_ref()
-                .unwrap()
-                .borrow()
-                .cluster()
-                .resolve_route(&r.flow.src, &r.flow.dst, &hint, None)
+            let brain = self.brain.as_ref().unwrap().borrow();
+            let max_rate = if let Some(tenant_id) = r.flow.tenant_id {
+                let vcluster = brain.vclusters[&tenant_id].borrow();
+                let src_vhost_ix = vcluster.get_node_index(r.flow.vsrc.as_ref().unwrap());
+                let dst_vhost_ix = vcluster.get_node_index(r.flow.vdst.as_ref().unwrap());
+                vcluster[vcluster.get_uplink(src_vhost_ix)].bandwidth.min(
+                    vcluster[vcluster.get_reverse_link(vcluster.get_uplink(dst_vhost_ix))]
+                        .bandwidth,
+                )
+            } else {
+                let cluster = brain.cluster();
+                let src_host_ix = cluster.get_node_index(&r.flow.src);
+                let dst_host_ix = cluster.get_node_index(&r.flow.dst);
+                cluster[cluster.get_uplink(src_host_ix)].bandwidth.min(
+                    cluster[cluster.get_reverse_link(cluster.get_uplink(dst_host_ix))].bandwidth,
+                )
+            };
+            assert!(max_rate > 0.gbps());
+
+            (
+                max_rate,
+                self.brain
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .cluster()
+                    .resolve_route(&r.flow.src, &r.flow.dst, &hint, None),
+            )
         };
 
         let end = std::time::Instant::now();
         self.resolve_route_time += end - start;
 
-        let fs = FlowState::new(r.ts, r.flow, route);
+        let fs = FlowState::new(r.ts, r.flow, max_rate, route);
         if r.ts > sim_ts {
             // add to buffered flows
             self.flow_bufs.push(Reverse(fs));
@@ -911,6 +938,7 @@ impl NetState {
             use crate::app::AppGroupTokenCoding;
             let token = f.flow.token.unwrap_or_else(|| 0.into());
             let (tenant_id, _) = token.decode();
+            assert!(tenant_id == f.flow.tenant_id.unwrap());
             if let Some(vcluster) = brain.borrow().vclusters.get(&tenant_id) {
                 assert!(f.flow.vsrc.is_some() && f.flow.vdst.is_some());
                 let vsrc_ix = vcluster
@@ -921,6 +949,8 @@ impl NetState {
                     .get_node_index(f.flow.vdst.as_deref().unwrap());
                 vcluster.borrow_mut()[vsrc_ix].counters.update_tx(f, delta);
                 vcluster.borrow_mut()[vdst_ix].counters.update_rx(f, delta);
+                // log::info!("src side counter: {:?}", vcluster.borrow_mut()[vsrc_ix].counters);
+                // log::info!("dst side counter: {:?}", vcluster.borrow_mut()[vdst_ix].counters);
             }
         }
     }
@@ -935,9 +965,11 @@ pub(crate) struct FlowState {
     ts: Timestamp,
     /// read only flow property
     flow: Flow,
+    /// maximal rate of this flow. Some flows are rate limited while others are limited by the host's speed
+    max_rate: Bandwidth,
     /// below are states, mutated by the simulator
     ///
-    /// upper bound to decide if a flow should converge, used with TenantFlowMaxMin fairness model
+    /// upper bound to decide if a flow should converge
     speed_bound: f64,
     converged: bool,
     bytes_sent: usize,
@@ -947,10 +979,11 @@ pub(crate) struct FlowState {
 
 impl FlowState {
     #[inline]
-    fn new(ts: Timestamp, flow: Flow, route: Route) -> FlowStateRef {
+    fn new(ts: Timestamp, flow: Flow, max_rate: Bandwidth, route: Route) -> FlowStateRef {
         Rc::new(RefCell::new(FlowState {
             ts,
             flow,
+            max_rate,
             speed_bound: 0.0,
             converged: false,
             bytes_sent: 0,

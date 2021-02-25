@@ -8,7 +8,7 @@ use crate::{
     bandwidth::{Bandwidth, BandwidthTrait},
     brain::{Brain, TenantId},
     cluster::{Counters, LinkIx, NodeIx, NodeType, Topology, VirtCluster},
-    Duration, Timestamp,
+    Duration, SharingMode, Timestamp,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,9 +214,17 @@ impl SimpleEstimator {
                             .zip_with(sampler.vmstats[&source_ix].last_delta_tx_in(), |x, y| {
                                 (8.0 * (x - y) as f64 / sampler.interval_ns as f64).gbps()
                             }),
-                        NodeType::Host => sampler.vmstats[&source_ix]
-                            .last_delta_tx_total()
-                            .map(|x| (8.0 * x as f64 / sampler.interval_ns as f64).gbps()),
+                        NodeType::Host => {
+                            sampler.vmstats[&source_ix].last_delta_tx_total().map(|x| {
+                                if x > 0 {
+                                    append_log_file(&format!(
+                                        "host link, last_delta_tx_total: {}",
+                                        x
+                                    ));
+                                }
+                                (8.0 * x as f64 / sampler.interval_ns as f64).gbps()
+                            })
+                        }
                     }
                 } else {
                     // rx
@@ -226,9 +234,17 @@ impl SimpleEstimator {
                             .zip_with(sampler.vmstats[&target_ix].last_delta_rx_in(), |x, y| {
                                 (8.0 * (x - y) as f64 / sampler.interval_ns as f64).gbps()
                             }),
-                        NodeType::Host => sampler.vmstats[&target_ix]
-                            .last_delta_rx_total()
-                            .map(|x| (8.0 * x as f64 / sampler.interval_ns as f64).gbps()),
+                        NodeType::Host => {
+                            sampler.vmstats[&target_ix].last_delta_rx_total().map(|x| {
+                                if x > 0 {
+                                    append_log_file(&format!(
+                                        "host link, last_delta_rx_total: {}",
+                                        x
+                                    ));
+                                }
+                                (8.0 * x as f64 / sampler.interval_ns as f64).gbps()
+                            })
+                        }
                     }
                 }
             } else {
@@ -251,6 +267,15 @@ impl SimpleEstimator {
             plink_capacity
         );
 
+        if demand_sum > 0.gbps() {
+            append_log_file(&format!(
+                "demand_sum: {}, cnt = {}, pink_capacity/cnt = {}",
+                demand_sum,
+                cnt,
+                plink_capacity / cnt
+            ));
+        }
+
         demand.min(std::cmp::max(
             plink_capacity - demand_sum,
             plink_capacity / cnt,
@@ -263,6 +288,7 @@ impl Estimator for SimpleEstimator {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         for link_ix in vcluster.all_links() {
+            // just some non-zero constant value will be OK
             vcluster[link_ix].bandwidth = 100.gbps();
         }
 
@@ -276,12 +302,40 @@ impl Estimator for SimpleEstimator {
         for link_ix in vcluster.all_links() {
             let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
             let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+
             let bw = self.compute_fair_share(
                 brain.cluster()[phys_link].bandwidth,
                 brain.cluster()[phys_link].bandwidth,
                 all_virtual_links,
             );
-            vcluster[link_ix].bandwidth = bw;
+            let count = get_all_virtual_links(&*brain, phys_link).count();
+            log::info!(
+                "phys_link: {}, estimated: bw: {}, vlinks count: {}",
+                brain.cluster()[phys_link].bandwidth,
+                bw,
+                count
+            );
+            if brain.cluster()[phys_link].bandwidth > bw {
+                append_log_file(&format!(
+                    "phys_link: {}, estimated: bw: {}, vlinks count: {}",
+                    brain.cluster()[phys_link].bandwidth,
+                    bw,
+                    count
+                ));
+            }
+
+            // whether the link is limited should also be considered when giving nethint
+            vcluster[link_ix].bandwidth = if brain.setting().sharing_mode
+                == SharingMode::RateLimited
+                && (vcluster[vcluster.get_target(link_ix)].depth > 1 // the link a host link
+                    && vcluster[vcluster.get_source(link_ix)].depth > 1)
+            {
+                let limited_rate = vcluster[link_ix].bandwidth;
+                assert!(limited_rate > 0.gbps());
+                limited_rate.min(bw)
+            } else {
+                bw
+            }
         }
 
         vcluster
@@ -298,4 +352,15 @@ impl Estimator for SimpleEstimator {
                 .sample(vcluster, ts);
         }
     }
+}
+
+fn append_log_file(str: &str) {
+    use std::io::{Seek, Write};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open("/tmp/ff")
+        .unwrap();
+    f.seek(std::io::SeekFrom::End(0)).unwrap();
+    writeln!(f, "{}", str).unwrap();
 }

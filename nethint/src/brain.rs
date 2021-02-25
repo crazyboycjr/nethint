@@ -6,9 +6,12 @@ use fnv::FnvHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
 use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
+use crate::{
+    architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs},
+    SharingMode,
+};
 
 pub type TenantId = usize;
 
@@ -24,6 +27,8 @@ pub struct BrainSetting {
     pub broken: f64,
     /// The slots of each physical machine
     pub max_slots: usize,
+    /// how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
+    pub sharing_mode: SharingMode,
     /// The parameters of the cluster's physical topology
     pub topology: TopoArgs,
 }
@@ -131,6 +136,10 @@ impl Brain {
         &self.cluster
     }
 
+    pub fn setting(&self) -> &BrainSetting {
+        &self.setting
+    }
+
     fn make_asymmetric(&mut self, seed: u64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
@@ -218,17 +227,26 @@ impl Brain {
                         // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
                         new_bw
                     } else {
-                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
-                        let mut empty_slots = total_slots - current_tenants;
-                        // guarantee each tenant can have total/current_tenants bandwidth
-                        if empty_slots <= 1 {
-                            continue;
+                        match self.setting.sharing_mode {
+                            SharingMode::RateLimited => {
+                                // if the sharing mode is "RateLimited", then we are good here
+                                self.orig_bw[&link_ix]
+                                    * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0)
+                            }
+                            SharingMode::Guaranteed => {
+                                // if the sharing mode is "Guaranteed", then we cannot take too much bandwidth from that host
+                                let mut empty_slots = total_slots - current_tenants;
+                                // guarantee each tenant can have total/current_tenants bandwidth
+                                if empty_slots <= 1 {
+                                    continue;
+                                }
+                                // do not zero new_bw
+                                empty_slots -= 1;
+                                let fraction = 1.0
+                                    - rng.gen_range(1..=empty_slots) as f64 / total_slots as f64;
+                                self.orig_bw[&link_ix] * fraction
+                            }
                         }
-                        // do not zero new_bw
-                        empty_slots -= 1;
-                        let new_bw = self.orig_bw[&link_ix]
-                            * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
-                        new_bw
                     };
 
                     assert!(
@@ -391,18 +409,29 @@ impl Brain {
                 // new ToR in virtual cluster
                 let tor_name = format!("tor_{}", tor_alloc.len());
                 inner.add_node(Node::new(&tor_name, 2, NodeType::Switch));
+                // despite we have sharing mode, we intentionally leave 0.gbps() here.
+                // Then if anywhere tries to use this information, it will probably yields some errors during computation.
                 inner.add_link_by_name(root, &tor_name, 0.gbps());
                 tor_alloc.insert(tor_ix, tor_name);
             }
 
             let host_len = host_alloc.len();
-            let host_name = host_alloc
+            let vhost_name = host_alloc
                 .entry(host_ix)
                 .or_insert(format!("host_{}", host_len));
 
             // connect the host to the ToR
-            inner.add_node(Node::new(host_name, 3, NodeType::Host));
-            inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
+            inner.add_node(Node::new(vhost_name, 3, NodeType::Host));
+
+            // here we compute the limited rate of a virtual machine
+            let phys_link = self.cluster().get_uplink(host_ix);
+            let phys_link_bw = self.orig_bw[&phys_link];
+            let allocated_bw = match self.setting.sharing_mode {
+                SharingMode::RateLimited => phys_link_bw / self.setting.max_slots, // also the rate limit works on both direction of the link
+                SharingMode::Guaranteed => phys_link_bw,
+            };
+            inner.add_link_by_name(&tor_alloc[&tor_ix], vhost_name, allocated_bw);
+
             self.used.entry(host_ix).and_modify(|e| *e += 1);
         }
 

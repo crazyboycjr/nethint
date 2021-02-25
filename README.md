@@ -61,8 +61,8 @@ nethint_level = 2
 nethint = true
 sample_interval_ns = 100_000_000 # 100ms
 loopback_speed = 400
-fairness = "TenantFlowMinMax"
-# fairness = "PerFlowMinMax"
+fairness = "TenantFlowMaxMin"
+# fairness = "PerFlowMaxMin"
 
 # emulate background flow by subtracting a bandwidth to each link
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants

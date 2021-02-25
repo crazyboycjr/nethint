@@ -5,6 +5,9 @@ enum BandwidthUnit {
     Gbps = 1_000_000_000,
 }
 
+pub const MAX: Bandwidth = Bandwidth { val: u64::MAX, unit: BandwidthUnit::Gbps };
+pub const MIN: Bandwidth = Bandwidth { val: u64::MIN, unit: BandwidthUnit::Gbps };
+
 impl std::fmt::Display for BandwidthUnit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use BandwidthUnit::*;

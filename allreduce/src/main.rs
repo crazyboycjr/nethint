@@ -142,7 +142,7 @@ fn run_experiments(
     let mut simulator = SimulatorBuilder::new()
         .enable_nethint(true)
         .brain(Rc::clone(&brain))
-        .fairness(FairnessModel::TenantFlowMinMax)
+        .fairness(FairnessModel::TenantFlowMaxMin)
         .sample_interval_ns(100_000_000)
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
