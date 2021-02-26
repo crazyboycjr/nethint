@@ -355,31 +355,36 @@ impl GreedyReducerLevel1Scheduler {
         &self,
         reducer_rank: usize,
         host_id: usize,
+        ingress: &[usize],
+        egress: &[usize],
         cluster: &dyn Topology,
         mapper: &Placement,
         shuffle_pairs: &Shuffle,
     ) -> usize {
-        let mut cross = 0;
-
         let host_name = format!("host_{}", host_id);
         let r_ix = cluster.get_node_index(&host_name);
 
         let r_uplink_ix = cluster.get_uplink(r_ix);
         let r_tor_ix = cluster.get_target(r_uplink_ix);
+        let r_rack_id = get_rack_id(cluster, &host_name);
+
+        let mut ingress_copy = ingress.to_vec();
+        let mut egress_copy = egress.to_vec();
 
         for (mi, m) in mapper.0.iter().enumerate() {
             let flow_size = shuffle_pairs.0[mi][reducer_rank];
 
             let m_ix = cluster.get_node_index(m);
-            let rack_m = cluster.get_target(cluster.get_uplink(m_ix));
-            // minimize cross rack bw
+            let m_tor_ix = cluster.get_target(cluster.get_uplink(m_ix));
+            let m_rack_id = get_rack_id(cluster, m);
 
-            if rack_m != r_tor_ix {
-                cross += flow_size;
+            if m_tor_ix != r_tor_ix {
+                ingress_copy[r_rack_id] += flow_size;
+                egress_copy[m_rack_id] += flow_size;
             }
         }
 
-        cross
+        ingress_copy.into_iter().chain(egress_copy).max().unwrap()
     }
 }
 
@@ -394,6 +399,13 @@ impl PlaceReducer for GreedyReducerLevel1Scheduler {
     ) -> Placement {
         assert!(collocate, "assume collocation here");
         let mut placement = vec![String::new(); job_spec.num_reduce];
+        let num_racks = cluster.num_switches() - 1;
+
+        // existing ingress traffic to rack_i during greedy
+        let mut ingress = vec![0; num_racks];
+
+        // existing egress traffic to rack_i during greedy
+        let mut egress = vec![0; num_racks];
 
         let mut taken: HashMap<_, _> = mapper
             .0
@@ -413,7 +425,8 @@ impl PlaceReducer for GreedyReducerLevel1Scheduler {
                 let host_ix = cluster.get_node_index(&host_name);
 
                 if *taken.entry(host_ix).or_default() < collocate as usize + 1 {
-                    let cross = self.evaluate(j, i, cluster, mapper, shuffle_pairs);
+                    let cross =
+                        self.evaluate(j, i, &ingress, &egress, cluster, mapper, shuffle_pairs);
 
                     if min_cross > cross {
                         min_cross = cross;
@@ -430,6 +443,16 @@ impl PlaceReducer for GreedyReducerLevel1Scheduler {
             let best_rack = get_rack_id(cluster, &best_node_name);
 
             debug!("best_rack: {}", best_rack);
+
+            // update ingress and egress
+            ingress[best_rack] += min_cross;
+            for (mi, m) in mapper.0.iter().enumerate() {
+                let flow_size = shuffle_pairs.0[mi][j];
+                let m_rack_id = get_rack_id(cluster, m);
+                if m_rack_id != best_rack {
+                    egress[m_rack_id] += flow_size;
+                }
+            }
 
             // Step 2. fix the rack, find the best node in the rack
             let best_node = cluster[best_node_ix].name.clone();
