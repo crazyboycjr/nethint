@@ -4,7 +4,7 @@
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
-ncases = 500
+ncases = 100
 
 # Number of map tasks and reduce tasks
 # When running from trace, these parameters become scale factors
@@ -37,11 +37,6 @@ collocate = true
 batch_repeat = 1
 
 [[batch]]
-reducer_policy = "HierarchicalGreedy"
-probe = { enable = false }
-nethint_level = 2
-
-[[batch]]
 reducer_policy = "Random"
 probe = { enable = false }
 # NetHint level, possible values are 0, 1, 2
@@ -57,6 +52,12 @@ reducer_policy = "HierarchicalGreedyLevel1"
 probe = { enable = false }
 nethint_level = 1
 
+[[batch]]
+reducer_policy = "HierarchicalGreedyPaper" # please use this
+# reducer_policy = "HierarchicalGreedy"
+probe = { enable = false }
+nethint_level = 2
+
 [simulator]
 nethint = true
 sample_interval_ns = 100_000_000 # 100ms
@@ -69,7 +70,7 @@ fairness = "TenantFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.5, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.5, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

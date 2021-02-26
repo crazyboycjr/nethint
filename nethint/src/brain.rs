@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -393,6 +394,12 @@ impl Brain {
     }
 
     fn place_specified(&mut self, hosts_spec: &[NodeIx]) -> (Cluster, HashMap<String, String>) {
+        if hosts_spec.iter().cloned().collect::<HashSet<_>>().len() < hosts_spec.len() {
+            log::warn!(
+                "multiple VMs will be placed on the same host, hosts_spec: {:?}",
+                hosts_spec
+            );
+        }
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
 

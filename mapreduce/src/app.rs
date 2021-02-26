@@ -5,9 +5,9 @@ use crate::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
     },
-    GreedyReducerLevel1Scheduler, GreedyReducerSchedulerPaper,
-    JobSpec, PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy,
-    Shuffle, ShufflePattern,
+    GreedyReducerLevel1Scheduler, GreedyReducerScheduler, GreedyReducerSchedulerPaper, JobSpec,
+    PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    ShufflePattern,
 };
 use log::info;
 use nethint::{
@@ -96,11 +96,12 @@ impl<'c> MapReduceApp<'c> {
                 panic!("do not use genetic algorithm");
                 // Box::new(GeneticReducerScheduler::new())
             }
-            ReducerPlacementPolicy::HierarchicalGreedy => {
-                Box::new(GreedyReducerSchedulerPaper::new())
-            }
+            ReducerPlacementPolicy::HierarchicalGreedy => Box::new(GreedyReducerScheduler::new()),
             ReducerPlacementPolicy::HierarchicalGreedyLevel1 => {
                 Box::new(GreedyReducerLevel1Scheduler::new())
+            }
+            ReducerPlacementPolicy::HierarchicalGreedyPaper => {
+                Box::new(GreedyReducerSchedulerPaper::new())
             }
         };
 

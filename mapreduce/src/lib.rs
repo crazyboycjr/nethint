@@ -69,6 +69,7 @@ pub enum ReducerPlacementPolicy {
     GeneticAlgorithm,
     HierarchicalGreedy,
     HierarchicalGreedyLevel1,
+    HierarchicalGreedyPaper,
 }
 
 #[derive(Debug, Clone)]
