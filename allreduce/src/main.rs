@@ -1,6 +1,6 @@
 #![feature(box_patterns)]
-use rand_distr::{Distribution, Poisson};
 use rand::Rng;
+use rand_distr::{Distribution, Poisson};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -9,10 +9,10 @@ use structopt::StructOpt;
 
 use nethint::{
     app::{AppGroup, Application},
-    brain::{Brain, BrainSetting},
+    brain::{Brain, BrainSetting, PlacementStrategy},
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
-    FairnessModel,
+    FairnessModel, SharingMode,
 };
 
 use mapreduce::plink::PlinkApp;
@@ -32,6 +32,7 @@ fn main() {
         seed: 1,
         max_slots: 1, // nethint::brain::MAX_SLOTS,
         topology: opt.topo.clone(),
+        sharing_mode: SharingMode::Guaranteed,
     });
 
     // info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -134,6 +135,7 @@ fn run_experiments(
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),
+            PlacementStrategy::Compact,
         ));
 
         app_group.add(*start_ts, virtualized_app);
