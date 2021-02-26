@@ -224,6 +224,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),
+            config.placement_strategy,
         ));
 
         app_group.add(*start_ts, virtualized_app);

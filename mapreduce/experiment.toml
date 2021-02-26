@@ -20,6 +20,7 @@ mapper_policy = { type = "RandomSkew", args = [1, 0.2] }
 # mapper_policy = { type = "Greedy", args = 1 }
 
 placement_strategy = { type = "Compact" }
+# placement_strategy = { type = "CompactLoadBalanced" }
 # placement_strategy = { type = "Spread" }
 # placement_strategy = { type = "Random", args = 0 }
 

@@ -16,6 +16,7 @@ pub struct Tenant<'a, T> {
     nhosts: usize,
     brain: Rc<RefCell<Brain>>,
     vcluster: Option<VirtCluster>,
+    placement_strategy: PlacementStrategy,
 }
 
 impl<'a, T> std::fmt::Debug for Tenant<'a, T> {
@@ -34,6 +35,7 @@ impl<'a, T> Tenant<'a, T> {
         tenant_id: TenantId,
         nhosts: usize,
         brain: Rc<RefCell<Brain>>,
+        placement_strategy: PlacementStrategy,
     ) -> Self {
         Tenant {
             app,
@@ -41,6 +43,7 @@ impl<'a, T> Tenant<'a, T> {
             brain,
             nhosts,
             vcluster: None,
+            placement_strategy,
         }
     }
 
@@ -59,7 +62,7 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                 let vcluster = self
                     .brain
                     .borrow_mut()
-                    .provision(self.tenant_id, self.nhosts, PlacementStrategy::Compact)
+                    .provision(self.tenant_id, self.nhosts, self.placement_strategy)
                     .unwrap();
                 self.vcluster = Some(vcluster);
                 self.app

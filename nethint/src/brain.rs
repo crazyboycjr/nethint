@@ -65,6 +65,8 @@ pub struct Brain {
 pub enum PlacementStrategy {
     /// Prefer to choose hosts within the same rack.
     Compact,
+    /// Prefer to choose hosts within the same rack, and also prefer to choose empty racks.
+    CompactLoadBalanced,
     /// Prefer to spread instances to different racks.
     Spread,
     /// Random uniformally choose some hosts to allocate.
@@ -286,6 +288,7 @@ impl Brain {
 
         let (inner, virt_to_phys) = match strategy {
             PlacementStrategy::Compact => self.place_compact(nhosts),
+            PlacementStrategy::CompactLoadBalanced => self.place_compact_load_balanced(nhosts),
             PlacementStrategy::Spread => unimplemented!(),
             PlacementStrategy::Random(seed) => self.place_random(nhosts, seed),
         };
@@ -479,6 +482,43 @@ impl Brain {
     }
 
     fn place_compact(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
+        let mut allocated = 0;
+        let mut alloced_hosts = Vec::new();
+
+        // place VMs at the next empty slot, and try to avoid collocation
+        let num_hosts = self.cluster.num_hosts();
+        while allocated < nhosts {
+            for i in 0..num_hosts {
+                let host_name = format!("host_{}", i);
+                let host_ix = self.cluster.get_node_index(&host_name);
+                if self.used[&host_ix] < self.setting.max_slots {
+                    let n = &self.cluster[host_ix];
+                    assert_eq!(n.depth, 3); // this doesn't have to be true
+
+                    allocated += 1;
+                    alloced_hosts.push(host_ix);
+                    self.used.entry(host_ix).and_modify(|e| *e += 1);
+
+                    if allocated >= nhosts {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for &host_ix in &alloced_hosts {
+            self.used.entry(host_ix).and_modify(|e| *e -= 1);
+        }
+
+        use rand::seq::SliceRandom;
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(0); // use a constant seed
+        alloced_hosts.shuffle(&mut rng);
+
+        self.place_specified(&alloced_hosts)
+    }
+
+    fn place_compact_load_balanced(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         let mut allocated = 0;
         let mut alloced_hosts = Vec::new();
 
