@@ -628,7 +628,7 @@ impl<'a> Executor<'a> for Simulator {
                                     self.estimator.as_ref().unwrap().estimate_v1(tenant_id)
                                 }
                                 NetHintVersion::V2 => {
-                                    self.estimator.as_ref().unwrap().estimate_v2(tenant_id)
+                                    self.estimator.as_ref().unwrap().estimate_v2(tenant_id, self.setting.fairness, &self.state.link_flows)
                                 }
                             },
                         );
@@ -668,7 +668,7 @@ impl<'a> Executor<'a> for Simulator {
 }
 
 #[derive(Debug)]
-enum FlowSet {
+pub(crate) enum FlowSet {
     Flat(Vec<FlowStateRef>),
     Groupped(HashMap<TenantId, Vec<FlowStateRef>>),
 }
@@ -696,7 +696,7 @@ impl FlowSet {
         }
     }
 
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         match self {
             Self::Flat(v) => v.is_empty(),
             Self::Groupped(m) => m.is_empty(),
@@ -716,7 +716,7 @@ impl FlowSet {
         }
     }
 
-    fn iter(&self) -> FlowSetIter {
+    pub(crate) fn iter(&self) -> FlowSetIter {
         match self {
             Self::Flat(v) => FlowSetIter::FlatIter(v.iter()),
             Self::Groupped(m) => {
@@ -740,7 +740,7 @@ impl FlowSet {
 }
 
 #[derive(Debug)]
-enum FlowSetIter<'a> {
+pub(crate) enum FlowSetIter<'a> {
     FlatIter(std::slice::Iter<'a, FlowStateRef>),
     GrouppedIter(
         HashMapValues<'a, TenantId, Vec<FlowStateRef>>,

@@ -1,14 +1,18 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::{cell::RefCell, unimplemented};
 
-use fnv::FnvHashMap as HashMap;
+// use fnv::FnvHashMap as HashMap;
+use fnv::FnvBuildHasher;
+use indexmap::IndexMap;
+type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 
 use crate::{
     bandwidth::{Bandwidth, BandwidthTrait},
     brain::{Brain, TenantId},
     cluster::{Counters, LinkIx, NodeIx, NodeType, Topology, VirtCluster},
-    Duration, SharingMode, Timestamp,
+    simulator::FlowSet,
+    Duration, FairnessModel, SharingMode, Timestamp,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,9 +159,16 @@ impl Sampler {
     }
 }
 
-pub trait Estimator {
+pub(crate) trait Estimator {
     fn estimate_v1(&self, tenant_id: TenantId) -> NetHintV1;
-    fn estimate_v2(&self, tenant_id: TenantId) -> NetHintV2;
+    // link flows tells which flows are on each link, and it also groups flows with the same fairness property together,
+    // which will be useful for estimating available bandwidth.
+    fn estimate_v2(
+        &self,
+        tenant_id: TenantId,
+        fairness: FairnessModel,
+        link_flows: &HashMap<LinkIx, FlowSet>,
+    ) -> NetHintV2;
     fn sample(&mut self, ts: Timestamp);
 }
 
@@ -193,13 +204,30 @@ fn get_all_virtual_links(
 impl SimpleEstimator {
     fn compute_fair_share(
         &self,
+        phys_link: LinkIx,
         demand: Bandwidth,
         plink_capacity: Bandwidth,
-        all_virtual_links: impl Iterator<Item = (TenantId, LinkIx)>,
+        fairness: FairnessModel,
+        link_flows: &HashMap<LinkIx, FlowSet>,
     ) -> Bandwidth {
+        match fairness {
+            FairnessModel::PerFlowMaxMin => {
+                self.compute_fair_share_per_flow(phys_link, demand, plink_capacity, link_flows)
+            }
+            FairnessModel::PerVmPairMaxMin => unimplemented!(),
+            FairnessModel::TenantFlowMaxMin => {
+                self.compute_fair_share_per_tenant(phys_link, demand, plink_capacity)
+            }
+        }
+    }
+
+    fn calculate_demand_sum(&self, phys_link: LinkIx) -> Bandwidth {
+        let brain = self.brain.borrow();
+        let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+        let plink_capacity = brain.cluster()[phys_link].bandwidth;
+
         let mut demand_sum = 0.gbps();
         let mut cnt = 0;
-        let brain = self.brain.borrow();
         for (tenant_id, vlink_ix) in all_virtual_links {
             let demand_i = if let Some(sampler) = self.sampler.get(&tenant_id) {
                 let vcluster = brain.vclusters[&tenant_id].borrow();
@@ -276,6 +304,36 @@ impl SimpleEstimator {
             ));
         }
 
+        demand_sum
+    }
+
+    fn compute_fair_share_per_flow(
+        &self,
+        phys_link: LinkIx,
+        demand: Bandwidth,
+        plink_capacity: Bandwidth,
+        link_flows: &HashMap<LinkIx, FlowSet>,
+    ) -> Bandwidth {
+        let demand_sum = self.calculate_demand_sum(phys_link);
+        let cnt = link_flows.iter().count();
+
+        demand.min(std::cmp::max(
+            plink_capacity - demand_sum,
+            plink_capacity / cnt,
+        ))
+    }
+
+    fn compute_fair_share_per_tenant(
+        &self,
+        phys_link: LinkIx,
+        demand: Bandwidth,
+        plink_capacity: Bandwidth,
+    ) -> Bandwidth {
+        let demand_sum = self.calculate_demand_sum(phys_link);
+        let brain = self.brain.borrow();
+        let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+        let cnt = all_virtual_links.count();
+
         demand.min(std::cmp::max(
             plink_capacity - demand_sum,
             plink_capacity / cnt,
@@ -295,18 +353,19 @@ impl Estimator for SimpleEstimator {
         vcluster
     }
 
-    fn estimate_v2(&self, tenant_id: TenantId) -> NetHintV2 {
+    fn estimate_v2(&self, tenant_id: TenantId, fairness: FairnessModel, link_flows: &HashMap<LinkIx, FlowSet>) -> NetHintV2 {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {
             let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
-            let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
 
             let bw = self.compute_fair_share(
+                phys_link,
                 brain.cluster()[phys_link].bandwidth,
                 brain.cluster()[phys_link].bandwidth,
-                all_virtual_links,
+                fairness,
+                link_flows,
             );
             let count = get_all_virtual_links(&*brain, phys_link).count();
             log::info!(

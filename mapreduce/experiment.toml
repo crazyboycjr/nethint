@@ -4,7 +4,7 @@
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
-ncases = 200
+ncases = 100
 
 # Number of map tasks and reduce tasks
 # When running from trace, these parameters become scale factors
@@ -64,8 +64,8 @@ nethint = true
 sample_interval_ns = 100_000_000 # 100ms
 loopback_speed = 400
 # possible values of fairness model are "PerFlowMaxMin", "PerVmPairMaxMin", and "TenantFlowMaxMin"
-fairness = "TenantFlowMaxMin"
-# fairness = "PerFlowMaxMin"
+# fairness = "TenantFlowMaxMin"
+fairness = "PerFlowMaxMin"
 
 # emulate background flow by subtracting a bandwidth to each link
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
