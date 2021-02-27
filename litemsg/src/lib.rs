@@ -140,8 +140,6 @@ pub fn connect_peers2(
         let (stream, addr) = listener.accept()?;
         log::debug!("worker accepts an incoming connection from addr: {}", addr);
 
-        // assert_eq!(addr.to_string(), nodes[i].to_string());
-
         let builder = endpoint::Builder::new()
             .stream(stream)
             .readable(true)

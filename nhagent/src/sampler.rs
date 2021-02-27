@@ -5,6 +5,8 @@ use std::{collections::HashMap, convert::TryInto};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::utils;
+
 const _OVS_CMD: &'static str = "ovs-appctl dpctl/dump-flows type=all -m";
 // sudo ovs-appctl dpctl/dump-flows type=all -m
 // This will give results like below. All type of flows are displayed!
@@ -24,39 +26,38 @@ pub struct OvsSampler {
     tx: mpsc::Sender<Vec<CounterUnit>>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+struct EthAddr([u8; 6]);
+
+impl std::str::FromStr for EthAddr {
+    type Err = EthParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: Vec<_> = s
+            .split(':')
+            .map(|x| u8::from_str_radix(x, 16))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| EthParseError(0))?;
+        Ok(EthAddr(addr.try_into().map_err(|_| EthParseError(1))?))
+    }
+}
+
 #[derive(Error, Debug)]
 #[error("Parse eth pair error: stage {0}")]
 struct EthParseError(usize);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 struct Eth {
-    src: [u8; 6],
-    dst: [u8; 6],
+    src: EthAddr,
+    dst: EthAddr,
 }
 
 impl std::str::FromStr for Eth {
     type Err = EthParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        println!("s: {}", s);
-        let (src, dst) = s.split_once(',').ok_or(EthParseError(0))?;
-        let src: Vec<_> = src
-            .strip_prefix("src=")
-            .ok_or(EthParseError(1))?
-            .split(':')
-            .map(|x| u8::from_str_radix(x, 16))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| EthParseError(2))?;
-        let dst: Vec<_> = dst
-            .strip_prefix("dst=")
-            .ok_or(EthParseError(3))?
-            .split(':')
-            .map(|x| u8::from_str_radix(x, 16))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| EthParseError(4))?;
-        Ok(Eth {
-            src: src.try_into().map_err(|_| EthParseError(5))?,
-            dst: dst.try_into().map_err(|_| EthParseError(6))?,
-        })
+        let (src, dst) = s.split_once(',').ok_or(EthParseError(2))?;
+        let src = src.strip_prefix("src=").ok_or(EthParseError(3))?.parse()?;
+        let dst = dst.strip_prefix("dst=").ok_or(EthParseError(4))?.parse()?;
+        Ok(Eth { src, dst })
     }
 }
 
@@ -173,7 +174,7 @@ impl std::str::FromStr for OvsFlow {
                             .map_err(ovs_flow_field_err_handler!("used"))?;
                     }
                     _ => {
-                        log::warn!("parse ovs flow second part, ignoring {} {}", key, value);
+                        log::trace!("parse ovs flow second part, ignoring {} {}", key, value);
                     }
                 }
             }
@@ -218,7 +219,7 @@ struct FlowTable {
 /// The information annotated on a virtual link.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CounterUnit {
-    pub vnodename: String,          // need to be unique across all VMs, name to sth else
+    pub vnodename: String, // need to be unique across all VMs, name to sth else
     pub data: [CounterUnitData; 2], // 0 for tx, 1 for rx
 }
 
@@ -253,11 +254,14 @@ impl OvsSampler {
         let sleep_ms = std::time::Duration::from_millis(self.interval_ms);
         let mut flow_table = FlowTable::default();
         let tx = self.tx.clone();
-        let local_eth_table: HashMap<[u8; 6], String> = HashMap::default(); // map eth to node name
-        // TODO(cjr): initialize local_eth_table
-        let mut vnode_counter: HashMap<[u8; 6], CounterUnit> = Default::default();
+
+        // initialize local_eth_table
+        let local_eth_table = get_local_eth_table().unwrap(); // map eth to node name
+        let mut vnode_counter: HashMap<EthAddr, CounterUnit> = Default::default();
         for (eth, vnodename) in local_eth_table.iter() {
-            vnode_counter.insert(eth.to_owned(), CounterUnit::new(vnodename)).unwrap_none();
+            vnode_counter
+                .insert(eth.to_owned(), CounterUnit::new(vnodename))
+                .unwrap_none();
         }
 
         self.handle = Some(std::thread::spawn(move || loop {
@@ -288,8 +292,8 @@ impl OvsSampler {
             log::trace!("parsed ovs_flow: {:?}", ovs_flows);
 
             for ovs_flow in ovs_flows {
-                // currently we only handle ipv4 and ipv6
-                if ovs_flow.eth_type != 0x0800 || ovs_flow.eth_type != 0x0806 {
+                // currently we only handle ipv4
+                if ovs_flow.eth_type != 0x0800 {
                     continue;
                 }
 
@@ -320,6 +324,12 @@ impl OvsSampler {
                             stats.bytes = bytes_read as usize;
                             bytes_read as usize
                         } else {
+                            assert!(
+                                bytes_read as usize >= stats.bytes,
+                                "ovs_flow: {:?}, stats: {:?}",
+                                ovs_flow,
+                                stats
+                            );
                             let ret = bytes_read as usize - stats.bytes;
                             stats.bytes = bytes_read as usize;
                             stats.update_time = now;
@@ -328,19 +338,26 @@ impl OvsSampler {
                     }
                 };
 
+                log::trace!("delta: {}", delta);
+
                 // add delta
                 if local_eth_table.contains_key(&eth_src) {
                     vnode_counter.entry(eth_src).and_modify(|e| {
+                        // tx
                         e.data[0].bytes += delta as u64;
                         e.data[0].num_competitors += 1;
                     });
                 } else if local_eth_table.contains_key(&eth_dst) {
                     vnode_counter.entry(eth_dst).and_modify(|e| {
+                        // rx
                         e.data[1].bytes += delta as u64;
                         e.data[1].num_competitors += 1;
                     });
                 } else {
-                    log::warn!("ovs_flow {:?} does not come from to target to this server", ovs_flow);
+                    log::warn!(
+                        "ovs_flow {:?} does not come from or target to this server",
+                        ovs_flow
+                    );
                 }
             }
 
@@ -357,4 +374,27 @@ impl OvsSampler {
             .expect("ovs sampler thread failed to start")
             .join()
     }
+}
+
+// vf 0     link/ether 02:5a:78:25:5d:35 brd ff:ff:ff:ff:ff:ff, spoof checking off, link-state disable, trust off, query_rss off
+// vf 1     link/ether 02:35:1a:a8:03:6e brd ff:ff:ff:ff:ff:ff, spoof checking off, link-state disable, trust off, query_rss off
+fn get_local_eth_table() -> anyhow::Result<HashMap<EthAddr, String>> {
+    let mut local_eth_table = HashMap::default(); // map eth to node name
+    let mut cmd = Command::new("ip");
+    cmd.args(&["link", "show", "rdma0"]);
+    let iplink_output = utils::get_command_output(cmd)?;
+
+    // parse the output
+    for s in iplink_output.lines() {
+        let line = s.trim();
+        if line.starts_with("vf") {
+            let tokens: Vec<_> = line.split(" ").filter(|x| !x.is_empty()).collect();
+            let vfid: u64 = tokens[1].parse().unwrap();
+            let eth_str = tokens[3];
+            let eth: EthAddr = eth_str.parse()?;
+            local_eth_table.insert(eth, vfid.to_string()).unwrap_none();
+        }
+    }
+
+    Ok(local_eth_table)
 }

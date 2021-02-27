@@ -1,10 +1,13 @@
 use crate::{Node, Role};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
+use litemsg::endpoint;
 
 pub struct Communicator {
     my_rank: usize,
-    peers: HashMap<usize, TcpStream>,
+    nodes: Vec<Node>,
+    peers: Vec<endpoint::Endpoint>,
+
     controller: TcpStream,
     workers: Option<HashMap<Node, TcpStream>>,
 }
@@ -24,24 +27,25 @@ impl Communicator {
             None
         };
 
-        let (nodes, my_node, controller, listener) = litemsg::connect_controller(&controller_uri)?;
+        let (nodes, my_node, controller, mut listener) = litemsg::connect_controller(&controller_uri)?;
         let my_rank = nodes.iter().position(|n| n == &my_node).unwrap();
 
-        let mut peers = litemsg::connect_peers(&nodes, &my_node, listener)?;
-        let peers = nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| {
-                let stream = peers.remove(n).unwrap();
-                (i, stream)
-            })
-            .collect();
+        let peers = litemsg::connect_peers2(&nodes, &my_node, &mut listener)?;
+
+        let peers = peers.into_iter().map(|b| {
+            b.readable(true).writable(true).build().unwrap()
+        }).collect();
 
         Ok(Communicator {
             my_rank,
+            nodes,
             peers,
             controller,
             workers,
         })
+    }
+
+    pub fn world_size(&self) -> usize {
+        self.nodes.len()
     }
 }

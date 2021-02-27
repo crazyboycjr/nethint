@@ -790,6 +790,7 @@ dependencies = [
  "mio",
  "nethint",
  "serde",
+ "structopt",
  "thiserror",
 ]
 

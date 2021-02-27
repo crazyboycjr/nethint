@@ -310,11 +310,6 @@ impl Simulator {
     }
 
     #[inline]
-    fn calc_delta_per_vm_pair(l: &Link, fs: &mut FlowSet) -> Bandwidth {
-        unimplemented!()
-    }
-
-    #[inline]
     fn calc_delta_tenant_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
         // first per tenant, than per flow
         // find the tenant having most active flows on this link
@@ -373,7 +368,7 @@ impl Simulator {
     fn calc_delta(fairness: FairnessModel, l: &Link, fs: &mut FlowSet) -> Bandwidth {
         match fairness {
             FairnessModel::PerFlowMaxMin => Self::calc_delta_per_flow(l, fs),
-            FairnessModel::PerVmPairMaxMin => Self::calc_delta_per_vm_pair(l, fs),
+            FairnessModel::PerVmPairMaxMin => unimplemented!(),
             FairnessModel::TenantFlowMaxMin => Self::calc_delta_tenant_flow(l, fs),
         }
     }
