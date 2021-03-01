@@ -18,7 +18,7 @@ pub struct AllReduceApp<'c> {
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
-    allreduce_policy: &'c AllReducePolicy,
+    allreduce_policy: AllReducePolicy,
     remaining_iterations: usize,
     remaining_flows: usize,
     nethint_level: usize,
@@ -36,7 +36,7 @@ impl<'c> AllReduceApp<'c> {
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
         seed: u64,
-        allreduce_policy: &'c AllReducePolicy,
+        allreduce_policy: AllReducePolicy,
         nethint_level: usize,
         autotune: Option<usize>,
     ) -> Self {

@@ -1,5 +1,7 @@
 #![feature(option_unwrap_none)]
 #![feature(map_into_keys_values)]
+use serde::{Serialize, Deserialize};
+
 pub mod argument;
 
 pub mod app;
@@ -32,7 +34,7 @@ impl JobSpec {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AllReducePolicy {
     Random,
     TopologyAware,

@@ -33,6 +33,7 @@ fn main() {
         max_slots: 1, // nethint::brain::MAX_SLOTS,
         topology: opt.topo.clone(),
         sharing_mode: SharingMode::Guaranteed,
+        background_flow_high_freq: Default::default(),
     });
 
     // info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -117,7 +118,7 @@ fn run_experiments(
             job_spec,
             None,
             seed,
-            &all_reduce_policy,
+            all_reduce_policy,
             opt.nethint_level,
             opt.tune,
         ));
