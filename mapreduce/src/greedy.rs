@@ -512,7 +512,15 @@ impl GreedyReducerSchedulerPaper {
 
         for (&link_ix, &tr) in new_traffic.iter() {
             let bw = cluster[link_ix].bandwidth;
+            if !FLAG.load(SeqCst) {
+                let src = cluster[cluster.get_source(link_ix)].name.clone();
+                let dst = cluster[cluster.get_target(link_ix)].name.clone();
+                log::info!("src: {}, dst: {}, tr: {}, bw: {}, val: {}, est: {}", src, dst, tr, bw, tr as f64 / bw.val() as f64, est);
+            }
             est = est.max(tr as f64 / bw.val() as f64);
+        }
+        if !FLAG.load(SeqCst) {
+            FLAG.store(true, SeqCst);
         }
 
         est = est.max(local_traffic as f64 / 400.gbps().val() as f64);
@@ -520,6 +528,11 @@ impl GreedyReducerSchedulerPaper {
         (est, cross)
     }
 }
+
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::SeqCst;
+
+static FLAG: AtomicBool = AtomicBool::new(false);
 
 impl PlaceReducer for GreedyReducerSchedulerPaper {
     fn place(
@@ -560,6 +573,7 @@ impl PlaceReducer for GreedyReducerSchedulerPaper {
                     let (est, cross) =
                         self.evaluate(j, i, &traffic, cluster, mapper, shuffle_pairs, collocate);
 
+                    log::info!("rank: {}, host: {}, est: {}, min_est: {}, cross: {}, min_cross: {}", j, i, est, min_est, cross, min_cross);
                     if min_est > est || min_est + 1e-10 > est && min_cross > cross {
                         min_est = est;
                         min_cross = cross;

@@ -100,7 +100,7 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                             f.flow.tenant_id = Some(self.tenant_id);
                             assert!(f.flow.vsrc.is_none() && f.flow.vdst.is_none());
                             f.flow.vsrc = Some(f.flow.src.clone());
-                            f.flow.vdst = Some(f.flow.src.clone());
+                            f.flow.vdst = Some(f.flow.dst.clone());
                             f.flow.src = self.virt_to_phys(&f.flow.src);
                             f.flow.dst = self.virt_to_phys(&f.flow.dst);
                         }

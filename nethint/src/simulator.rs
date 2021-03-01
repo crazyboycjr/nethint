@@ -1,7 +1,7 @@
-use std::{cmp::Reverse, fmt::Debug};
 use std::collections::BinaryHeap;
 use std::rc::Rc;
 use std::{cell::RefCell, unimplemented};
+use std::{cmp::Reverse, fmt::Debug};
 
 use fnv::FnvBuildHasher;
 use indexmap::IndexMap;
@@ -21,7 +21,7 @@ use crate::{
     bandwidth::{self, Bandwidth, BandwidthTrait},
     FairnessModel,
 };
-use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
+use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord, SharingMode};
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 type HashMapValues<'a, K, V> = indexmap::map::Values<'a, K, V>;
@@ -282,7 +282,7 @@ impl Simulator {
     }
 
     #[inline]
-    fn calc_delta_per_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
+    fn calc_delta_per_flow(total_bw: Bandwidth, fs: &mut FlowSet) -> Bandwidth {
         let (num_active, consumed_bw, min_inc) = fs.iter().fold((0, 0.0, f64::MAX), |acc, f| {
             let f = f.borrow();
             assert!(f.speed < f.max_rate.val() as f64);
@@ -293,10 +293,10 @@ impl Simulator {
             )
         });
         // COMMENT(cjr): due to precision issue, here consumed_bw can be a little bigger than bw
-        let mut bw_inc = if l.bandwidth < (consumed_bw / 1e9).gbps() {
+        let mut bw_inc = if total_bw < (consumed_bw / 1e9).gbps() {
             0.gbps()
         } else {
-            (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active as f64
+            (total_bw - (consumed_bw / 1e9).gbps()) / num_active as f64
         };
 
         // some flows may reach its max_rate earlier
@@ -367,7 +367,7 @@ impl Simulator {
     #[inline]
     fn calc_delta(fairness: FairnessModel, l: &Link, fs: &mut FlowSet) -> Bandwidth {
         match fairness {
-            FairnessModel::PerFlowMaxMin => Self::calc_delta_per_flow(l, fs),
+            FairnessModel::PerFlowMaxMin => Self::calc_delta_per_flow(l.bandwidth, fs),
             FairnessModel::PerVmPairMaxMin => unimplemented!(),
             FairnessModel::TenantFlowMaxMin => Self::calc_delta_tenant_flow(l, fs),
         }
@@ -439,7 +439,7 @@ impl Simulator {
         while converged < active_flows {
             // find the bottleneck link
             let brain = &self.state.brain.as_ref().unwrap().borrow();
-            let res = self
+            let mut res = self
                 .state
                 .link_flows
                 .iter_mut()
@@ -450,6 +450,24 @@ impl Simulator {
                     Self::calc_delta(fairness, link, fs)
                 })
                 .min();
+
+
+            // in rate limited mode, some flows share the same rate limiter, so they may reach the limit together earlier
+            if brain.setting().sharing_mode == crate::SharingMode::RateLimited {
+                for i in 0..=1 {
+                    let tmp = self.state.vm_flows[i].iter_mut()
+                    .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged)) // this seems to be redundant
+                    .map(|(_vm, fs)| {
+                        assert!(!fs.is_empty());
+                        let limited_bw = fs.iter().next().unwrap().borrow().max_rate;
+                        // log::trace!("vm: {:?}, limited_bw: {}, count: {}", vm, limited_bw, fs.iter().count());
+                        Self::calc_delta_per_flow(limited_bw, fs)
+                    })
+                    .min();
+
+                    res = res.into_iter().chain(tmp).min();
+                }
+            }
 
             let bw = res.expect("impossible");
             let speed_inc = bw.val() as f64;
@@ -509,7 +527,8 @@ impl Simulator {
             assert!(
                 !(first_complete_time.is_none()
                     && first_ready_time.is_none()
-                    && (self.timers.is_empty() || self.timers.len() == 1 && self.setting.enable_nethint))
+                    && (self.timers.is_empty()
+                        || self.timers.len() == 1 && self.setting.enable_nethint))
             );
             assert!(
                 ts_inc <= self.setting.sample_interval_ns,
@@ -622,9 +641,11 @@ impl<'a> Executor<'a> for Simulator {
                                 NetHintVersion::V1 => {
                                     self.estimator.as_ref().unwrap().estimate_v1(tenant_id)
                                 }
-                                NetHintVersion::V2 => {
-                                    self.estimator.as_ref().unwrap().estimate_v2(tenant_id, self.setting.fairness, &self.state.link_flows)
-                                }
+                                NetHintVersion::V2 => self.estimator.as_ref().unwrap().estimate_v2(
+                                    tenant_id,
+                                    self.setting.fairness,
+                                    &self.state.link_flows,
+                                ),
                             },
                         );
                         new_events.append(app.on_event(app_event!(response)));
@@ -791,6 +812,7 @@ struct NetState {
     // emitted flows
     running_flows: Vec<FlowStateRef>,
     link_flows: HashMap<LinkIx, FlowSet>,
+    vm_flows: [HashMap<(TenantId, String), FlowSet>; 2], // used only in rate limited mode, 0 tx, 1 rx
     loopback_flows: Vec<FlowStateRef>,
     resolve_route_time: std::time::Duration,
     // for nethint use
@@ -811,6 +833,16 @@ impl NetState {
         }
         if fs.borrow().is_loopback() {
             self.loopback_flows.push(Rc::clone(&fs));
+        } else {
+            if let Some(brain) = self.brain.as_ref() {
+                if brain.borrow().setting().sharing_mode == SharingMode::RateLimited {
+                    let tenant_id = fs.borrow().flow.tenant_id.unwrap();
+                    let vsrc = fs.borrow().flow.vsrc.as_ref().unwrap().clone();
+                    let vdst = fs.borrow().flow.vdst.as_ref().unwrap().clone();
+                    self.vm_flows[0].entry((tenant_id, vsrc.clone())).or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin)).push(Rc::clone(&fs));
+                    self.vm_flows[1].entry((tenant_id, vdst)).or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin)).push(Rc::clone(&fs));
+                }
+            }
         }
     }
 
@@ -830,17 +862,26 @@ impl NetState {
                 let vcluster = brain.vclusters[&tenant_id].borrow();
                 let src_vhost_ix = vcluster.get_node_index(r.flow.vsrc.as_ref().unwrap());
                 let dst_vhost_ix = vcluster.get_node_index(r.flow.vdst.as_ref().unwrap());
-                vcluster[vcluster.get_uplink(src_vhost_ix)].bandwidth.min(
-                    vcluster[vcluster.get_reverse_link(vcluster.get_uplink(dst_vhost_ix))]
-                        .bandwidth,
-                )
+                if src_vhost_ix == dst_vhost_ix {
+                    bandwidth::MAX
+                } else {
+                    vcluster[vcluster.get_uplink(src_vhost_ix)].bandwidth.min(
+                        vcluster[vcluster.get_reverse_link(vcluster.get_uplink(dst_vhost_ix))]
+                            .bandwidth,
+                    )
+                }
             } else {
                 let cluster = brain.cluster();
                 let src_host_ix = cluster.get_node_index(&r.flow.src);
                 let dst_host_ix = cluster.get_node_index(&r.flow.dst);
-                cluster[cluster.get_uplink(src_host_ix)].bandwidth.min(
-                    cluster[cluster.get_reverse_link(cluster.get_uplink(dst_host_ix))].bandwidth,
-                )
+                if src_host_ix == dst_host_ix {
+                    bandwidth::MAX
+                } else {
+                    cluster[cluster.get_uplink(src_host_ix)].bandwidth.min(
+                        cluster[cluster.get_reverse_link(cluster.get_uplink(dst_host_ix))]
+                            .bandwidth,
+                    )
+                }
             };
             assert!(max_rate > 0.gbps());
 
@@ -891,6 +932,7 @@ impl NetState {
         self.running_flows.iter().for_each(|f| {
             let mut f = f.borrow_mut();
             let speed = f.speed;
+            assert!(f.speed <= f.max_rate.val() as f64, "flowstate: {:?}", f);
             let delta = (speed / 1e9 * ts_inc as f64).round() as usize / 8;
             f.bytes_sent += delta;
 
@@ -900,6 +942,7 @@ impl NetState {
             }
 
             if f.completed() {
+                // log::info!("ts: {}, comp f: {:?}", sim_ts + ts_inc, f);
                 comp_flows.push(TraceRecord::new(
                     f.ts,
                     f.flow.clone(),
@@ -920,6 +963,18 @@ impl NetState {
 
         // finish and filter loopback_flows
         self.loopback_flows.retain(|f| !f.borrow().completed());
+
+        // only in rate limited mode
+        if let Some(brain) = self.brain.as_ref() {
+            if brain.borrow().setting().sharing_mode == SharingMode::RateLimited {
+                for i in 0..=1 {
+                    for (_, fs) in self.vm_flows[i].iter_mut() {
+                        fs.retain(|f| !f.borrow().completed());
+                    }
+                    self.vm_flows[i].retain(|_, fs| !fs.is_empty());
+                }
+            }
+        }
 
         comp_flows
     }

@@ -315,7 +315,8 @@ impl SimpleEstimator {
         link_flows: &HashMap<LinkIx, FlowSet>,
     ) -> Bandwidth {
         let demand_sum = self.calculate_demand_sum(phys_link);
-        let cnt = link_flows.iter().count();
+        let cnt = link_flows.get(&phys_link).map(|fs| fs.iter().count()).unwrap_or(0) + 1;
+        assert!(cnt < 10, "cnt: {}, link: {:?}, link_flows: {:?}", cnt, phys_link, link_flows[&phys_link]);
 
         demand.min(std::cmp::max(
             plink_capacity - demand_sum,
