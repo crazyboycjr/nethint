@@ -18,6 +18,29 @@ pub type TenantId = usize;
 
 pub const MAX_SLOTS: usize = 4;
 
+/// High frequency changed background flows.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundFlowHighFreq {
+    enable: bool,
+    #[serde(default)]
+    probability: f64,
+    // the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
+    // for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
+    #[serde(default)]
+    amplitude: usize,
+}
+
+impl Default for BackgroundFlowHighFreq {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            probability: 0.0,
+            amplitude: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainSetting {
     /// Random seed for multiple uses
@@ -32,6 +55,8 @@ pub struct BrainSetting {
     pub sharing_mode: SharingMode,
     /// The parameters of the cluster's physical topology
     pub topology: TopoArgs,
+
+    pub background_flow_high_freq: BackgroundFlowHighFreq,
 }
 
 /// Brain is the cloud controller. It knows the underlay physical
@@ -127,7 +152,15 @@ impl Brain {
         };
 
         if brain.setting.asymmetric {
-            brain.make_asymmetric(brain.setting.seed)
+            brain.make_asymmetric(1.0, 5);
+        }
+
+        // set high frequency part of background flow
+        if brain.setting.background_flow_high_freq.enable {
+            brain.make_asymmetric(
+                brain.setting.background_flow_high_freq.probability,
+                brain.setting.background_flow_high_freq.amplitude,
+            );
         }
 
         brain.mark_broken(brain.setting.seed, brain.setting.broken);
@@ -143,19 +176,23 @@ impl Brain {
         &self.setting
     }
 
-    fn make_asymmetric(&mut self, seed: u64) {
+    pub fn make_asymmetric(&mut self, probability: f64, amplitude: usize) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StdRng::seed_from_u64(self.setting.seed);
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
 
         for link_ix in cluster.all_links() {
             if link_ix.index() & 1 == 1 {
-                let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1..=5));
-                cluster[link_ix] = Link::new(new_bw);
-                let reverse_link_ix = cluster.get_reverse_link(link_ix);
-                cluster[reverse_link_ix] = Link::new(new_bw);
+                if rng.gen_range(0.0..1.0) < probability {
+                    log::info!("old_bw: {}", cluster[link_ix].bandwidth);
+                    let new_bw = cluster[link_ix].bandwidth * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0);
+                    cluster[link_ix] = Link::new(new_bw);
+                    let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                    cluster[reverse_link_ix] = Link::new(new_bw);
+                    log::info!("new_bw: {}", new_bw);
+                }
             }
         }
 

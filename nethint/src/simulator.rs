@@ -1,6 +1,6 @@
-use std::collections::BinaryHeap;
 use std::rc::Rc;
-use std::{cell::RefCell, unimplemented};
+use std::collections::BinaryHeap;
+use std::cell::RefCell;
 use std::{cmp::Reverse, fmt::Debug};
 
 use fnv::FnvBuildHasher;
@@ -21,7 +21,7 @@ use crate::{
     bandwidth::{self, Bandwidth, BandwidthTrait},
     FairnessModel,
 };
-use crate::{Duration, Flow, Timestamp, ToStdDuration, Token, Trace, TraceRecord, SharingMode};
+use crate::{Duration, Flow, SharingMode, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 type HashMapValues<'a, K, V> = indexmap::map::Values<'a, K, V>;
@@ -180,6 +180,7 @@ impl SimulatorBuilder {
         if self.cluster.is_none() && self.brain.is_none() {
             return Err(Error::EmptyClusterOrBrain);
         }
+
         let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
         if self.setting.background_flow_hard.enable {
             timers.push(Box::new(PoissonTimer::new(
@@ -289,7 +290,7 @@ impl Simulator {
             (
                 acc.0 + !f.converged as usize,
                 acc.1 + f.speed,
-                acc.2.min(f.max_rate.val() as f64 - f.speed),
+                acc.2.min(if f.converged { f.max_rate.val() as f64 - f.speed } else { f64::MAX }),
             )
         });
         // COMMENT(cjr): due to precision issue, here consumed_bw can be a little bigger than bw
@@ -323,10 +324,12 @@ impl Simulator {
                 for f in fs {
                     let f = f.borrow();
                     consumed_bw += f.speed;
-                    tenant_active_flows += !f.converged as usize;
-                    assert!(f.speed < f.max_rate.val() as f64);
-                    min_inc_to_max_rate =
-                        min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
+                    if !f.converged {
+                        tenant_active_flows += 1;
+                        assert!(f.speed < f.max_rate.val() as f64, "flow: {:?}", f);
+                        min_inc_to_max_rate =
+                            min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
+                    }
                 }
 
                 num_active_tenants += (tenant_active_flows > 0) as usize;
@@ -451,19 +454,20 @@ impl Simulator {
                 })
                 .min();
 
-
             // in rate limited mode, some flows share the same rate limiter, so they may reach the limit together earlier
             if brain.setting().sharing_mode == crate::SharingMode::RateLimited {
                 for i in 0..=1 {
-                    let tmp = self.state.vm_flows[i].iter_mut()
-                    .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged)) // this seems to be redundant
-                    .map(|(_vm, fs)| {
-                        assert!(!fs.is_empty());
-                        let limited_bw = fs.iter().next().unwrap().borrow().max_rate;
-                        // log::trace!("vm: {:?}, limited_bw: {}, count: {}", vm, limited_bw, fs.iter().count());
-                        Self::calc_delta_per_flow(limited_bw, fs)
-                    })
-                    .min();
+                    let tmp = self.state.vm_flows[i]
+                        .iter_mut()
+                        .filter(|(_, fs)| fs.iter().any(|f| !f.borrow().converged)) // this seems to be redundant
+                        .map(|(_vm, fs)| {
+                            assert!(!fs.is_empty());
+                            let limited_bw = fs.iter().next().unwrap().borrow().max_rate;
+                            assert!(limited_bw > 0.gbps());
+                            // log::trace!("vm: {:?}, limited_bw: {}, count: {}", vm, limited_bw, fs.iter().count());
+                            Self::calc_delta_per_flow(limited_bw, fs)
+                        })
+                        .min();
 
                     res = res.into_iter().chain(tmp).min();
                 }
@@ -839,8 +843,14 @@ impl NetState {
                     let tenant_id = fs.borrow().flow.tenant_id.unwrap();
                     let vsrc = fs.borrow().flow.vsrc.as_ref().unwrap().clone();
                     let vdst = fs.borrow().flow.vdst.as_ref().unwrap().clone();
-                    self.vm_flows[0].entry((tenant_id, vsrc.clone())).or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin)).push(Rc::clone(&fs));
-                    self.vm_flows[1].entry((tenant_id, vdst)).or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin)).push(Rc::clone(&fs));
+                    self.vm_flows[0]
+                        .entry((tenant_id, vsrc.clone()))
+                        .or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin))
+                        .push(Rc::clone(&fs));
+                    self.vm_flows[1]
+                        .entry((tenant_id, vdst))
+                        .or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin))
+                        .push(Rc::clone(&fs));
                 }
             }
         }
