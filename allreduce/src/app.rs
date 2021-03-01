@@ -105,10 +105,10 @@ impl<'c> Application for AllReduceApp<'c> {
                 }
                 AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
-                    // info!(
-                    //     "nethint response: {}",
-                    //     self.cluster.as_ref().unwrap().to_dot()
-                    // );
+                    log::info!(
+                        "nethint response: {}",
+                        self.cluster.as_ref().unwrap().to_dot()
+                    );
                     // since we have the cluster, start and schedule the app again
                     self.allreduce(event.ts);
                     return self

@@ -21,7 +21,7 @@ placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "Random", args = 0 }
 
 # global seed
-seed = 3
+seed = 1
 
 # Output path of for the simulation results
 directory = "/tmp/allreduce_result"
@@ -64,7 +64,7 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.1, amplitude = 9 }
+background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.1, amplitude = 3 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -76,11 +76,11 @@ asymmetric = false
 # The percentage of nodes marked broken
 broken = 0.0
 # The slots of each physical machine
-max_slots = 1
+max_slots = 4
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
-# background_flow_high_freq = { enable = true, probability = 0.1, amplitude = 1 }
-background_flow_high_freq = { enable = false }
+background_flow_high_freq = { enable = true, probability = 0.1, amplitude = 1 }
+# background_flow_high_freq = { enable = false }
 
 # The topology for simulation
 [brain.topology]
