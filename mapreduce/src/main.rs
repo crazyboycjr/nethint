@@ -44,6 +44,7 @@ fn main() {
         max_slots: nethint::brain::MAX_SLOTS,
         topology: opt.topo.clone(),
         sharing_mode: SharingMode::Guaranteed,
+        background_flow_high_freq: Default::default(),
     });
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());

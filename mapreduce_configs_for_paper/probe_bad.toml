@@ -1,7 +1,8 @@
+# 3:1, background: on (10s, 0.1, 3), fairness: PerTenant, sharing: Guaranteed, traffic_scale: 1.0
 # Specifiation of a MapReduce application experiment
 
 # Run the experiments from trace file
-trace = "mapreduce/FB2010-1Hr-150-0.txt"
+trace = "../mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
 ncases = 500
@@ -12,7 +13,7 @@ num_map = 1
 num_reduce = 1
 
 # Multiply the traffic size by a number
-traffic_scale = 100.0
+traffic_scale = 1.0
 
 # Mapper placement policy
 # mapper_policy = { type = "RandomSkew", args = [1, 0.2] }
@@ -25,7 +26,7 @@ placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "Random", args = 0 }
 
 # Output path of for the simulation results
-directory = "/tmp/mapr_result"
+directory = "/tmp/mapr_result_for_paper/probe_bad"
 
 # Whether to allow a mapper to collocate with a reduce
 collocate = true
@@ -71,7 +72,7 @@ fairness = "TenantFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.1, amplitude = 3 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.1, amplitude = 3 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

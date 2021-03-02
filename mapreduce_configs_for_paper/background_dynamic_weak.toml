@@ -1,4 +1,4 @@
-# 4:1, background: on (1s, 0.9, 9), fairness: PerTenant, sharing: Guaranteed
+# 3:1, background: on (1s, 0.1, 1), fairness: PerTenant, sharing: Guaranteed
 # Specifiation of a MapReduce application experiment
 
 # Run the experiments from trace file
@@ -26,7 +26,7 @@ placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "Random", args = 0 }
 
 # Output path of for the simulation results
-directory = "/tmp/mapr_result_for_paper/background_dynamic_strong"
+directory = "/tmp/mapr_result_for_paper/background_dynamic_weak"
 
 # Whether to allow a mapper to collocate with a reduce
 collocate = true
@@ -72,7 +72,7 @@ fairness = "TenantFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.9, amplitude = 9 }
+background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.1, amplitude = 1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -87,6 +87,7 @@ broken = 0.1
 max_slots = 4
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
+background_flow_high_freq = { enable = false }
 
 # The topology for simulation
 [brain.topology]
@@ -99,9 +100,9 @@ type = "Arbitrary"  # another possible value is "FatTree"
 
 [brain.topology.args]         # When type = "Arbitrary"
 nracks = 150        # the number of racks
-rack_size = 20      # the number of hosts under a rack
+rack_size = 18      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
-rack_bw = 500       # bandwidth of a ToR switch, in Gbps
+rack_bw = 600       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # NETHINT_PROVISION_LOG_FILE = "/tmp/f"
