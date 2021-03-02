@@ -104,5 +104,5 @@ rack_size = 18      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 600       # bandwidth of a ToR switch, in Gbps
 
-# [envs]
-# NETHINT_PROVISION_LOG_FILE = "/tmp/f"
+[envs]
+NETHINT_PROVISION_LOG_FILE = "/tmp/mapr_result_for_paper/standard_hybrid1/provision.txt"
