@@ -12,8 +12,8 @@ buffer_size = 100_000_000
 # Number of iterations for all jobs
 num_iterations = 120
 
-# Lambda of the poisson arrival
-poisson_lambda = 24_000_000_000.0
+# Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
+poisson_lambda = 2_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -49,12 +49,12 @@ policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 
-# [[batch]]
-# policy = "RAT"
-# probe = { enable = false }
-# nethint_level = 2
-# # Auto tune after some iterations. default is disabled
-# auto_tune = 100
+[[batch]]
+policy = "RAT"
+probe = { enable = false }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 10
 
 [simulator]
 nethint = true
@@ -64,7 +64,7 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.1, amplitude = 3 }
+background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 0.1, amplitude = 3 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -95,7 +95,7 @@ type = "Arbitrary"  # another possible value is "FatTree"
 nracks = 150        # the number of racks
 rack_size = 8       # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
-rack_bw = 200       # bandwidth of a ToR switch, in Gbps
+rack_bw = 266       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # KEY = "value"
