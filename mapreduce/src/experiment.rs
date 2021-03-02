@@ -85,6 +85,10 @@ struct ExperimentConfig {
 
     /// Brain settings
     brain: BrainSetting,
+
+    /// Environment variables
+    #[serde(default)]
+    envs: toml::value::Table,
 }
 
 fn read_config<P: AsRef<std::path::Path>>(path: P) -> ExperimentConfig {
@@ -93,6 +97,14 @@ fn read_config<P: AsRef<std::path::Path>>(path: P) -> ExperimentConfig {
     let mut content = String::new();
     file.read_to_string(&mut content).unwrap();
     toml::from_str(&content).expect("parse failed")
+}
+
+fn set_env_vars(config: &ExperimentConfig) {
+    for (k, v) in config.envs.iter() {
+        let v = v.as_str().expect("expect String type");
+        log::debug!("setting environment {}={}", k, v);
+        std::env::set_var(k, v);
+    }
 }
 
 fn main() {
@@ -109,6 +121,8 @@ fn main() {
     };
 
     log::info!("config: {:#?}", config);
+
+    set_env_vars(&config);
 
     let brain = Brain::build_cloud(config.brain.clone());
 
