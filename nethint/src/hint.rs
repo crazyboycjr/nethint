@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 
 use crate::{
-    bandwidth::{Bandwidth, BandwidthTrait},
+    bandwidth::{self, Bandwidth, BandwidthTrait},
     brain::{Brain, TenantId},
     cluster::{Counters, LinkIx, NodeIx, NodeType, Topology, VirtCluster},
     simulator::FlowSet,
@@ -204,6 +204,7 @@ fn get_all_virtual_links(
 impl SimpleEstimator {
     fn compute_fair_share(
         &self,
+        tenant_id: TenantId,
         phys_link: LinkIx,
         demand: Bandwidth,
         plink_capacity: Bandwidth,
@@ -211,24 +212,30 @@ impl SimpleEstimator {
         link_flows: &HashMap<LinkIx, FlowSet>,
     ) -> Bandwidth {
         match fairness {
-            FairnessModel::PerFlowMaxMin => {
-                self.compute_fair_share_per_flow(phys_link, demand, plink_capacity, link_flows)
-            }
+            FairnessModel::PerFlowMaxMin => self.compute_fair_share_per_flow(
+                tenant_id,
+                phys_link,
+                demand,
+                plink_capacity,
+                link_flows,
+            ),
             FairnessModel::PerVmPairMaxMin => unimplemented!(),
             FairnessModel::TenantFlowMaxMin => {
-                self.compute_fair_share_per_tenant(phys_link, demand, plink_capacity)
+                self.compute_fair_share_per_tenant(tenant_id, phys_link, demand, plink_capacity)
             }
         }
     }
 
-    fn calculate_demand_sum(&self, phys_link: LinkIx) -> Bandwidth {
+    fn calculate_demand_vec(&self, phys_link: LinkIx, my_tenant_id: TenantId) -> Vec<Bandwidth> {
         let brain = self.brain.borrow();
         let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
-        let plink_capacity = brain.cluster()[phys_link].bandwidth;
 
-        let mut demand_sum = 0.gbps();
-        let mut cnt = 0;
+        let mut demand_vec = Vec::new();
         for (tenant_id, vlink_ix) in all_virtual_links {
+            if tenant_id == my_tenant_id {
+                continue;
+            }
+
             let demand_i = if let Some(sampler) = self.sampler.get(&tenant_id) {
                 let vcluster = brain.vclusters[&tenant_id].borrow();
                 let source_ix = vcluster.get_source(vlink_ix);
@@ -279,9 +286,19 @@ impl SimpleEstimator {
                 None
             };
 
-            demand_sum = demand_sum + demand_i.unwrap_or_else(|| 0.gbps());
-            cnt += 1;
+            demand_vec.push(demand_i.unwrap_or_else(|| 0.gbps()));
         }
+
+        demand_vec
+    }
+
+    fn calculate_demand_sum(&self, phys_link: LinkIx, my_tenant_id: TenantId) -> Bandwidth {
+        let brain = self.brain.borrow();
+        let plink_capacity = brain.cluster()[phys_link].bandwidth;
+
+        let demand_vec = self.calculate_demand_vec(phys_link, my_tenant_id);
+        let cnt = demand_vec.len() + 1;
+        let mut demand_sum: Bandwidth = demand_vec.into_iter().sum();
 
         // clamp
         if demand_sum > plink_capacity {
@@ -309,14 +326,25 @@ impl SimpleEstimator {
 
     fn compute_fair_share_per_flow(
         &self,
+        tenant_id: TenantId,
         phys_link: LinkIx,
         demand: Bandwidth,
         plink_capacity: Bandwidth,
         link_flows: &HashMap<LinkIx, FlowSet>,
     ) -> Bandwidth {
-        let demand_sum = self.calculate_demand_sum(phys_link);
-        let cnt = link_flows.get(&phys_link).map(|fs| fs.iter().count()).unwrap_or(0) + 1;
-        assert!(cnt < 10, "cnt: {}, link: {:?}, link_flows: {:?}", cnt, phys_link, link_flows[&phys_link]);
+        let demand_sum = self.calculate_demand_sum(phys_link, tenant_id);
+        let cnt = link_flows
+            .get(&phys_link)
+            .map(|fs| fs.iter().count())
+            .unwrap_or(0)
+            + 1;
+        assert!(
+            cnt < 10,
+            "cnt: {}, link: {:?}, link_flows: {:?}",
+            cnt,
+            phys_link,
+            link_flows[&phys_link]
+        );
 
         demand.min(std::cmp::max(
             plink_capacity - demand_sum,
@@ -326,19 +354,69 @@ impl SimpleEstimator {
 
     fn compute_fair_share_per_tenant(
         &self,
+        my_tenant_id: TenantId,
         phys_link: LinkIx,
         demand: Bandwidth,
         plink_capacity: Bandwidth,
     ) -> Bandwidth {
-        let demand_sum = self.calculate_demand_sum(phys_link);
-        let brain = self.brain.borrow();
-        let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
-        let cnt = all_virtual_links.count();
+        let mut demand_vec = self.calculate_demand_vec(phys_link, my_tenant_id);
+        // let demand_sum = self.calculate_demand_sum(phys_link, my_tenant_id);
 
-        demand.min(std::cmp::max(
-            plink_capacity - demand_sum,
-            plink_capacity / cnt,
-        ))
+        // return demand.min(std::cmp::max(
+        //     plink_capacity - demand_sum,
+        //     plink_capacity / demand_vec.len(),
+        // ));
+
+        // calculate max min fair share
+
+        // append my_tenant_id
+        demand_vec.push(demand);
+
+        let mut num_converged = 0;
+        let mut converged = vec![false; demand_vec.len()];
+        let mut share = vec![0.gbps(); demand_vec.len()];
+
+        // compute max min fair share
+        while num_converged < demand_vec.len() {
+            let mut bound = demand_vec.clone();
+            // let mut min_inc = demand_vec
+            //     .iter()
+            //     .zip(share.iter())
+            //     .map(|(&a, &b)| a - b)
+            //     .min()
+            //     .unwrap();
+
+            let share_sum: Bandwidth = share.iter().cloned().sum();
+            assert!(share_sum < plink_capacity);
+            let alloced_share =
+                (plink_capacity - share_sum) / (demand_vec.len() - num_converged) as f64;
+
+            let mut min_inc = bandwidth::MAX;
+            for i in 0..demand_vec.len() {
+                if !converged[i] {
+                    bound[i] = bound[i].min(share[i] + alloced_share);
+                    min_inc = min_inc.min(bound[i] - share[i]);
+                }
+            }
+
+            assert!(min_inc < bandwidth::MAX);
+
+            let mut tmp = 0;
+            for i in 0..demand_vec.len() {
+                if !converged[i] {
+                    share[i] = share[i] + min_inc;
+                    if share[i] + 1.kbps() >= bound[i] {
+                        tmp += 1;
+                        converged[i] = true;
+                    }
+                }
+            }
+
+            assert!(tmp > 0, "min_inc: {}, share: {:?}, bound: {:?}", min_inc, share, bound);
+            num_converged += tmp;
+        }
+
+        *share.last().unwrap()
     }
 }
 
@@ -354,7 +432,12 @@ impl Estimator for SimpleEstimator {
         vcluster
     }
 
-    fn estimate_v2(&self, tenant_id: TenantId, fairness: FairnessModel, link_flows: &HashMap<LinkIx, FlowSet>) -> NetHintV2 {
+    fn estimate_v2(
+        &self,
+        tenant_id: TenantId,
+        fairness: FairnessModel,
+        link_flows: &HashMap<LinkIx, FlowSet>,
+    ) -> NetHintV2 {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         let brain = self.brain.borrow();
@@ -362,6 +445,7 @@ impl Estimator for SimpleEstimator {
             let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
 
             let bw = self.compute_fair_share(
+                tenant_id,
                 phys_link,
                 brain.cluster()[phys_link].bandwidth,
                 brain.cluster()[phys_link].bandwidth,

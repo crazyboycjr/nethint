@@ -70,6 +70,16 @@ impl std::fmt::Display for Bandwidth {
     }
 }
 
+impl std::iter::Sum for Bandwidth {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut s = 0.gbps();
+        for b in iter {
+            s = s + b;
+        }
+        s
+    }
+}
+
 impl std::cmp::PartialEq for Bandwidth {
     fn eq(&self, other: &Self) -> bool {
         self.val().eq(&other.val())
