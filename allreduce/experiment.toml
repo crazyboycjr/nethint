@@ -5,6 +5,9 @@ ncases = 20
 
 # Job size distributions [(percentage, number of workers)]
 job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 8], [5, 64]]
+# job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
+# job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
 
 # Buffer size of all jobs, in bytes
 buffer_size = 100_000_000
@@ -64,8 +67,8 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 0.1, amplitude = 3 }
-# background_flow_hard = { enable = false }
+# background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 0.1, amplitude = 3 }
+background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
 [brain]
@@ -79,8 +82,8 @@ broken = 0.0
 max_slots = 4
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
-background_flow_high_freq = { enable = true, probability = 0.1, amplitude = 1 }
-# background_flow_high_freq = { enable = false }
+# background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 1 }
+background_flow_high_freq = { enable = false }
 
 # The topology for simulation
 [brain.topology]
@@ -93,9 +96,9 @@ type = "Arbitrary"  # another possible value is "FatTree"
 
 [brain.topology.args]         # When type = "Arbitrary"
 nracks = 150        # the number of racks
-rack_size = 8       # the number of hosts under a rack
+rack_size = 12      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
-rack_bw = 266       # bandwidth of a ToR switch, in Gbps
+rack_bw = 400       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # KEY = "value"
