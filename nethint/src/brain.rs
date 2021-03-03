@@ -152,7 +152,7 @@ impl Brain {
         };
 
         if brain.setting.asymmetric {
-            brain.make_asymmetric(1.0, 5);
+            brain.make_asymmetric(1.0, 50);
         }
 
         // set high frequency part of background flow
@@ -187,7 +187,7 @@ impl Brain {
             if link_ix.index() & 1 == 1 {
                 if rng.gen_range(0.0..1.0) < probability {
                     log::info!("old_bw: {}", cluster[link_ix].bandwidth);
-                    let new_bw = cluster[link_ix].bandwidth * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0);
+                    let new_bw = cluster[link_ix].bandwidth * (1.0 - rng.gen_range(1..=amplitude) as f64 / 100.0);
                     cluster[link_ix] = Link::new(new_bw);
                     let reverse_link_ix = cluster.get_reverse_link(link_ix);
                     cluster[reverse_link_ix] = Link::new(new_bw);
