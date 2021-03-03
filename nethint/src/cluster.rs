@@ -48,6 +48,31 @@ pub trait Topology:
     fn to_dot(&self) -> Dot<&Graph<Node, Link>>;
 }
 
+pub trait TopologyClone: Topology {
+    fn into_box(&self) -> Box<dyn TopologyClone + '_>;
+}
+
+impl<T> TopologyClone for T
+where
+    T: Clone + Topology,
+{
+    fn into_box(&self) -> Box<dyn TopologyClone + '_> {
+        Box::new(self.clone())
+    }
+}
+
+impl std::fmt::Debug for &dyn Topology {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.to_dot())
+    }
+}
+
+impl std::fmt::Debug for Box<dyn Topology> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.to_dot())
+    }
+}
+
 /// A VirtCluster is a subgraph of the original physical cluster.
 /// It works just as a Cluster.
 /// Ideally, it should be able to translate the virtual node to a physical node in the physical cluster.

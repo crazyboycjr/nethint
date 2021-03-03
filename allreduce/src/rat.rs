@@ -1,18 +1,65 @@
 use lpsolve;
-use std::{collections::BTreeMap, str::from_utf8};
+use std::{
+    collections::{BTreeMap, HashMap},
+    str::from_utf8,
+};
 
 use crate::AllReduceAlgorithm;
 use nethint::{
-    cluster::{NodeIx, Topology},
+    bandwidth::BandwidthTrait,
+    cluster::{Link, LinkIx, NodeIx, Topology},
     Flow,
 };
 
 #[derive(Debug, Default)]
-pub struct RatAllReduce {}
+pub struct RatAllReduce {
+    // cache the result, if nethint hasn't been changed, no need to run LP again
+    last_size: Option<u64>,
+    last_hint: Option<HashMap<LinkIx, Link>>,
+    last_result: Vec<Flow>,
+}
 
 impl RatAllReduce {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    fn dump_vcluster(vcluster: &dyn Topology) -> HashMap<LinkIx, Link> {
+        vcluster
+            .all_links()
+            .map(|link_ix| (link_ix, vcluster[link_ix].clone()))
+            .collect()
+    }
+
+    pub fn check_cache(&self, (size, vcluster): (u64, &dyn Topology)) -> bool {
+        if self.last_size.is_none() || self.last_hint.is_none() {
+            return false;
+        }
+
+        if self.last_size.unwrap() != size {
+            return false;
+        }
+
+        let last_hint = self.last_hint.as_ref().unwrap();
+        vcluster.all_links().all(|link_ix| {
+            let l1 = vcluster[link_ix].clone();
+            if let Some(l2) = last_hint.get(&link_ix) {
+                let f = l1.bandwidth + 1.gbps() >= l2.bandwidth
+                    && l2.bandwidth + 1.gbps() >= l1.bandwidth;
+                if !f {
+                    log::debug!("l1: {}, l2: {}", l1, l2);
+                }
+                f
+            } else {
+                false
+            }
+        })
+    }
+
+    pub fn update_cache(&mut self, (size, vcluster): (u64, &dyn Topology), flows: Vec<Flow>) {
+        self.last_size.replace(size);
+        self.last_hint.replace(Self::dump_vcluster(vcluster));
+        self.last_result = flows;
     }
 }
 
@@ -341,7 +388,12 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
     for (_i, group) in groups.into_iter().enumerate() {
         let host_ix = vcluster.get_node_index(&format!("host_{}", group[0]));
         let tor_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
-        let rack_id: usize = vcluster[tor_ix].name.strip_prefix("tor_").unwrap().parse().unwrap();
+        let rack_id: usize = vcluster[tor_ix]
+            .name
+            .strip_prefix("tor_")
+            .unwrap()
+            .parse()
+            .unwrap();
         for rank in group {
             rank_to_rack_id.insert(rank, rack_id).unwrap_none();
         }
@@ -414,6 +466,10 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
 
 impl AllReduceAlgorithm for RatAllReduce {
     fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+        if self.check_cache((size, vcluster)) {
+            return self.last_result.clone();
+        }
+
         let tree_set = generate_rats(vcluster);
         // log::info!("tree_set: {:#?}", tree_set);
         let weights = linear_programming(vcluster, &tree_set, size);
@@ -438,6 +494,9 @@ impl AllReduceAlgorithm for RatAllReduce {
                 }
             }
         }
+
+        self.update_cache((size, vcluster), flows.clone());
+        self.last_result = flows.clone();
 
         flows
     }
