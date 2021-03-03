@@ -1,7 +1,8 @@
+# 3:1, jobsize = 4n, poisson = 24s, background: (60s, 0.5, 5), max_slots = 1
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 20
+ncases = 100
 
 # Job size distributions [(percentage, number of workers)]
 job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
@@ -13,10 +14,10 @@ job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 1000
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 24_00_000_000.0
+poisson_lambda = 24_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -27,10 +28,10 @@ placement_strategy = { type = "Compact" }
 seed = 1
 
 # Output path of for the simulation results
-directory = "/tmp/allreduce_result"
+directory = "/tmp/allreduce_result_for_paper/standard2"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -67,7 +68,7 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.5, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.5, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -97,7 +98,7 @@ type = "Arbitrary"  # another possible value is "FatTree"
 # oversub_ratio = 4.0   # oversubscription ratio
 
 [brain.topology.args]         # When type = "Arbitrary"
-nracks = 150        # the number of racks
+nracks = 300        # the number of racks
 rack_size = 6       # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 200       # bandwidth of a ToR switch, in Gbps

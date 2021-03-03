@@ -87,6 +87,8 @@ broken = 0.1
 max_slots = 4
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
+# in Gbps
+guaranteed_bandwidth = 25
 background_flow_high_freq = { enable = false }
 
 # The topology for simulation

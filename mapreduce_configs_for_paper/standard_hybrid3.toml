@@ -87,8 +87,10 @@ broken = 0.1
 max_slots = 4
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
+# in Gbps
+guaranteed_bandwidth = 25
 # 10ms, P on per link, amplitude=A, P*A
-background_flow_high_freq = { enable = true, probability = 1.0, amplitude = P*A }
+background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
 
 # The topology for simulation
 [brain.topology]
