@@ -70,6 +70,9 @@ struct ExperimentConfig {
     /// Collocate or De-collocate
     collocate: bool,
 
+    /// Number of repeats for each batch of experiments
+    batch_repeat: usize,
+
     #[serde(rename = "batch")]
     batches: Vec<BatchConfig>,
 
@@ -82,6 +85,10 @@ struct ExperimentConfig {
 
     /// Brain settings
     brain: BrainSetting,
+
+    /// Environment variables
+    #[serde(default)]
+    envs: toml::value::Table,
 }
 
 fn read_config<P: AsRef<std::path::Path>>(path: P) -> ExperimentConfig {
@@ -90,6 +97,14 @@ fn read_config<P: AsRef<std::path::Path>>(path: P) -> ExperimentConfig {
     let mut content = String::new();
     file.read_to_string(&mut content).unwrap();
     toml::from_str(&content).expect("parse failed")
+}
+
+fn set_env_vars(config: &ExperimentConfig) {
+    for (k, v) in config.envs.iter() {
+        let v = v.as_str().expect("expect String type");
+        log::debug!("setting environment {}={}", k, v);
+        std::env::set_var(k, v);
+    }
 }
 
 fn main() {
@@ -106,6 +121,8 @@ fn main() {
     };
 
     log::info!("config: {:#?}", config);
+
+    set_env_vars(&config);
 
     let brain = Brain::build_cloud(config.brain.clone());
 
@@ -125,12 +142,17 @@ fn main() {
         std::fs::write(file, format!("{:#?}\n", config)).unwrap();
     };
 
+    let mut estimator = nethint::runtime_est::RunningTimeEstimator::new();
+    estimator.set_total_trials(config.batches.len() * config.batch_repeat);
     for i in 0..config.batches.len() {
-        run_batch(&config, i, Rc::clone(&brain));
+        for trial_id in 0..config.batch_repeat {
+            estimator.bench_single_start();
+            run_batch(&config, i, trial_id, Rc::clone(&brain));
+        }
     }
 }
 
-fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain>>) {
+fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain: Rc<RefCell<Brain>>) {
     let job_trace = config
         .trace
         .as_ref()
@@ -172,7 +194,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
     // AppGroup[Tenant[PlinkApp[MapReduceApp]]]
     let batch = config.batches[batch_id].clone();
     for i in 0..ncases {
-        let seed = i as _;
+        let seed = (ncases * trial_id + i) as _;
         let tenant_id = i;
         let (start_ts, job_spec) = job.get(i).unwrap();
         let mapper_policy = {
@@ -216,6 +238,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),
+            config.placement_strategy,
         ));
 
         app_group.add(*start_ts, virtualized_app);
@@ -231,7 +254,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
         .unwrap_or_else(|e| panic!("{}", e));
 
     // run application in simulator
-    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let app_jct = simulator.run_with_application(Box::new(app_group));
     let app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
@@ -248,7 +271,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, brain: Rc<RefCell<Brain
         .collect();
 
     // remember to garbage collect remaining jobs
-    brain.borrow_mut().garbage_collect(ncases);
+    brain.borrow_mut().reset();
 
     println!("{:?}", app_stats);
 

@@ -18,7 +18,7 @@ pub struct AllReduceApp<'c> {
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
-    allreduce_policy: &'c AllReducePolicy,
+    allreduce_policy: AllReducePolicy,
     remaining_iterations: usize,
     remaining_flows: usize,
     nethint_level: usize,
@@ -36,7 +36,7 @@ impl<'c> AllReduceApp<'c> {
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
         seed: u64,
-        allreduce_policy: &'c AllReducePolicy,
+        allreduce_policy: AllReducePolicy,
         nethint_level: usize,
         autotune: Option<usize>,
     ) -> Self {
@@ -105,10 +105,10 @@ impl<'c> Application for AllReduceApp<'c> {
                 }
                 AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
-                    // info!(
-                    //     "nethint response: {}",
-                    //     self.cluster.as_ref().unwrap().to_dot()
-                    // );
+                    log::info!(
+                        "nethint response: {}",
+                        self.cluster.as_ref().unwrap().to_dot()
+                    );
                     // since we have the cluster, start and schedule the app again
                     self.allreduce(event.ts);
                     return self

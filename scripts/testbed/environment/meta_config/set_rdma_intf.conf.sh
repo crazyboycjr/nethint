@@ -22,4 +22,5 @@ sudo ip link set \$intf name rdma0
 sudo ip link set rdma0 up
 sudo ip addr add ${RDMA_IP_ADDR_CIDR} dev rdma0
 sudo ip link set rdma0 mtu 1430
+echo 106 | sudo tee /sys/class/infiniband/mlx5_0/tc/1/traffic_class
 EOF

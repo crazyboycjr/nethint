@@ -1,6 +1,6 @@
 #![feature(box_patterns)]
-use rand_distr::{Distribution, Poisson};
 use rand::Rng;
+use rand_distr::{Distribution, Poisson};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -9,10 +9,10 @@ use structopt::StructOpt;
 
 use nethint::{
     app::{AppGroup, Application},
-    brain::{Brain, BrainSetting},
+    brain::{Brain, BrainSetting, PlacementStrategy},
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
-    FairnessModel,
+    FairnessModel, SharingMode,
 };
 
 use mapreduce::plink::PlinkApp;
@@ -32,6 +32,8 @@ fn main() {
         seed: 1,
         max_slots: 1, // nethint::brain::MAX_SLOTS,
         topology: opt.topo.clone(),
+        sharing_mode: SharingMode::Guaranteed,
+        background_flow_high_freq: Default::default(),
     });
 
     // info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -73,7 +75,7 @@ fn main() {
 fn get_random_job_size() -> usize {
     let job_sizes = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]];
     let mut rng = rand::thread_rng();
-    let mut n = rng.gen_range(0, 240);
+    let mut n = rng.gen_range(0..240);
     let mut i = 0;
     while i < 5 {
         if n < job_sizes[i][0] {
@@ -87,7 +89,7 @@ fn get_random_job_size() -> usize {
 
 fn get_random_arrival_time(lambda: f64) -> u64 {
     let poi = Poisson::new(lambda).unwrap();
-    poi.sample(&mut rand::thread_rng())
+    poi.sample(&mut rand::thread_rng()) as u64
 }
 
 fn run_experiments(
@@ -97,7 +99,7 @@ fn run_experiments(
     use_plink: bool,
     jobs: &[(u64, JobSpec)],
 ) {
-    brain.borrow_mut().garbage_collect(opt.ncases);
+    brain.borrow_mut().reset();
 
     let mut app_group = AppGroup::new();
 
@@ -116,7 +118,7 @@ fn run_experiments(
             job_spec,
             None,
             seed,
-            &all_reduce_policy,
+            all_reduce_policy,
             opt.nethint_level,
             opt.tune,
         ));
@@ -134,6 +136,7 @@ fn run_experiments(
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),
+            PlacementStrategy::Compact,
         ));
 
         app_group.add(*start_ts, virtualized_app);
@@ -142,11 +145,11 @@ fn run_experiments(
     let mut simulator = SimulatorBuilder::new()
         .enable_nethint(true)
         .brain(Rc::clone(&brain))
-        .fairness(FairnessModel::TenantFlowMinMax)
+        .fairness(FairnessModel::TenantFlowMaxMin)
         .sample_interval_ns(100_000_000)
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
-    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let app_jct = simulator.run_with_application(Box::new(app_group));
     let mut app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
@@ -155,7 +158,7 @@ fn run_experiments(
 
     println!("{:?}", app_stats);
     // let mut simulator = Simulator::new((**brain.borrow().cluster()).clone());
-    // let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    // let app_jct = simulator.run_with_application(Box::new(app_group));
     // info!("{:?}", app_jct);
     // println!("{:?}", app_jct);
 }

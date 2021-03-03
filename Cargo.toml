@@ -1,3 +1,2 @@
 [workspace]
-members = ["nethint", "logging", "mapreduce","allreduce"]
-default-members = ["allreduce"]
+members = ["nethint", "logging", "mapreduce", "allreduce", "litemsg", "replayer", "nhagent"]

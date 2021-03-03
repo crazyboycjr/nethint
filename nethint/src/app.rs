@@ -190,10 +190,7 @@ impl AppGroupTokenCoding for Token {
             tenant_id, app_id,
             "currently, AppGroupTokenCoding assumes tenant_id and app_id are the same"
         );
-        assert!(
-            tenant_id < 0x1 << 32,
-            format!("invalid tenant_id {}", tenant_id)
-        );
+        assert!(tenant_id < 0x1 << 32, "invalid tenant_id {}", tenant_id);
         Token(tenant_id << 32 | app_id)
     }
     fn decode(&self) -> (TenantId, usize) {

@@ -2,7 +2,10 @@ use lpsolve;
 use std::{collections::BTreeMap, str::from_utf8};
 
 use crate::AllReduceAlgorithm;
-use nethint::{cluster::Topology, Flow};
+use nethint::{
+    cluster::{NodeIx, Topology},
+    Flow,
+};
 
 #[derive(Debug, Default)]
 pub struct RatAllReduce {}
@@ -47,6 +50,11 @@ impl Tree {
         self[p].children.push(c);
         self[c].parent.replace(p).unwrap_none();
     }
+
+    fn root(&self) -> TreeIdx {
+        assert!(!self.nodes.is_empty());
+        TreeIdx(0)
+    }
 }
 
 impl std::ops::Index<TreeIdx> for Tree {
@@ -83,36 +91,51 @@ fn construct_tree_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
     let ranks: Vec<_> = groups.iter().flatten().copied().collect();
     assert!(offset < ranks.len());
 
-    let root = tree.push(Node::new(ranks[offset]));
+    let root_rank = ranks[offset];
+    let root = tree.push(Node::new(root_rank));
     for group in groups {
         assert!(!group.is_empty());
-        let first_rank = group[offset % group.len()];
-        let sub_root = if tree[root].rank != first_rank {
-            let sub_root = tree.push(Node::new(first_rank));
-            tree.connect(root, sub_root);
-            sub_root
+        // COMMENT(cjr): there's a case where group[offset % group.len()] != ranks[offset]
+        // e.g. the sub-tree sizes are (2, 3, 3), and offset = 5
+        // in this case, 5 is the root, but group[offset % group.len()] = 7, a mismatch
+        if group.iter().find(|&&x| x == root_rank).is_some() {
+            for &r in group {
+                if r != root_rank {
+                    let tn = tree.push(Node::new(r));
+                    tree.connect(root, tn);
+                }
+            }
         } else {
-            root
-        };
-        for i in 1..group.len() {
-            let r = group[(offset + i) % group.len()];
-            let tn = tree.push(Node::new(r));
-            tree.connect(sub_root, tn);
+            let first_rank = group[offset % group.len()];
+            assert_ne!(first_rank, root_rank);
+            let sub_root = {
+                let sub_root = tree.push(Node::new(first_rank));
+                tree.connect(root, sub_root);
+                sub_root
+            };
+            for i in 1..group.len() {
+                let r = group[(offset + i) % group.len()];
+                assert_ne!(r, root_rank);
+                let tn = tree.push(Node::new(r));
+                tree.connect(sub_root, tn);
+            }
         }
     }
 
     tree
 }
 
+fn get_rack_ix(vcluster: &dyn Topology, rank: usize) -> NodeIx {
+    let host_name = format!("host_{}", rank);
+    let host_ix = vcluster.get_node_index(&host_name);
+    let rack_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
+    rack_ix
+}
+
 fn generate_rats(vcluster: &dyn Topology) -> Vec<Tree> {
     let n = vcluster.num_hosts();
 
-    let groups = group_by_key(0..n, |i| {
-        let host_name = format!("host_{}", i);
-        let host_ix = vcluster.get_node_index(&host_name);
-        let rack_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
-        rack_ix
-    });
+    let groups = group_by_key(0..n, |&i| get_rack_ix(vcluster, i));
 
     let mut tree_set = Vec::with_capacity(n);
     for i in 0..n {
@@ -284,6 +307,7 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
         lpsolve_sys::set_verbose(lp.to_lprec(), lpsolve::Verbosity::Critical as i32);
     }
 
+    // host level constraints
     let bw: Vec<_> = (0..n)
         .map(|i| {
             let host_name = format!("host_{}", i);
@@ -300,6 +324,42 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
         }
     }
 
+    // rack level constraints
+    let r = vcluster.num_switches() - 1;
+    let rack_bw: Vec<_> = (0..r)
+        .map(|i| {
+            let tor_name = format!("tor_{}", i);
+            let tor_ix = vcluster.get_node_index(&tor_name);
+            // allreduce tasks has symmetric bi-directional traffic
+            vcluster[vcluster.get_uplink(tor_ix)].bandwidth.val() as f64
+        })
+        .collect();
+    let mut rack_deg = vec![vec![0.; tree_set.len() + 1]; r];
+
+    let groups = group_by_key(0..n, |&i| get_rack_ix(vcluster, i));
+    let mut rank_to_rack_id: BTreeMap<usize, usize> = Default::default();
+    for (_i, group) in groups.into_iter().enumerate() {
+        let host_ix = vcluster.get_node_index(&format!("host_{}", group[0]));
+        let tor_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
+        let rack_id: usize = vcluster[tor_ix].name.strip_prefix("tor_").unwrap().parse().unwrap();
+        for rank in group {
+            rank_to_rack_id.insert(rank, rack_id).unwrap_none();
+        }
+    }
+    for (k, tree) in tree_set.iter().enumerate() {
+        let root = tree.root();
+        let root_rank = tree[root].rank;
+        let root_rack_id = rank_to_rack_id[&root_rank];
+        let mut degs = 0;
+        for &child in &tree[root].children {
+            let child_rank = tree[child].rank;
+            if rank_to_rack_id[&child_rank] != root_rack_id {
+                degs += 1;
+            }
+        }
+        rack_deg[root_rack_id][k + 1] += degs as f64;
+    }
+
     // minimize y
     let mut obj_func = vec![0.; n + 1];
     obj_func.push(1.);
@@ -311,6 +371,15 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
     for (i, deg) in deg.iter().enumerate() {
         let mut constraint = deg.clone();
         constraint.push(-1.0 * bw[i] / size as f64);
+        lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
+    }
+
+    // Dr is a degree matrix. Dr[i][k] is the degree of ToR i in kth aggregation tree.
+    // Bwr is a diagonal bandwidth matrix. Bwr[i][i] = bw_rack[i];
+    // Bwr^{-1} \cdot Dr \cdot \vec{w} <= \vec{y}
+    for (i, deg) in rack_deg.iter().enumerate() {
+        let mut constraint = deg.clone();
+        constraint.push(-1.0 * rack_bw[i] / size as f64);
         lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
     }
 

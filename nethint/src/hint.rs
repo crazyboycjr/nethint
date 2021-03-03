@@ -1,14 +1,18 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::{cell::RefCell, unimplemented};
 
-use fnv::FnvHashMap as HashMap;
+// use fnv::FnvHashMap as HashMap;
+use fnv::FnvBuildHasher;
+use indexmap::IndexMap;
+type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 
 use crate::{
-    bandwidth::{Bandwidth, BandwidthTrait},
+    bandwidth::{self, Bandwidth, BandwidthTrait},
     brain::{Brain, TenantId},
     cluster::{Counters, LinkIx, NodeIx, NodeType, Topology, VirtCluster},
-    Duration, Timestamp,
+    simulator::FlowSet,
+    Duration, FairnessModel, SharingMode, Timestamp,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +135,9 @@ impl Sampler {
                 .unwrap();
             assert!(
                 rack_id < num_racks,
-                format!("rack_id: {}, num_racks: {}", rack_id, num_racks)
+                "rack_id: {}, num_racks: {}",
+                rack_id,
+                num_racks
             );
             agg[rack_id].tx_total += counters.tx_total;
             agg[rack_id].tx_in += counters.tx_in;
@@ -153,9 +159,16 @@ impl Sampler {
     }
 }
 
-pub trait Estimator {
+pub(crate) trait Estimator {
     fn estimate_v1(&self, tenant_id: TenantId) -> NetHintV1;
-    fn estimate_v2(&self, tenant_id: TenantId) -> NetHintV2;
+    // link flows tells which flows are on each link, and it also groups flows with the same fairness property together,
+    // which will be useful for estimating available bandwidth.
+    fn estimate_v2(
+        &self,
+        tenant_id: TenantId,
+        fairness: FairnessModel,
+        link_flows: &HashMap<LinkIx, FlowSet>,
+    ) -> NetHintV2;
     fn sample(&mut self, ts: Timestamp);
 }
 
@@ -191,14 +204,38 @@ fn get_all_virtual_links(
 impl SimpleEstimator {
     fn compute_fair_share(
         &self,
+        tenant_id: TenantId,
+        phys_link: LinkIx,
         demand: Bandwidth,
         plink_capacity: Bandwidth,
-        all_virtual_links: impl Iterator<Item = (TenantId, LinkIx)>,
+        fairness: FairnessModel,
+        link_flows: &HashMap<LinkIx, FlowSet>,
     ) -> Bandwidth {
-        let mut demand_sum = 0.gbps();
-        let mut cnt = 0;
+        match fairness {
+            FairnessModel::PerFlowMaxMin => self.compute_fair_share_per_flow(
+                tenant_id,
+                phys_link,
+                demand,
+                plink_capacity,
+                link_flows,
+            ),
+            FairnessModel::PerVmPairMaxMin => unimplemented!(),
+            FairnessModel::TenantFlowMaxMin => {
+                self.compute_fair_share_per_tenant(tenant_id, phys_link, demand, plink_capacity)
+            }
+        }
+    }
+
+    fn calculate_demand_vec(&self, phys_link: LinkIx, my_tenant_id: TenantId) -> Vec<Bandwidth> {
         let brain = self.brain.borrow();
+        let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+
+        let mut demand_vec = Vec::new();
         for (tenant_id, vlink_ix) in all_virtual_links {
+            if tenant_id == my_tenant_id {
+                continue;
+            }
+
             let demand_i = if let Some(sampler) = self.sampler.get(&tenant_id) {
                 let vcluster = brain.vclusters[&tenant_id].borrow();
                 let source_ix = vcluster.get_source(vlink_ix);
@@ -212,9 +249,17 @@ impl SimpleEstimator {
                             .zip_with(sampler.vmstats[&source_ix].last_delta_tx_in(), |x, y| {
                                 (8.0 * (x - y) as f64 / sampler.interval_ns as f64).gbps()
                             }),
-                        NodeType::Host => sampler.vmstats[&source_ix]
-                            .last_delta_tx_total()
-                            .map(|x| (8.0 * x as f64 / sampler.interval_ns as f64).gbps()),
+                        NodeType::Host => {
+                            sampler.vmstats[&source_ix].last_delta_tx_total().map(|x| {
+                                if x > 0 {
+                                    append_log_file(&format!(
+                                        "host link, last_delta_tx_total: {}",
+                                        x
+                                    ));
+                                }
+                                (8.0 * x as f64 / sampler.interval_ns as f64).gbps()
+                            })
+                        }
                     }
                 } else {
                     // rx
@@ -224,18 +269,36 @@ impl SimpleEstimator {
                             .zip_with(sampler.vmstats[&target_ix].last_delta_rx_in(), |x, y| {
                                 (8.0 * (x - y) as f64 / sampler.interval_ns as f64).gbps()
                             }),
-                        NodeType::Host => sampler.vmstats[&target_ix]
-                            .last_delta_rx_total()
-                            .map(|x| (8.0 * x as f64 / sampler.interval_ns as f64).gbps()),
+                        NodeType::Host => {
+                            sampler.vmstats[&target_ix].last_delta_rx_total().map(|x| {
+                                if x > 0 {
+                                    append_log_file(&format!(
+                                        "host link, last_delta_rx_total: {}",
+                                        x
+                                    ));
+                                }
+                                (8.0 * x as f64 / sampler.interval_ns as f64).gbps()
+                            })
+                        }
                     }
                 }
             } else {
                 None
             };
 
-            demand_sum = demand_sum + demand_i.unwrap_or_else(|| 0.gbps());
-            cnt += 1;
+            demand_vec.push(demand_i.unwrap_or_else(|| 0.gbps()));
         }
+
+        demand_vec
+    }
+
+    fn calculate_demand_sum(&self, phys_link: LinkIx, my_tenant_id: TenantId) -> Bandwidth {
+        let brain = self.brain.borrow();
+        let plink_capacity = brain.cluster()[phys_link].bandwidth;
+
+        let demand_vec = self.calculate_demand_vec(phys_link, my_tenant_id);
+        let cnt = demand_vec.len() + 1;
+        let mut demand_sum: Bandwidth = demand_vec.into_iter().sum();
 
         // clamp
         if demand_sum > plink_capacity {
@@ -244,13 +307,116 @@ impl SimpleEstimator {
 
         assert!(
             demand_sum <= plink_capacity,
-            format!("{} vs {}", demand_sum, plink_capacity)
+            "{} vs {}",
+            demand_sum,
+            plink_capacity
+        );
+
+        if demand_sum > 0.gbps() {
+            append_log_file(&format!(
+                "demand_sum: {}, cnt = {}, pink_capacity/cnt = {}",
+                demand_sum,
+                cnt,
+                plink_capacity / cnt
+            ));
+        }
+
+        demand_sum
+    }
+
+    fn compute_fair_share_per_flow(
+        &self,
+        tenant_id: TenantId,
+        phys_link: LinkIx,
+        demand: Bandwidth,
+        plink_capacity: Bandwidth,
+        link_flows: &HashMap<LinkIx, FlowSet>,
+    ) -> Bandwidth {
+        let demand_sum = self.calculate_demand_sum(phys_link, tenant_id);
+        let cnt = link_flows
+            .get(&phys_link)
+            .map(|fs| fs.iter().count())
+            .unwrap_or(0)
+            + 1;
+        assert!(
+            cnt < 10,
+            "cnt: {}, link: {:?}, link_flows: {:?}",
+            cnt,
+            phys_link,
+            link_flows[&phys_link]
         );
 
         demand.min(std::cmp::max(
             plink_capacity - demand_sum,
             plink_capacity / cnt,
         ))
+    }
+
+    fn compute_fair_share_per_tenant(
+        &self,
+        my_tenant_id: TenantId,
+        phys_link: LinkIx,
+        demand: Bandwidth,
+        plink_capacity: Bandwidth,
+    ) -> Bandwidth {
+        let mut demand_vec = self.calculate_demand_vec(phys_link, my_tenant_id);
+        // let demand_sum = self.calculate_demand_sum(phys_link, my_tenant_id);
+
+        // return demand.min(std::cmp::max(
+        //     plink_capacity - demand_sum,
+        //     plink_capacity / demand_vec.len(),
+        // ));
+
+        // calculate max min fair share
+
+        // append my_tenant_id
+        demand_vec.push(demand);
+
+        let mut num_converged = 0;
+        let mut converged = vec![false; demand_vec.len()];
+        let mut share = vec![0.gbps(); demand_vec.len()];
+
+        // compute max min fair share
+        while num_converged < demand_vec.len() {
+            let mut bound = demand_vec.clone();
+            // let mut min_inc = demand_vec
+            //     .iter()
+            //     .zip(share.iter())
+            //     .map(|(&a, &b)| a - b)
+            //     .min()
+            //     .unwrap();
+
+            let share_sum: Bandwidth = share.iter().cloned().sum();
+            assert!(share_sum < plink_capacity);
+            let alloced_share =
+                (plink_capacity - share_sum) / (demand_vec.len() - num_converged) as f64;
+
+            let mut min_inc = bandwidth::MAX;
+            for i in 0..demand_vec.len() {
+                if !converged[i] {
+                    bound[i] = bound[i].min(share[i] + alloced_share);
+                    min_inc = min_inc.min(bound[i] - share[i]);
+                }
+            }
+
+            assert!(min_inc < bandwidth::MAX);
+
+            let mut tmp = 0;
+            for i in 0..demand_vec.len() {
+                if !converged[i] {
+                    share[i] = share[i] + min_inc;
+                    if share[i] + 1.kbps() >= bound[i] {
+                        tmp += 1;
+                        converged[i] = true;
+                    }
+                }
+            }
+
+            assert!(tmp > 0, "min_inc: {}, share: {:?}, bound: {:?}", min_inc, share, bound);
+            num_converged += tmp;
+        }
+
+        *share.last().unwrap()
     }
 }
 
@@ -259,25 +425,61 @@ impl Estimator for SimpleEstimator {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         for link_ix in vcluster.all_links() {
+            // just some non-zero constant value will be OK
             vcluster[link_ix].bandwidth = 100.gbps();
         }
 
         vcluster
     }
 
-    fn estimate_v2(&self, tenant_id: TenantId) -> NetHintV2 {
+    fn estimate_v2(
+        &self,
+        tenant_id: TenantId,
+        fairness: FairnessModel,
+        link_flows: &HashMap<LinkIx, FlowSet>,
+    ) -> NetHintV2 {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {
             let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
-            let all_virtual_links = get_all_virtual_links(&*brain, phys_link);
+
             let bw = self.compute_fair_share(
+                tenant_id,
+                phys_link,
                 brain.cluster()[phys_link].bandwidth,
                 brain.cluster()[phys_link].bandwidth,
-                all_virtual_links,
+                fairness,
+                link_flows,
             );
-            vcluster[link_ix].bandwidth = bw;
+            let count = get_all_virtual_links(&*brain, phys_link).count();
+            log::info!(
+                "phys_link: {}, estimated: bw: {}, vlinks count: {}",
+                brain.cluster()[phys_link].bandwidth,
+                bw,
+                count
+            );
+            if brain.cluster()[phys_link].bandwidth > bw {
+                append_log_file(&format!(
+                    "phys_link: {}, estimated: bw: {}, vlinks count: {}",
+                    brain.cluster()[phys_link].bandwidth,
+                    bw,
+                    count
+                ));
+            }
+
+            // whether the link is limited should also be considered when giving nethint
+            vcluster[link_ix].bandwidth = if brain.setting().sharing_mode
+                == SharingMode::RateLimited
+                && (vcluster[vcluster.get_target(link_ix)].depth > 1 // the link a host link
+                    && vcluster[vcluster.get_source(link_ix)].depth > 1)
+            {
+                let limited_rate = vcluster[link_ix].bandwidth;
+                assert!(limited_rate > 0.gbps());
+                limited_rate.min(bw)
+            } else {
+                bw
+            }
         }
 
         vcluster
@@ -294,4 +496,15 @@ impl Estimator for SimpleEstimator {
                 .sample(vcluster, ts);
         }
     }
+}
+
+fn append_log_file(str: &str) {
+    use std::io::{Seek, Write};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open("/tmp/ff")
+        .unwrap();
+    f.seek(std::io::SeekFrom::End(0)).unwrap();
+    writeln!(f, "{}", str).unwrap();
 }

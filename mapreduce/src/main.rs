@@ -12,11 +12,11 @@ use structopt::StructOpt;
 use nethint::{
     app::{AppGroup, Application},
     bandwidth::BandwidthTrait,
-    brain::{Brain, BrainSetting},
+    brain::{Brain, BrainSetting, PlacementStrategy},
     cluster::{Cluster, Topology},
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
-    FairnessModel, ToStdDuration,
+    FairnessModel, ToStdDuration, SharingMode
 };
 
 extern crate mapreduce;
@@ -43,6 +43,8 @@ fn main() {
         seed: 1,
         max_slots: nethint::brain::MAX_SLOTS,
         topology: opt.topo.clone(),
+        sharing_mode: SharingMode::Guaranteed,
+        background_flow_high_freq: Default::default(),
     });
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -226,6 +228,7 @@ fn run_experiments_multitenant(
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),
+            PlacementStrategy::Compact,
         ));
 
         app_group.add(*start_ts, virtualized_app);
@@ -238,13 +241,13 @@ fn run_experiments_multitenant(
     let mut simulator = SimulatorBuilder::new()
         .enable_nethint(true)
         .brain(Rc::clone(&brain))
-        // .fairness(FairnessModel::PerFlowMinMax)
-        .fairness(FairnessModel::TenantFlowMinMax)
+        // .fairness(FairnessModel::PerFlowMaxMin)
+        .fairness(FairnessModel::TenantFlowMaxMin)
         .sample_interval_ns(100_000_000)
         .loopback_speed(400.gbps())
         .build()
         .unwrap_or_else(|e| panic!("{}", e));
-    let app_jct = simulator.run_with_appliation(Box::new(app_group));
+    let app_jct = simulator.run_with_application(Box::new(app_group));
     let max_jct = app_jct.iter().map(|(_, jct)| jct.unwrap()).max();
     let app_stats: Vec<_> = app_jct
         .iter()
@@ -265,7 +268,7 @@ fn run_experiments_multitenant(
         })
         .collect();
 
-    brain.borrow_mut().garbage_collect(ncases);
+    brain.borrow_mut().reset();
     (app_stats, max_jct.unwrap())
 }
 

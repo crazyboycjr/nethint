@@ -7,6 +7,14 @@ if [ $UID -ne 0 ]; then
 	exit 3
 fi
 
+if [ $# -ne 2 ]; then
+	echo "Usage: $0 <pf_intf> <num_vfs>"
+	exit 1
+fi
+
+pf=$1
+num_vfs=$2
+
 # Create an OVS bridge (here it's named ovs-sriov).
 ovs-vsctl add-br ovs-sriov
 
@@ -24,8 +32,10 @@ systemctl restart openvswitch-switch.service
 
 
 # Make sure to bring up the PF and representor netdevices.
-ovs-vsctl add-port ovs-sriov rdma0
-ovs-vsctl add-port ovs-sriov rdma0_0
+ovs-vsctl add-port ovs-sriov $pf
+for ((i=0;i<$num_vfs;i++)); do
+	ovs-vsctl add-port ovs-sriov ${pf}_${i}
+done
 
 # show something
 ovs-vsctl list-ports ovs-sriov

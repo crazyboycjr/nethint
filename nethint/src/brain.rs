@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -6,13 +7,39 @@ use fnv::FnvHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs};
 use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
+use crate::{
+    architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs},
+    SharingMode,
+};
 
 pub type TenantId = usize;
 
 pub const MAX_SLOTS: usize = 4;
+
+/// High frequency changed background flows.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundFlowHighFreq {
+    enable: bool,
+    #[serde(default)]
+    probability: f64,
+    // the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
+    // for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
+    #[serde(default)]
+    amplitude: usize,
+}
+
+impl Default for BackgroundFlowHighFreq {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            probability: 0.0,
+            amplitude: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainSetting {
@@ -24,8 +51,12 @@ pub struct BrainSetting {
     pub broken: f64,
     /// The slots of each physical machine
     pub max_slots: usize,
+    /// how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
+    pub sharing_mode: SharingMode,
     /// The parameters of the cluster's physical topology
     pub topology: TopoArgs,
+
+    pub background_flow_high_freq: BackgroundFlowHighFreq,
 }
 
 /// Brain is the cloud controller. It knows the underlay physical
@@ -49,6 +80,8 @@ pub struct Brain {
     pub(crate) vlink_to_plink: HashMap<(TenantId, LinkIx), LinkIx>,
     /// a queue to enforce FIFO order to destroy VMs
     gc_queue: Vec<TenantId>,
+    /// save the state of updating background flow traffic
+    background_flow_update_cnt: u64,
 }
 
 /// Similar to AWS Placement Groups.
@@ -57,6 +90,8 @@ pub struct Brain {
 pub enum PlacementStrategy {
     /// Prefer to choose hosts within the same rack.
     Compact,
+    /// Prefer to choose hosts within the same rack, and also prefer to choose empty racks.
+    CompactLoadBalanced,
     /// Prefer to spread instances to different racks.
     Spread,
     /// Random uniformally choose some hosts to allocate.
@@ -113,10 +148,19 @@ impl Brain {
             plink_to_vlinks: Default::default(),
             vlink_to_plink: Default::default(),
             gc_queue: Default::default(),
+            background_flow_update_cnt: 0,
         };
 
         if brain.setting.asymmetric {
-            brain.make_asymmetric(brain.setting.seed)
+            brain.make_asymmetric(1.0, 50);
+        }
+
+        // set high frequency part of background flow
+        if brain.setting.background_flow_high_freq.enable {
+            brain.make_asymmetric(
+                brain.setting.background_flow_high_freq.probability,
+                brain.setting.background_flow_high_freq.amplitude,
+            );
         }
 
         brain.mark_broken(brain.setting.seed, brain.setting.broken);
@@ -128,19 +172,27 @@ impl Brain {
         &self.cluster
     }
 
-    fn make_asymmetric(&mut self, seed: u64) {
+    pub fn setting(&self) -> &BrainSetting {
+        &self.setting
+    }
+
+    pub fn make_asymmetric(&mut self, probability: f64, amplitude: usize) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StdRng::seed_from_u64(self.setting.seed);
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
 
         for link_ix in cluster.all_links() {
             if link_ix.index() & 1 == 1 {
-                let new_bw = cluster[link_ix].bandwidth / (rng.gen_range(1..=5));
-                cluster[link_ix] = Link::new(new_bw);
-                let reverse_link_ix = cluster.get_reverse_link(link_ix);
-                cluster[reverse_link_ix] = Link::new(new_bw);
+                if rng.gen_range(0.0..1.0) < probability {
+                    log::info!("old_bw: {}", cluster[link_ix].bandwidth);
+                    let new_bw = cluster[link_ix].bandwidth * (1.0 - rng.gen_range(1..=amplitude) as f64 / 100.0);
+                    cluster[link_ix] = Link::new(new_bw);
+                    let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                    cluster[reverse_link_ix] = Link::new(new_bw);
+                    log::info!("new_bw: {}", new_bw);
+                }
             }
         }
 
@@ -153,7 +205,7 @@ impl Brain {
 
     fn mark_broken(&mut self, seed: u64, ratio: f64) {
         use rand::{rngs::StdRng, Rng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StdRng::seed_from_u64(seed + 10000);
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
@@ -167,9 +219,28 @@ impl Brain {
         }
     }
 
-    pub fn update_background_flow_hard(&mut self, probability: f64) {
+    fn reset_link_bandwidth(&mut self) {
+        let cluster = Arc::get_mut(&mut self.cluster)
+            .expect("there should be no other reference to physical cluster");
+
+        for link_ix in cluster.all_links() {
+            if link_ix.index() & 1 == 1 {
+                // recover the link's capacity
+                let bw = self.orig_bw[&link_ix];
+                cluster[link_ix] = Link::new(bw);
+                let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                cluster[reverse_link_ix] = Link::new(bw);
+            }
+        }
+    }
+
+    pub fn update_background_flow_hard(&mut self, probability: f64, amplitude: usize) {
+        self.background_flow_update_cnt += 1;
+
         use rand::{rngs::StdRng, Rng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(self.setting.seed);
+        let mut rng = StdRng::seed_from_u64(self.setting.seed + self.background_flow_update_cnt);
+
+        self.reset_link_bandwidth();
 
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
@@ -177,16 +248,53 @@ impl Brain {
         for link_ix in cluster.all_links() {
             if link_ix.index() & 1 == 1 {
                 if rng.gen_range(0.0..1.0) < probability {
+                    // integer overflow will only be checked in debug mode, so I should have detected an error here.
                     let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
                     let total_slots = self.setting.max_slots;
-                    let mut empty_slots = total_slots - current_tenants;
-                    // guarantee each tenant can have total/current_tenants bandwidth
-                    if empty_slots <= 1 {
-                        continue;
-                    }
-                    // do not zero new_bw
-                    empty_slots -= 1;
-                    let new_bw = self.orig_bw[&link_ix] * (1.0 - rng.gen_range(1..=empty_slots) as f64 / (total_slots as f64));
+                    let new_bw: Bandwidth = if cluster[cluster.get_target(link_ix)].depth == 1
+                        || cluster[cluster.get_source(link_ix)].depth == 1
+                    {
+                        // that means this is an inter-rack linnk
+                        // take (1..amplitude)/10 of capacity from the link
+                        // TODO(cjr): introduce amplitude in experiment config
+                        assert!(
+                            amplitude < 10,
+                            "amplitude must be range in [1, 9], got {}",
+                            amplitude
+                        );
+                        let new_bw = self.orig_bw[&link_ix]
+                            * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0);
+                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
+                        new_bw
+                    } else {
+                        match self.setting.sharing_mode {
+                            SharingMode::RateLimited => {
+                                // if the sharing mode is "RateLimited", then we are good here
+                                self.orig_bw[&link_ix]
+                                    * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0)
+                            }
+                            SharingMode::Guaranteed => {
+                                // if the sharing mode is "Guaranteed", then we cannot take too much bandwidth from that host
+                                let mut empty_slots = total_slots - current_tenants;
+                                // guarantee each tenant can have total/current_tenants bandwidth
+                                if empty_slots <= 1 {
+                                    continue;
+                                }
+                                // do not zero new_bw
+                                empty_slots -= 1;
+                                let fraction = 1.0
+                                    - rng.gen_range(1..=empty_slots) as f64 / total_slots as f64;
+                                self.orig_bw[&link_ix] * fraction
+                            }
+                        }
+                    };
+
+                    assert!(
+                        new_bw.val() > 0,
+                        "current_tenants: {}, total_slots: {}",
+                        current_tenants,
+                        total_slots
+                    );
 
                     cluster[link_ix] = Link::new(new_bw);
                     let reverse_link_ix = cluster.get_reverse_link(link_ix);
@@ -217,6 +325,7 @@ impl Brain {
 
         let (inner, virt_to_phys) = match strategy {
             PlacementStrategy::Compact => self.place_compact(nhosts),
+            PlacementStrategy::CompactLoadBalanced => self.place_compact_load_balanced(nhosts),
             PlacementStrategy::Spread => unimplemented!(),
             PlacementStrategy::Random(seed) => self.place_random(nhosts, seed),
         };
@@ -274,7 +383,7 @@ impl Brain {
         Ok(ret)
     }
 
-    pub fn garbage_collect(&mut self, until: TenantId) {
+    fn garbage_collect(&mut self, until: TenantId) {
         #[allow(clippy::stable_sort_primitive)]
         self.gc_queue.sort();
         self.gc_queue.reverse();
@@ -310,6 +419,12 @@ impl Brain {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.background_flow_update_cnt = 0;
+        self.reset_link_bandwidth();
+        self.garbage_collect(TenantId::MAX);
+    }
+
     pub fn destroy(&mut self, tenant_id: TenantId) {
         // lazily destroy
         // NOTE that this lazily destroy mechanism still cannot guarantee that
@@ -319,6 +434,12 @@ impl Brain {
     }
 
     fn place_specified(&mut self, hosts_spec: &[NodeIx]) -> (Cluster, HashMap<String, String>) {
+        if hosts_spec.iter().cloned().collect::<HashSet<_>>().len() < hosts_spec.len() {
+            log::warn!(
+                "multiple VMs will be placed on the same host, hosts_spec: {:?}",
+                hosts_spec
+            );
+        }
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
         let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
 
@@ -335,18 +456,29 @@ impl Brain {
                 // new ToR in virtual cluster
                 let tor_name = format!("tor_{}", tor_alloc.len());
                 inner.add_node(Node::new(&tor_name, 2, NodeType::Switch));
+                // despite we have sharing mode, we intentionally leave 0.gbps() here.
+                // Then if anywhere tries to use this information, it will probably yields some errors during computation.
                 inner.add_link_by_name(root, &tor_name, 0.gbps());
                 tor_alloc.insert(tor_ix, tor_name);
             }
 
             let host_len = host_alloc.len();
-            let host_name = host_alloc
+            let vhost_name = host_alloc
                 .entry(host_ix)
                 .or_insert(format!("host_{}", host_len));
 
             // connect the host to the ToR
-            inner.add_node(Node::new(host_name, 3, NodeType::Host));
-            inner.add_link_by_name(&tor_alloc[&tor_ix], host_name, 0.gbps());
+            inner.add_node(Node::new(vhost_name, 3, NodeType::Host));
+
+            // here we compute the limited rate of a virtual machine
+            let phys_link = self.cluster().get_uplink(host_ix);
+            let phys_link_bw = self.orig_bw[&phys_link];
+            let allocated_bw = match self.setting.sharing_mode {
+                SharingMode::RateLimited => phys_link_bw / self.setting.max_slots, // also the rate limit works on both direction of the link
+                SharingMode::Guaranteed => phys_link_bw,
+            };
+            inner.add_link_by_name(&tor_alloc[&tor_ix], vhost_name, allocated_bw);
+
             self.used.entry(host_ix).and_modify(|e| *e += 1);
         }
 
@@ -387,6 +519,43 @@ impl Brain {
     }
 
     fn place_compact(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
+        let mut allocated = 0;
+        let mut alloced_hosts = Vec::new();
+
+        // place VMs at the next empty slot, and try to avoid collocation
+        let num_hosts = self.cluster.num_hosts();
+        while allocated < nhosts {
+            for i in 0..num_hosts {
+                let host_name = format!("host_{}", i);
+                let host_ix = self.cluster.get_node_index(&host_name);
+                if self.used[&host_ix] < self.setting.max_slots {
+                    let n = &self.cluster[host_ix];
+                    assert_eq!(n.depth, 3); // this doesn't have to be true
+
+                    allocated += 1;
+                    alloced_hosts.push(host_ix);
+                    self.used.entry(host_ix).and_modify(|e| *e += 1);
+
+                    if allocated >= nhosts {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for &host_ix in &alloced_hosts {
+            self.used.entry(host_ix).and_modify(|e| *e -= 1);
+        }
+
+        use rand::seq::SliceRandom;
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(0); // use a constant seed
+        alloced_hosts.shuffle(&mut rng);
+
+        self.place_specified(&alloced_hosts)
+    }
+
+    fn place_compact_load_balanced(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
         let mut allocated = 0;
         let mut alloced_hosts = Vec::new();
 

@@ -39,15 +39,30 @@ pub mod hint;
 
 pub mod background_flow;
 
+pub mod runtime_est;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FairnessModel {
-    PerFlowMinMax,
-    TenantFlowMinMax,
+    PerFlowMaxMin,
+    PerVmPairMaxMin,
+    TenantFlowMaxMin,
 }
 
 impl std::default::Default for FairnessModel {
     fn default() -> Self {
-        Self::PerFlowMinMax
+        Self::PerFlowMaxMin
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SharingMode {
+    RateLimited,
+    Guaranteed,
+}
+
+impl std::default::Default for SharingMode {
+    fn default() -> Self {
+        Self::Guaranteed
     }
 }
 
@@ -150,7 +165,7 @@ impl Flow {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct Token(pub usize);
 
 impl From<usize> for Token {

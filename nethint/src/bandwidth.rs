@@ -5,6 +5,9 @@ enum BandwidthUnit {
     Gbps = 1_000_000_000,
 }
 
+pub const MAX: Bandwidth = Bandwidth { val: u64::MAX, unit: BandwidthUnit::Gbps };
+pub const MIN: Bandwidth = Bandwidth { val: u64::MIN, unit: BandwidthUnit::Gbps };
+
 impl std::fmt::Display for BandwidthUnit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use BandwidthUnit::*;
@@ -64,6 +67,16 @@ impl std::fmt::Display for Bandwidth {
             self.val as f64 / self.unit as u64 as f64,
             self.unit
         )
+    }
+}
+
+impl std::iter::Sum for Bandwidth {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut s = 0.gbps();
+        for b in iter {
+            s = s + b;
+        }
+        s
     }
 }
 
