@@ -141,30 +141,13 @@ fn main() {
     // log::info!("seed = {}", seed);
     let seed = config.seed;
 
-    // Generate job information, arrival time and job size
-    let mut jobs = Vec::new();
-
-    let mut rng = StdRng::seed_from_u64(config.seed);
-    let mut t = 0;
-    for i in 0..config.ncases {
-        let job_spec = JobSpec::new(
-            get_random_job_size(&config.job_size_distribution, &mut rng),
-            config.buffer_size,
-            config.num_iterations,
-        );
-        let next = get_random_arrival_time(config.poisson_lambda, &mut rng);
-        t += next;
-        log::info!("job {}: {:?}", i, job_spec);
-        jobs.push((t, job_spec));
-    }
-
     // start to run batches
     let mut estimator = nethint::runtime_est::RunningTimeEstimator::new();
     estimator.set_total_trials(config.batches.len() * config.batch_repeat);
     for i in 0..config.batches.len() {
         for trial_id in 0..config.batch_repeat {
             estimator.bench_single_start();
-            run_batch(&config, i, trial_id, seed, &jobs, Rc::clone(&brain));
+            run_batch(&config, i, trial_id, seed, Rc::clone(&brain));
         }
     }
 }
@@ -196,15 +179,31 @@ fn get_random_arrival_time(lambda: f64, rng: &mut StdRng) -> u64 {
 fn run_batch(
     config: &ExperimentConfig,
     batch_id: usize,
-    _trial_id: usize,
+    trial_id: usize,
     seed: u64,
-    jobs: &[(u64, JobSpec)],
     brain: Rc<RefCell<Brain>>,
 ) {
     // remember to garbage collect remaining jobs
     brain.borrow_mut().reset();
 
     let ncases = config.ncases;
+
+    // Generate job information, arrival time and job size
+    let mut jobs = Vec::new();
+
+    let mut rng = StdRng::seed_from_u64(config.seed + trial_id as u64);
+    let mut t = 0;
+    for i in 0..ncases {
+        let job_spec = JobSpec::new(
+            get_random_job_size(&config.job_size_distribution, &mut rng),
+            config.buffer_size,
+            config.num_iterations,
+        );
+        let next = get_random_arrival_time(config.poisson_lambda, &mut rng);
+        t += next;
+        log::info!("job {}: {:?}", i, job_spec);
+        jobs.push((t, job_spec));
+    }
 
     // Build the application by composition
     // AppGroup[Tenant[PlinkApp[MapReduceApp]]]
