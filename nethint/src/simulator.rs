@@ -286,7 +286,7 @@ impl Simulator {
     fn calc_delta_per_flow(total_bw: Bandwidth, fs: &mut FlowSet) -> Bandwidth {
         let (num_active, consumed_bw, min_inc) = fs.iter().fold((0, 0.0, f64::MAX), |acc, f| {
             let f = f.borrow();
-            assert!(f.speed <= f.max_rate.val() as f64, "f: {:?}", f);
+            assert!(f.speed <= f.max_rate.val() as f64 + 10.0, "f: {:?}", f);
             (
                 acc.0 + !f.converged as usize,
                 acc.1 + f.speed,
@@ -326,7 +326,7 @@ impl Simulator {
                     consumed_bw += f.speed;
                     if !f.converged {
                         tenant_active_flows += 1;
-                        assert!(f.speed < f.max_rate.val() as f64, "flow: {:?}", f);
+                        assert!(f.speed < f.max_rate.val() as f64 + 10.0, "flow: {:?}", f);
                         min_inc_to_max_rate =
                             min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
                     }
@@ -943,7 +943,7 @@ impl NetState {
         self.running_flows.iter().for_each(|f| {
             let mut f = f.borrow_mut();
             let speed = f.speed;
-            assert!(f.speed <= f.max_rate.val() as f64, "flowstate: {:?}", f);
+            assert!(f.speed <= f.max_rate.val() as f64 + 10.0, "flowstate: {:?}", f);
             let delta = (speed / 1e9 * ts_inc as f64).round() as usize / 8;
             f.bytes_sent += delta;
 
