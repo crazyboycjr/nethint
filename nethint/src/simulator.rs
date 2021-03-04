@@ -286,7 +286,7 @@ impl Simulator {
     fn calc_delta_per_flow(total_bw: Bandwidth, fs: &mut FlowSet) -> Bandwidth {
         let (num_active, consumed_bw, min_inc) = fs.iter().fold((0, 0.0, f64::MAX), |acc, f| {
             let f = f.borrow();
-            assert!(f.speed < f.max_rate.val() as f64);
+            assert!(f.speed <= f.max_rate.val() as f64, "f: {:?}", f);
             (
                 acc.0 + !f.converged as usize,
                 acc.1 + f.speed,
@@ -636,7 +636,7 @@ impl<'a> Executor<'a> for Simulator {
                     Event::AppFinish => {
                         finished = true;
                     }
-                    Event::NetHintRequest(app_id, tenant_id, version) => {
+                    Event::NetHintRequest(app_id, tenant_id, version, app_hint) => {
                         assert!(self.setting.enable_nethint, "Nethint not enabled.");
                         let response = AppEventKind::NetHintResponse(
                             app_id,
@@ -649,6 +649,7 @@ impl<'a> Executor<'a> for Simulator {
                                     tenant_id,
                                     self.setting.fairness,
                                     &self.state.link_flows,
+                                    app_hint, // 0 for mapreduce, 1 for allreduce
                                 ),
                             },
                         );
@@ -1103,8 +1104,8 @@ pub enum Event {
     /// The application has completed all flows and has no more flows to send. This event should
     /// appear after certain FlowComplete event.
     AppFinish,
-    /// Request NetHint information, (app_id, tenant_id, version)
-    NetHintRequest(usize, TenantId, NetHintVersion),
+    /// Request NetHint information, (app_id, tenant_id, version, app_hint)
+    NetHintRequest(usize, TenantId, NetHintVersion, usize),
     /// A Timer event is registered by Application. It notifies the application after duration ns.
     /// Token is used to identify the timer.
     RegisterTimer(Duration, Token),

@@ -321,10 +321,10 @@ where
                         self.output.push((app_id, app.answer()));
                         Events::new()
                     }
-                    Event::NetHintRequest(inner_app_id, tenant_id, version) => {
+                    Event::NetHintRequest(inner_app_id, tenant_id, version, app_hint) => {
                         // nested AppGroup will be supported later
                         assert_eq!(inner_app_id, 0);
-                        Event::NetHintRequest(app_id, tenant_id, version).into()
+                        Event::NetHintRequest(app_id, tenant_id, version, app_hint).into()
                     }
                     Event::RegisterTimer(_dura, token) => {
                         panic!(

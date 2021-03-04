@@ -168,6 +168,7 @@ pub(crate) trait Estimator {
         tenant_id: TenantId,
         fairness: FairnessModel,
         link_flows: &HashMap<LinkIx, FlowSet>,
+        app_hint: usize,
     ) -> NetHintV2;
     fn sample(&mut self, ts: Timestamp);
 }
@@ -210,6 +211,7 @@ impl SimpleEstimator {
         plink_capacity: Bandwidth,
         fairness: FairnessModel,
         link_flows: &HashMap<LinkIx, FlowSet>,
+        num_new_flows: usize,
     ) -> Bandwidth {
         match fairness {
             FairnessModel::PerFlowMaxMin => self.compute_fair_share_per_flow(
@@ -218,6 +220,7 @@ impl SimpleEstimator {
                 demand,
                 plink_capacity,
                 link_flows,
+                num_new_flows,
             ),
             FairnessModel::PerVmPairMaxMin => unimplemented!(),
             FairnessModel::TenantFlowMaxMin => {
@@ -331,6 +334,7 @@ impl SimpleEstimator {
         demand: Bandwidth,
         plink_capacity: Bandwidth,
         link_flows: &HashMap<LinkIx, FlowSet>,
+        num_new_flows: usize,
     ) -> Bandwidth {
         let demand_sum = self.calculate_demand_sum(phys_link, tenant_id);
         let cnt = link_flows
@@ -338,17 +342,19 @@ impl SimpleEstimator {
             .map(|fs| fs.iter().count())
             .unwrap_or(0)
             + 1;
-        assert!(
-            cnt < 10,
-            "cnt: {}, link: {:?}, link_flows: {:?}",
-            cnt,
-            phys_link,
-            link_flows[&phys_link]
-        );
+        // assert!(
+        //     cnt < 10,
+        //     "cnt: {}, link: {:?}, link_flows: {:?}",
+        //     cnt,
+        //     phys_link,
+        //     link_flows[&phys_link]
+        // );
+
+        assert!(num_new_flows > 0);
 
         demand.min(std::cmp::max(
             plink_capacity - demand_sum,
-            plink_capacity / cnt,
+            plink_capacity / (cnt + num_new_flows) * num_new_flows,
         ))
     }
 
@@ -379,12 +385,6 @@ impl SimpleEstimator {
         // compute max min fair share
         while num_converged < demand_vec.len() {
             let mut bound = demand_vec.clone();
-            // let mut min_inc = demand_vec
-            //     .iter()
-            //     .zip(share.iter())
-            //     .map(|(&a, &b)| a - b)
-            //     .min()
-            //     .unwrap();
 
             let share_sum: Bandwidth = share.iter().cloned().sum();
             assert!(share_sum < plink_capacity);
@@ -437,12 +437,49 @@ impl Estimator for SimpleEstimator {
         tenant_id: TenantId,
         fairness: FairnessModel,
         link_flows: &HashMap<LinkIx, FlowSet>,
+        app_hint: usize, // hint from app, 0 for mapreduce, 1 for allreduce, it's a dirty hack
     ) -> NetHintV2 {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
 
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {
             let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
+
+            // accord to the position of the link, decide how many flows are going to be added to this link
+            // basically, a link break the tree into two parts A and B, we roughly estimate the number of newly added flow
+            // on this link as size(A) * size(B). This estimation makes sense in MapReduce. For allreduce, it may
+            // not be that case. For allreduce, we use RAT. Each node on average will have a + n + (n / b) * (b - 1), a is num_racks
+            // b is rack_size of that node. Each cross rack link will have max(1, b * (a - 1) + n - b)
+            let mut high_node = vcluster[vcluster.get_source(link_ix)].clone();
+            let mut low_node = vcluster[vcluster.get_target(link_ix)].clone();
+            if high_node.depth > low_node.depth {
+                std::mem::swap(&mut high_node, &mut low_node);
+            }
+            let num_new_flows = if high_node.depth == 1 {
+                if app_hint == 0 {
+                    // for mapreduce
+                    let n = vcluster.num_hosts();
+                    let a = vcluster.get_downlinks(vcluster.get_node_index(&low_node.name)).count();
+                    n * a
+                } else {
+                    // for allreduce
+                    let a = vcluster.get_downlinks(vcluster.get_node_index("virtual_cloud")).count();
+                    let n = vcluster.num_hosts();
+                    let b = vcluster.get_downlinks(vcluster.get_node_index(&low_node.name)).count();
+                    std::cmp::max(1, b * (a - 1) + n - b)
+                }
+            } else {
+                if app_hint == 0 {
+                    // for mapreduce
+                    vcluster.num_hosts()
+                } else {
+                    // for allreduce
+                    let a = vcluster.get_downlinks(vcluster.get_node_index("virtual_cloud")).count();
+                    let n = vcluster.num_hosts();
+                    let b = vcluster.get_downlinks(vcluster.get_node_index(&high_node.name)).count();
+                    a + n + n * (b - 1) / b
+                }
+            };
 
             let bw = self.compute_fair_share(
                 tenant_id,
@@ -451,6 +488,7 @@ impl Estimator for SimpleEstimator {
                 brain.cluster()[phys_link].bandwidth,
                 fairness,
                 link_flows,
+                num_new_flows,
             );
             let count = get_all_virtual_links(&*brain, phys_link).count();
             log::info!(
