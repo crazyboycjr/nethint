@@ -106,10 +106,10 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                         }
                         Event::FlowArrive(virt_flows)
                     }
-                    Event::NetHintRequest(app_id, tenant_id, version) => {
+                    Event::NetHintRequest(app_id, tenant_id, version, app_hint) => {
                         assert_eq!(app_id, 0);
                         assert_eq!(tenant_id, 0);
-                        Event::NetHintRequest(app_id, self.tenant_id, version)
+                        Event::NetHintRequest(app_id, self.tenant_id, version, app_hint)
                     }
                     Event::RegisterTimer(..) => {
                         unreachable!(

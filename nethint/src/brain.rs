@@ -53,6 +53,8 @@ pub struct BrainSetting {
     pub max_slots: usize,
     /// how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
     pub sharing_mode: SharingMode,
+    /// guaranteed bandwidth, in Gbps
+    pub guaranteed_bandwidth: Option<usize>,
     /// The parameters of the cluster's physical topology
     pub topology: TopoArgs,
 
@@ -187,7 +189,8 @@ impl Brain {
             if link_ix.index() & 1 == 1 {
                 if rng.gen_range(0.0..1.0) < probability {
                     log::info!("old_bw: {}", cluster[link_ix].bandwidth);
-                    let new_bw = cluster[link_ix].bandwidth * (1.0 - rng.gen_range(1..=amplitude) as f64 / 100.0);
+                    let new_bw = cluster[link_ix].bandwidth
+                        * (1.0 - rng.gen_range(1..=amplitude) as f64 / 100.0);
                     cluster[link_ix] = Link::new(new_bw);
                     let reverse_link_ix = cluster.get_reverse_link(link_ix);
                     cluster[reverse_link_ix] = Link::new(new_bw);
@@ -275,16 +278,32 @@ impl Brain {
                             }
                             SharingMode::Guaranteed => {
                                 // if the sharing mode is "Guaranteed", then we cannot take too much bandwidth from that host
-                                let mut empty_slots = total_slots - current_tenants;
-                                // guarantee each tenant can have total/current_tenants bandwidth
-                                if empty_slots <= 1 {
+                                let orig_bw = self.orig_bw[&link_ix];
+                                let guaranteed_bw = self
+                                    .setting
+                                    .guaranteed_bandwidth
+                                    .expect("Expect a bandwidth lower bound.");
+                                let total_slots =
+                                    (orig_bw.val() as f64 / guaranteed_bw.gbps().val() as f64)
+                                        .floor() as u64;
+                                assert!(
+                                    total_slots >= 1,
+                                    "orig_bw: {}, guaranteed_bw: {}",
+                                    orig_bw,
+                                    guaranteed_bw
+                                );
+                                if total_slots == 1 {
                                     continue;
                                 }
-                                // do not zero new_bw
-                                empty_slots -= 1;
-                                let fraction = 1.0
-                                    - rng.gen_range(1..=empty_slots) as f64 / total_slots as f64;
-                                self.orig_bw[&link_ix] * fraction
+                                let coeff = rng.gen_range(1..=total_slots - 1) as u64;
+                                let new_bw = orig_bw - guaranteed_bw.gbps() * coeff;
+                                assert!(
+                                    new_bw >= guaranteed_bw.gbps(),
+                                    "new_bw: {}, guaranteed_bw: {}",
+                                    new_bw,
+                                    guaranteed_bw.gbps()
+                                );
+                                new_bw
                             }
                         }
                     };

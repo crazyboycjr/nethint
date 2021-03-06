@@ -286,7 +286,7 @@ impl Simulator {
     fn calc_delta_per_flow(total_bw: Bandwidth, fs: &mut FlowSet) -> Bandwidth {
         let (num_active, consumed_bw, min_inc) = fs.iter().fold((0, 0.0, f64::MAX), |acc, f| {
             let f = f.borrow();
-            assert!(f.speed < f.max_rate.val() as f64);
+            assert!(f.speed <= f.max_rate.val() as f64 + 10.0, "f: {:?}", f);
             (
                 acc.0 + !f.converged as usize,
                 acc.1 + f.speed,
@@ -326,7 +326,7 @@ impl Simulator {
                     consumed_bw += f.speed;
                     if !f.converged {
                         tenant_active_flows += 1;
-                        assert!(f.speed < f.max_rate.val() as f64, "flow: {:?}", f);
+                        assert!(f.speed < f.max_rate.val() as f64 + 10.0, "flow: {:?}", f);
                         min_inc_to_max_rate =
                             min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
                     }
@@ -636,7 +636,7 @@ impl<'a> Executor<'a> for Simulator {
                     Event::AppFinish => {
                         finished = true;
                     }
-                    Event::NetHintRequest(app_id, tenant_id, version) => {
+                    Event::NetHintRequest(app_id, tenant_id, version, app_hint) => {
                         assert!(self.setting.enable_nethint, "Nethint not enabled.");
                         let response = AppEventKind::NetHintResponse(
                             app_id,
@@ -649,6 +649,7 @@ impl<'a> Executor<'a> for Simulator {
                                     tenant_id,
                                     self.setting.fairness,
                                     &self.state.link_flows,
+                                    app_hint, // 0 for mapreduce, 1 for allreduce
                                 ),
                             },
                         );
@@ -942,7 +943,7 @@ impl NetState {
         self.running_flows.iter().for_each(|f| {
             let mut f = f.borrow_mut();
             let speed = f.speed;
-            assert!(f.speed <= f.max_rate.val() as f64, "flowstate: {:?}", f);
+            assert!(f.speed <= f.max_rate.val() as f64 + 10.0, "flowstate: {:?}", f);
             let delta = (speed / 1e9 * ts_inc as f64).round() as usize / 8;
             f.bytes_sent += delta;
 
@@ -1103,8 +1104,8 @@ pub enum Event {
     /// The application has completed all flows and has no more flows to send. This event should
     /// appear after certain FlowComplete event.
     AppFinish,
-    /// Request NetHint information, (app_id, tenant_id, version)
-    NetHintRequest(usize, TenantId, NetHintVersion),
+    /// Request NetHint information, (app_id, tenant_id, version, app_hint)
+    NetHintRequest(usize, TenantId, NetHintVersion, usize),
     /// A Timer event is registered by Application. It notifies the application after duration ns.
     /// Token is used to identify the timer.
     RegisterTimer(Duration, Token),

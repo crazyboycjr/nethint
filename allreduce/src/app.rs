@@ -1,15 +1,15 @@
-use std::rc::Rc;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::Topology,
+    hint::NetHintVersion,
     simulator::{Event, Events},
     Duration, Timestamp, Trace, TraceRecord,
-    hint::NetHintVersion,
 };
+use std::rc::Rc;
 
 use crate::{
-    random_ring::RandomRingAllReduce, topology_aware::TopologyAwareRingAllReduce, rat::RatAllReduce,
-    AllReduceAlgorithm, AllReducePolicy, JobSpec,
+    random_ring::RandomRingAllReduce, rat::RatAllReduce,
+    topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
 };
 
 pub struct AllReduceApp<'c> {
@@ -23,6 +23,7 @@ pub struct AllReduceApp<'c> {
     remaining_flows: usize,
     nethint_level: usize,
     autotune: Option<usize>,
+    allreduce_algorithm: Option<Box<dyn AllReduceAlgorithm>>,
 }
 
 impl<'c> std::fmt::Debug for AllReduceApp<'c> {
@@ -52,25 +53,37 @@ impl<'c> AllReduceApp<'c> {
             remaining_flows: 0,
             nethint_level,
             autotune,
+            allreduce_algorithm: None,
         }
     }
 
     pub fn start(&mut self) {
         self.remaining_iterations = self.job_spec.num_iterations;
+
+        self.allreduce_algorithm = Some(self.new_allreduce_algorithm());
+
         self.allreduce(0);
+    }
+
+    fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
+        match self.allreduce_policy {
+            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
+            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
+            AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
+        }
     }
 
     pub fn allreduce(&mut self, start_time: Timestamp) {
         let mut trace = Trace::new();
 
-        let mut allreduce_algorithm: Box<dyn AllReduceAlgorithm> = match self.allreduce_policy {
-            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
-            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
-            AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
-        };
+        if self.allreduce_algorithm.is_none() {
+            self.allreduce_algorithm = Some(self.new_allreduce_algorithm());
+        }
 
-        let flows =
-            allreduce_algorithm.allreduce(self.job_spec.buffer_size as u64, &**self.cluster.as_ref().unwrap());
+        let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
+            self.job_spec.buffer_size as u64,
+            &**self.cluster.as_ref().unwrap(),
+        );
 
         for flow in flows {
             let rec = TraceRecord::new(start_time, flow, None);
@@ -85,9 +98,9 @@ impl<'c> AllReduceApp<'c> {
 
     fn request_nethint(&self) -> Events {
         match self.nethint_level {
-            0 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
-            1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
-            2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
+            0 => Event::NetHintRequest(0, 0, NetHintVersion::V1, 1).into(),
+            1 => Event::NetHintRequest(0, 0, NetHintVersion::V1, 1).into(),
+            2 => Event::NetHintRequest(0, 0, NetHintVersion::V2, 1).into(),
             _ => panic!("unexpected nethint_level: {}", self.nethint_level),
         }
     }
@@ -125,7 +138,10 @@ impl<'c> Application for AllReduceApp<'c> {
             self.remaining_flows -= flows.len();
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
-                if self.autotune.is_some() && self.autotune.unwrap() > 0 && self.remaining_iterations % self.autotune.unwrap() == 0 {
+                if self.autotune.is_some()
+                    && self.autotune.unwrap() > 0
+                    && self.remaining_iterations % self.autotune.unwrap() == 0
+                {
                     self.cluster = None;
                     return self.request_nethint();
                 }

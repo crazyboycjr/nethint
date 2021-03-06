@@ -4,7 +4,7 @@
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
-ncases = 1
+ncases = 100
 
 # Number of map tasks and reduce tasks
 # When running from trace, these parameters become scale factors
@@ -71,7 +71,7 @@ fairness = "TenantFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 9 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 0.5, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -86,6 +86,7 @@ broken = 0.1
 max_slots = 4
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
+guaranteed_bandwidth = 25
 background_flow_high_freq = { enable = true, probability = 0.1, amplitude = 1 }
 
 # The topology for simulation
