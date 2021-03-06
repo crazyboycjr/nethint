@@ -1141,6 +1141,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl"
+version = "0.1.0"
+dependencies = [
+ "gnuplot",
+ "log",
+ "logging",
+ "lpsolve",
+ "lpsolve-sys",
+ "mapreduce",
+ "nethint",
+ "rand 0.8.3",
+ "rand_distr",
+ "serde",
+ "structopt",
+ "toml",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
