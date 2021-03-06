@@ -272,6 +272,26 @@ pub struct CounterUnitData {
     pub num_competitors: u32, // it can be num_flows, num_vms, or num_tenants, depending on the fairness model
 }
 
+impl std::ops::Add for CounterUnitData {
+    type Output = CounterUnitData;
+    fn add(self, rhs: CounterUnitData) -> Self::Output {
+        CounterUnitData {
+            bytes: self.bytes + rhs.bytes,
+            num_competitors: self.num_competitors + rhs.num_competitors,
+        }
+    }
+}
+
+impl std::ops::Sub for CounterUnitData {
+    type Output = CounterUnitData;
+    fn add(self, rhs: CounterUnitData) -> Self::Output {
+        CounterUnitData {
+            bytes: self.bytes - rhs.bytes,
+            num_competitors: self.num_competitors - rhs.num_competitors,
+        }
+    }
+}
+
 impl OvsSampler {
     pub fn new(interval_ms: u64, tx: mpsc::Sender<Vec<CounterUnit>>) -> Self {
         OvsSampler {

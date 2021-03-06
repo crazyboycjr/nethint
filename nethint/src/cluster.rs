@@ -21,6 +21,45 @@ pub type LinkIx = EdgeIndex;
 pub type NodeIx = NodeIndex;
 pub type LinkIxIter = EdgeIndices;
 
+// for serialize and deserialize
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SLinkIx(EdgeIndex);
+impl std::convert::Into<LinkIx> for SLinkIx {
+    fn into(self) -> LinkIx {
+        self.0
+    }
+}
+// impl std::ops::Deref for LinkIx {
+//     type Target = EdgeIndex;
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+// impl std::ops::DerefMut for LinkIx {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.0
+//     }
+// }
+impl serde::Serialize for SLinkIx {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        serializer.serialize_u64(self.0.index() as u64)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SLinkIx {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let index: u64 = s.parse().map_err(serde::de::Error::custom)?;
+        Ok(SLinkIx(LinkIx::new(index as usize)))
+    }
+}
+
 use std::ops::{Index, IndexMut};
 
 pub trait Topology:
@@ -198,7 +237,10 @@ impl Cluster {
             let dst = self.get_target(link_ix);
             let dst_name = self.graph[dst].name.clone();
             log::debug!("dst_name: {}", dst_name);
-            node_map.entry(dst_name).and_modify(|e| *e = dst).or_insert(dst);
+            node_map
+                .entry(dst_name)
+                .and_modify(|e| *e = dst)
+                .or_insert(dst);
         }
         self.node_map = node_map;
     }

@@ -194,7 +194,9 @@ impl Handler {
                 let rack_uplink = pcluster.inner().get_uplink(rack_ix);
                 let dataunit = self.traffic.entry(rack_uplink).or_insert(vec![CounterUnit::new(rack_name)]);
                 for c in chunk {
-                    dataunit[0]
+                    use nhagent::sampler::CounterType::*;
+                    dataunit[0].data[Tx] += c.data[Tx] - c.data[TxIn];
+                    dataunit[0].data[Rx] += c.data[Rx] - c.data[RxIn];
                 }
                 // 2. save chunk
                 let my_role = pcluster.get_my_role();
