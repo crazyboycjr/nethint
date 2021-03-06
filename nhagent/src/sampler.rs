@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{borrow::Borrow, process::Command};
 use std::sync::mpsc;
 use std::{collections::HashMap, convert::TryInto};
 
@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::utils;
+use crate::cluster::CLUSTER;
 
 const _OVS_CMD: &'static str = "ovs-appctl dpctl/dump-flows type=all -m";
 // sudo ovs-appctl dpctl/dump-flows type=all -m
@@ -26,8 +27,8 @@ pub struct OvsSampler {
     tx: mpsc::Sender<Vec<CounterUnit>>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-struct EthAddr([u8; 6]);
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EthAddr([u8; 6]);
 
 impl std::str::FromStr for EthAddr {
     type Err = EthParseError;
@@ -43,7 +44,7 @@ impl std::str::FromStr for EthAddr {
 
 #[derive(Error, Debug)]
 #[error("Parse eth pair error: stage {0}")]
-struct EthParseError(usize);
+pub struct EthParseError(usize);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 struct Eth {
@@ -216,18 +217,51 @@ struct FlowTable {
     table: HashMap<Eth, FlowStats>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CounterType {
+    Tx,   // total tx
+    TxIn, // tx within rack
+    Rx,   // total rx
+    RxIn, // rx within rack
+}
+
+impl std::ops::Index<CounterType> for [CounterUnitData; 4] {
+    type Output = CounterUnitData;
+    fn index(&self, index: CounterType) -> &Self::Output {
+        use CounterType::*;
+        match index {
+            Tx => self.get(0).unwrap(),
+            TxIn => self.get(1).unwrap(),
+            Rx => self.get(2).unwrap(),
+            RxIn => self.get(3).unwrap(),
+        }
+    }
+}
+
+impl std::ops::IndexMut<CounterType> for [CounterUnitData; 4] {
+    fn index_mut(&mut self, index: CounterType) -> &mut Self::Output {
+        use CounterType::*;
+        match index {
+            Tx => self.get_mut(0).unwrap(),
+            TxIn => self.get_mut(1).unwrap(),
+            Rx => self.get_mut(2).unwrap(),
+            RxIn => self.get_mut(3).unwrap(),
+        }
+    }
+}
+
 /// The information annotated on a virtual link.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CounterUnit {
     pub vnodename: String, // need to be unique across all VMs, name to sth else
-    pub data: [CounterUnitData; 2], // 0 for tx, 1 for rx
+    pub data: [CounterUnitData; 4], // 0 for tx, 1 for rx
 }
 
 impl CounterUnit {
-    fn new(vnodename: &str) -> Self {
+    pub fn new(vnodename: &str) -> Self {
         CounterUnit {
             vnodename: vnodename.to_owned(),
-            data: [CounterUnitData::default(); 2],
+            data: [CounterUnitData::default(); 4],
         }
     }
 }
@@ -291,6 +325,8 @@ impl OvsSampler {
                 .collect();
             log::trace!("parsed ovs_flow: {:?}", ovs_flows);
 
+            let pcluster = CLUSTER.borrow().lock().unwrap();
+
             for ovs_flow in ovs_flows {
                 // currently we only handle ipv4
                 if ovs_flow.eth_type != 0x0800 {
@@ -341,18 +377,27 @@ impl OvsSampler {
                 log::trace!("delta: {}", delta);
 
                 // add delta
+                use CounterType::*;
+                let update_counter_unit = |c: &mut CounterUnit, counter_type: CounterType, delta: usize| {
+                    c.data[counter_type].bytes += delta as u64;
+                    c.data[counter_type].num_competitors += 1;
+                };
                 if local_eth_table.contains_key(&eth_src) {
-                    vnode_counter.entry(eth_src).and_modify(|e| {
+                    if pcluster.is_eth_within_rack(&eth_dst) {
+                        // tx_in
+                        vnode_counter.entry(eth_src).and_modify(|e| update_counter_unit(e, TxIn, delta));
+                    } else {
                         // tx
-                        e.data[0].bytes += delta as u64;
-                        e.data[0].num_competitors += 1;
-                    });
+                        vnode_counter.entry(eth_src).and_modify(|e| update_counter_unit(e, Tx, delta));
+                    }
                 } else if local_eth_table.contains_key(&eth_dst) {
-                    vnode_counter.entry(eth_dst).and_modify(|e| {
+                    if pcluster.is_eth_within_rack(&eth_dst) {
+                        // rx_in
+                        vnode_counter.entry(eth_dst).and_modify(|e| update_counter_unit(e, RxIn, delta));
+                    } else {
                         // rx
-                        e.data[1].bytes += delta as u64;
-                        e.data[1].num_competitors += 1;
-                    });
+                        vnode_counter.entry(eth_dst).and_modify(|e| update_counter_unit(e, Rx, delta));
+                    }
                 } else {
                     log::warn!(
                         "ovs_flow {:?} does not come from or target to this server",
@@ -360,6 +405,9 @@ impl OvsSampler {
                     );
                 }
             }
+
+            // release the lock, do not hold it for too long
+            std::mem::drop(pcluster);
 
             // vnode_counter hash_map to vec
             let counter_unit: Vec<CounterUnit> = vnode_counter.values().cloned().collect();
@@ -378,7 +426,7 @@ impl OvsSampler {
 
 // vf 0     link/ether 02:5a:78:25:5d:35 brd ff:ff:ff:ff:ff:ff, spoof checking off, link-state disable, trust off, query_rss off
 // vf 1     link/ether 02:35:1a:a8:03:6e brd ff:ff:ff:ff:ff:ff, spoof checking off, link-state disable, trust off, query_rss off
-fn get_local_eth_table() -> anyhow::Result<HashMap<EthAddr, String>> {
+pub fn get_local_eth_table() -> anyhow::Result<HashMap<EthAddr, String>> {
     let mut local_eth_table = HashMap::default(); // map eth to node name
     let mut cmd = Command::new("ip");
     cmd.args(&["link", "show", "rdma0"]);

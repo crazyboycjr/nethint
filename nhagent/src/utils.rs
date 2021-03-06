@@ -29,5 +29,5 @@ pub fn get_command_output(mut cmd: Command) -> anyhow::Result<String> {
         };
     }
 
-    Ok(std::str::from_utf8(&result.stdout)?.trim().to_owned())
+    Ok(std::str::from_utf8(&result.stdout)?.to_owned())
 }
