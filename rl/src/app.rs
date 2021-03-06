@@ -66,7 +66,7 @@ impl<'c> RLApp<'c> {
         let mut allreduce_algorithm: Box<dyn RLAlgorithm> = match self.allreduce_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed)),
-            RLPolicy::RAT => Box::new(RatTree::new()),
+            RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
         };
 
         let flows =
