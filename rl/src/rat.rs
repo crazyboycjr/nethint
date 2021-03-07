@@ -13,30 +13,119 @@ impl RatTree {
 }
 
 impl RLAlgorithm for RatTree {
-    fn run_rl_traffic(&mut self, root_index: usize, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+    fn run_rl_traffic(
+        &mut self,
+        root_index: usize,
+        size: u64,
+        vcluster: &dyn Topology,
+    ) -> Vec<Flow> {
         let mut ringlets = Vec::new();
-
+        let mut sidechains = Vec::new();
         for i in 0..vcluster.num_switches() - 1 {
             let mut ringlet = Vec::new();
             let tor = format!("tor_{}", i);
 
-            let mut tor_upbandwidth = vcluster[vcluster.get_uplink(vcluster.get_node_index(&tor))].bandwidth.val();
+            let mut tor_upbandwidth = vcluster[vcluster.get_uplink(vcluster.get_node_index(&tor))]
+                .bandwidth
+                .val();
 
             for link_ix in vcluster.get_downlinks(vcluster.get_node_index(&tor)) {
                 let h = vcluster.get_target(*link_ix);
-                let host_idx = vcluster[h].name.strip_prefix("host_").unwrap().parse::<usize>().unwrap();
+                let host_idx = vcluster[h]
+                    .name
+                    .strip_prefix("host_")
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
                 ringlet.push(host_idx)
             }
 
             let pos = ringlet.iter().position(|x| *x == root_index);
 
             if pos == None {
+                let name = format!("host_{}", ringlet[0]);
+                let node_ix = vcluster.get_node_index(&name);
+                let mut min_rx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+                for x in &ringlet {
+                    let name = format!("host_{}", x);
+                    let node_ix = vcluster.get_node_index(&name);
+                    let rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
+                        .bandwidth
+                        .val();
+                    if rx < min_rx {
+                        min_rx = rx;
+                    }
+                }
+
                 ringlet.sort_by_key(|x| {
                     let name = format!("host_{}", x);
                     let node_ix = vcluster.get_node_index(&name);
                     vcluster[vcluster.get_uplink(node_ix)].bandwidth.val()
                 });
-                let name = format!("host_{}", ringlet[0]);
+
+                ringlet.reverse();
+
+                let mut name = format!("host_{}", ringlet[ringlet.len() - 1]);
+                let mut node_ix = vcluster.get_node_index(&name);
+                let mut upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+
+                let mut old_chain_rate = std::cmp::min(upbandwidth, min_rx);
+
+                let mut name_l2 = format!("host_{}", ringlet[ringlet.len() - 2]);
+                let mut node_ix_l2 = vcluster.get_node_index(&name_l2);
+                let mut upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
+                let mut new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
+
+                let mut m = std::collections::HashMap::<usize, u64>::new();
+
+                while upbandwidth < min_rx {
+                    let mut found = false;
+                    for i in 0..ringlet.len() - 1 {
+                        let name = format!("host_{}", ringlet[i]);
+                        let node_ix = vcluster.get_node_index(&name);
+                        let tx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
+                            .bandwidth
+                            .val();
+
+                        let mut oldrate = 0;
+                        if m.contains_key(&ringlet[i]) {
+                            oldrate += m[&ringlet[i]];
+                        }
+
+                        if tx - new_chain_rate > old_chain_rate + oldrate {
+                            sidechains.push((ringlet[i], ringlet[ringlet.len() - 1]));
+                            ringlet.pop();
+                            // log::error!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
+                            if !m.contains_key(&ringlet[i]) {
+                                m.insert(ringlet[i], 0);
+                            }
+                            *m.get_mut(&ringlet[i]).unwrap() += new_chain_rate;
+                            // m[&ringlet[i]] += new_chain_rate;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        break;
+                    }
+
+                    if m.contains_key(&ringlet[ringlet.len() - 1]) {
+                        break;
+                    }
+
+                    name = format!("host_{}", ringlet[ringlet.len() - 1]);
+                    node_ix = vcluster.get_node_index(&name);
+                    upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+
+                    old_chain_rate = std::cmp::min(upbandwidth, min_rx);
+
+                    name_l2 = format!("host_{}", ringlet[ringlet.len() - 2]);
+                    node_ix_l2 = vcluster.get_node_index(&name_l2);
+                    upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
+                    new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
+                }
+
+                let name = format!("host_{}", ringlet[ringlet.len() - 1]);
                 let node_ix = vcluster.get_node_index(&name);
                 let upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
 
@@ -44,21 +133,95 @@ impl RLAlgorithm for RatTree {
                     tor_upbandwidth = upbandwidth;
                 }
 
-                ringlet.reverse();
                 ringlets.push((ringlet, tor_upbandwidth));
-
             } else {
                 let pos = pos.unwrap();
                 ringlet.remove(pos);
+
+                let name = format!("host_{}", ringlet[0]);
+                let node_ix = vcluster.get_node_index(&name);
+                let mut min_rx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+                for x in &ringlet {
+                    let name = format!("host_{}", x);
+                    let node_ix = vcluster.get_node_index(&name);
+                    let rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
+                        .bandwidth
+                        .val();
+                    if rx < min_rx {
+                        min_rx = rx;
+                    }
+                }
+
                 ringlet.sort_by_key(|x| {
                     let name = format!("host_{}", x);
                     let node_ix = vcluster.get_node_index(&name);
                     vcluster[vcluster.get_uplink(node_ix)].bandwidth.val()
                 });
+
                 ringlet.reverse();
+
+                let mut name = format!("host_{}", ringlet[ringlet.len() - 1]);
+                let mut node_ix = vcluster.get_node_index(&name);
+                let mut upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+
+                let mut old_chain_rate = std::cmp::min(upbandwidth, min_rx);
+
+                let mut name_l2 = format!("host_{}", ringlet[ringlet.len() - 2]);
+                let mut node_ix_l2 = vcluster.get_node_index(&name_l2);
+                let mut upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
+                let mut new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
+
+                let mut m = std::collections::HashMap::<usize, u64>::new();
+
+                while upbandwidth < min_rx {
+                    let mut found = false;
+                    for i in 0..ringlet.len() - 1 {
+                        let name = format!("host_{}", ringlet[i]);
+                        let node_ix = vcluster.get_node_index(&name);
+                        let tx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
+                            .bandwidth
+                            .val();
+
+                        let mut oldrate = 0;
+                        if m.contains_key(&ringlet[i]) {
+                            oldrate += m[&ringlet[i]];
+                        }
+
+                        if tx - new_chain_rate > old_chain_rate + oldrate {
+                            sidechains.push((ringlet[i], ringlet[ringlet.len() - 1]));
+                            ringlet.pop();
+                            // log::error!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
+                            if !m.contains_key(&ringlet[i]) {
+                                m.insert(ringlet[i], 0);
+                            }
+                            *m.get_mut(&ringlet[i]).unwrap() += new_chain_rate;
+                            // m[&ringlet[i]] += new_chain_rate;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        break;
+                    }
+
+                    if m.contains_key(&ringlet[ringlet.len() - 1]) {
+                        break;
+                    }
+
+                    name = format!("host_{}", ringlet[ringlet.len() - 1]);
+                    node_ix = vcluster.get_node_index(&name);
+                    upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+
+                    old_chain_rate = std::cmp::min(upbandwidth, min_rx);
+
+                    name_l2 = format!("host_{}", ringlet[ringlet.len() - 2]);
+                    node_ix_l2 = vcluster.get_node_index(&name_l2);
+                    upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
+                    new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
+                }
+
                 ringlet.insert(0, root_index);
                 ringlets.push((ringlet, u64::MAX));
-
             }
         }
 
@@ -77,11 +240,30 @@ impl RLAlgorithm for RatTree {
         let n = vcluster.num_hosts();
 
         log::error!("root_index: {}", root_index);
-        log::error!("{:?}",ring);
+        log::error!("{:?}", ring);
 
-        for i in 0..n-1 {
+        for i in 0..ring.len() - 1 {
             let sender = format!("host_{}", ring[i]);
             let receiver = format!("host_{}", ring[(i + 1) % n]);
+            let flow = Flow::new(size as usize, &sender, &receiver, None);
+            flows.push(flow);
+        }
+
+        if sidechains.len() >= 1 {
+            if let Ok(path) = std::env::var("NETHINT_RL_LOG_FILE") {
+                use std::io::{Seek, Write};
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(path)
+                    .unwrap();
+                f.seek(std::io::SeekFrom::End(0)).unwrap();
+                writeln!(f, "{:?}", sidechains).unwrap();
+            }
+        }
+        for (i, j) in sidechains {
+            let sender = format!("host_{}", i);
+            let receiver = format!("host_{}", j);
             let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
         }

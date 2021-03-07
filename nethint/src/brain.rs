@@ -267,6 +267,7 @@ impl Brain {
                     );
                     let new_bw =
                         self.orig_bw[&link_ix] * (1.0 - zipf.sample(&mut rng) as f64 / 100.0);
+                    // let new_bw = self.orig_bw[&link_ix];
                     new_bw
                 } else {
                     match self.setting.sharing_mode {
