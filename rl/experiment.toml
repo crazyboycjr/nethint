@@ -4,21 +4,21 @@
 ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
-# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 8], [5, 64]]
 # job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
-job_size_distribution = [[40, 3]]
+# job_size_distribution = [[40, 3]]
 
 # Buffer size of all jobs, in bytes
 buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 1
+num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
 # poisson_lambda = 8_000_000_000.0
-poisson_lambda = 24_000_000_000.0
+poisson_lambda = 1_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
