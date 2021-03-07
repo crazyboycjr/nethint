@@ -1,6 +1,6 @@
-use std::rc::Rc;
-use std::collections::BinaryHeap;
 use std::cell::RefCell;
+use std::collections::BinaryHeap;
+use std::rc::Rc;
 use std::{cmp::Reverse, fmt::Debug};
 
 use fnv::FnvBuildHasher;
@@ -53,6 +53,41 @@ pub struct BackgroundFlowHard {
     // for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
     #[serde(default)]
     amplitude: usize,
+    #[serde(default = "default_average_load")]
+    average_load: f64,
+    #[serde(skip)]
+    zipf_exp: f64,
+}
+
+fn default_average_load() -> f64 {
+    // data center 10% average load on link
+    0.1
+}
+
+fn search_zipf_exp(amp: usize, average_load: f64) -> f64 {
+    use rand::distributions::Distribution;
+    let mut rng = rand::thread_rng();
+    let mut eval = |m| -> f64 {
+        let zipf = zipf::ZipfDistribution::new(amp * 10, m).unwrap();
+        let repeat = 10000;
+        let mut s = 0;
+        for _ in 0..repeat {
+            s += zipf.sample(&mut rng);
+        }
+        s as f64 / repeat as f64
+    };
+
+    let mut l = 0.1;
+    let mut r = 10.0;
+    while l + 1e-5 < r {
+        let m = (l + r) / 2.;
+        if eval(m) > average_load * 100.0 {
+            l = m;
+        } else {
+            r = m;
+        }
+    }
+    l
 }
 
 impl Default for BackgroundFlowHard {
@@ -62,6 +97,8 @@ impl Default for BackgroundFlowHard {
             frequency_ns: 0,
             probability: 0.0,
             amplitude: 0,
+            average_load: default_average_load(),
+            zipf_exp: 0.,
         }
     }
 }
@@ -189,6 +226,13 @@ impl SimulatorBuilder {
             )));
         }
 
+        if self.setting.background_flow_hard.enable {
+            self.setting.background_flow_hard.zipf_exp = search_zipf_exp(
+                self.setting.background_flow_hard.amplitude,
+                self.setting.background_flow_hard.average_load,
+            );
+        }
+
         let simulator = if self.setting.enable_nethint {
             let brain = self.brain.as_ref().unwrap();
             let estimator = Box::new(SimpleEstimator::new(
@@ -290,7 +334,11 @@ impl Simulator {
             (
                 acc.0 + !f.converged as usize,
                 acc.1 + f.speed,
-                acc.2.min(if f.converged { f.max_rate.val() as f64 - f.speed } else { f64::MAX }),
+                acc.2.min(if f.converged {
+                    f.max_rate.val() as f64 - f.speed
+                } else {
+                    f64::MAX
+                }),
             )
         });
         // COMMENT(cjr): due to precision issue, here consumed_bw can be a little bigger than bw
@@ -406,6 +454,7 @@ impl Simulator {
                                     brain.borrow_mut().update_background_flow_hard(
                                         self.setting.background_flow_hard.probability,
                                         self.setting.background_flow_hard.amplitude,
+                                        self.setting.background_flow_hard.zipf_exp,
                                     );
                                     poisson_timer.reset();
                                     self.timers.push(poisson_timer);
@@ -607,6 +656,7 @@ impl<'a> Executor<'a> for Simulator {
             brain.borrow_mut().update_background_flow_hard(
                 self.setting.background_flow_hard.probability,
                 self.setting.background_flow_hard.amplitude,
+                self.setting.background_flow_hard.zipf_exp,
             );
         }
 
@@ -943,7 +993,11 @@ impl NetState {
         self.running_flows.iter().for_each(|f| {
             let mut f = f.borrow_mut();
             let speed = f.speed;
-            assert!(f.speed <= f.max_rate.val() as f64 + 10.0, "flowstate: {:?}", f);
+            assert!(
+                f.speed <= f.max_rate.val() as f64 + 10.0,
+                "flowstate: {:?}",
+                f
+            );
             let delta = (speed / 1e9 * ts_inc as f64).round() as usize / 8;
             f.bytes_sent += delta;
 

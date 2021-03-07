@@ -359,7 +359,12 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
         .map(|i| {
             let host_name = format!("host_{}", i);
             let host_ix = vcluster.get_node_index(&host_name);
-            vcluster[vcluster.get_uplink(host_ix)].bandwidth.val() as f64
+            std::cmp::min(
+                vcluster[vcluster.get_uplink(host_ix)].bandwidth.val(),
+                vcluster[vcluster.get_reverse_link(vcluster.get_uplink(host_ix))]
+                    .bandwidth
+                    .val(),
+            ) as f64
         })
         .collect();
 
@@ -378,7 +383,12 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
             let tor_name = format!("tor_{}", i);
             let tor_ix = vcluster.get_node_index(&tor_name);
             // allreduce tasks has symmetric bi-directional traffic
-            vcluster[vcluster.get_uplink(tor_ix)].bandwidth.val() as f64
+            std::cmp::min(
+                vcluster[vcluster.get_uplink(tor_ix)].bandwidth.val(),
+                vcluster[vcluster.get_reverse_link(vcluster.get_uplink(tor_ix))]
+                    .bandwidth
+                    .val(),
+            ) as f64
         })
         .collect();
     let mut rack_deg = vec![vec![0.; tree_set.len() + 1]; r];
