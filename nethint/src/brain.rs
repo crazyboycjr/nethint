@@ -318,6 +318,17 @@ impl Brain {
                     cluster[link_ix] = Link::new(new_bw);
                     let reverse_link_ix = cluster.get_reverse_link(link_ix);
                     cluster[reverse_link_ix] = Link::new(new_bw);
+
+                    // let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                    // let x_ix = cluster.get_source(link_ix);
+                    // let y_ix = cluster.get_target(link_ix);
+                    // if cluster[x_ix].depth < cluster[y_ix].depth {
+                    //     cluster[link_ix] = Link::new(new_bw * 0.5);
+                    //     cluster[reverse_link_ix] = Link::new(new_bw);
+                    // } else {
+                    //     cluster[link_ix] = Link::new(new_bw);
+                    //     cluster[reverse_link_ix] = Link::new(new_bw * 0.5);
+                    // }
                 }
             }
         }

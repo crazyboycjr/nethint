@@ -1,22 +1,24 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 100
+ncases = 10
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 8], [5, 64]]
-job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
+# job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
+job_size_distribution = [[40, 12]]
 
 # Buffer size of all jobs, in bytes
 buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 1000
+num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
-poisson_lambda = 8_000_000_000.0
+# poisson_lambda = 8_000_000_000.0
+poisson_lambda = 1000_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -47,6 +49,13 @@ policy = "TopologyAware" # which is ring
 probe = { enable = false }
 nethint_level = 1
 
+[[batch]]
+policy = "RAT"
+probe = { enable = false }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 10
+
 [simulator]
 nethint = true
 sample_interval_ns = 100_000_000 # 100ms
@@ -55,8 +64,8 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-# background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 0.5, amplitude = 5 }
-background_flow_hard = { enable = false }
+background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 0.5, amplitude = 5 }
+# background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
 [brain]
@@ -67,7 +76,7 @@ asymmetric = false
 # The percentage of nodes marked broken
 broken = 0.0
 # The slots of each physical machine
-max_slots = 2
+max_slots = 1
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
 # background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
