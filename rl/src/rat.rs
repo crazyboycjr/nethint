@@ -40,7 +40,7 @@ impl RLAlgorithm for RatTree {
                 let node_ix = vcluster.get_node_index(&name);
                 let upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
 
-                if tor_upbandwidth < upbandwidth {
+                if tor_upbandwidth > upbandwidth {
                     tor_upbandwidth = upbandwidth;
                 }
 
@@ -76,9 +76,10 @@ impl RLAlgorithm for RatTree {
 
         let n = vcluster.num_hosts();
 
-        // log::error!("pos {} n {}", pos, n);
+        log::error!("root_index: {}", root_index);
+        log::error!("{:?}",ring);
 
-        for i in 0..n {
+        for i in 0..n-1 {
             let sender = format!("host_{}", ring[i]);
             let receiver = format!("host_{}", ring[(i + 1) % n]);
             let flow = Flow::new(size as usize, &sender, &receiver, None);

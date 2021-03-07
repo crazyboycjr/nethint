@@ -85,9 +85,9 @@ impl<'c> RLApp<'c> {
 
     fn request_nethint(&self) -> Events {
         match self.nethint_level {
-            0 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
-            1 => Event::NetHintRequest(0, 0, NetHintVersion::V1).into(),
-            2 => Event::NetHintRequest(0, 0, NetHintVersion::V2).into(),
+            0 => Event::NetHintRequest(0, 0, NetHintVersion::V1, 0).into(),
+            1 => Event::NetHintRequest(0, 0, NetHintVersion::V1, 0).into(),
+            2 => Event::NetHintRequest(0, 0, NetHintVersion::V2, 0).into(),
             _ => panic!("unexpected nethint_level: {}", self.nethint_level),
         }
     }

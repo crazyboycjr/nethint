@@ -43,6 +43,7 @@ impl RLAlgorithm for RandomTree {
             let flow = Flow::new(size as usize, &pred, &succ, None);
             flows.push(flow);
         }
+        log::info!("flows: {:?}", flows);
         flows
     }
 }
