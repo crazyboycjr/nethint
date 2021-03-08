@@ -227,20 +227,21 @@ impl Brain {
             .expect("there should be no other reference to physical cluster");
 
         for link_ix in cluster.all_links() {
-            if link_ix.index() & 1 == 1 {
-                // recover the link's capacity
-                let bw = self.orig_bw[&link_ix];
-                cluster[link_ix] = Link::new(bw);
-                let reverse_link_ix = cluster.get_reverse_link(link_ix);
-                cluster[reverse_link_ix] = Link::new(bw);
-            }
+            // recover the link's capacity
+            let bw = self.orig_bw[&link_ix];
+            cluster[link_ix] = Link::new(bw);
         }
     }
 
-    pub fn update_background_flow_hard(&mut self, probability: f64, amplitude: usize) {
+    pub fn update_background_flow_hard(
+        &mut self,
+        probability: f64,
+        amplitude: usize,
+        zipf_exp: f64,
+    ) {
         self.background_flow_update_cnt += 1;
 
-        use rand::{rngs::StdRng, Rng, SeedableRng};
+        use rand::{distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(self.setting.seed + self.background_flow_update_cnt);
 
         self.reset_link_bandwidth();
@@ -248,77 +249,71 @@ impl Brain {
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
 
+        log::info!("zipf_exp: {}", zipf_exp);
+        let zipf = zipf::ZipfDistribution::new(amplitude * 10, zipf_exp).unwrap();
+
         for link_ix in cluster.all_links() {
-            if link_ix.index() & 1 == 1 {
-                if rng.gen_range(0.0..1.0) < probability {
-                    // integer overflow will only be checked in debug mode, so I should have detected an error here.
-                    let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
-                    let total_slots = self.setting.max_slots;
-                    let new_bw: Bandwidth = if cluster[cluster.get_target(link_ix)].depth == 1
-                        || cluster[cluster.get_source(link_ix)].depth == 1
-                    {
-                        // that means this is an inter-rack linnk
-                        // take (1..amplitude)/10 of capacity from the link
-                        // TODO(cjr): introduce amplitude in experiment config
-                        assert!(
-                            amplitude < 10,
-                            "amplitude must be range in [1, 9], got {}",
-                            amplitude
-                        );
-                        let new_bw = self.orig_bw[&link_ix]
-                            * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0);
-                        // let new_bw = self.orig_bw[&link_ix] / rng.gen_range(1..=5);
-                        new_bw
-                    } else {
-                        match self.setting.sharing_mode {
-                            SharingMode::RateLimited => {
-                                // if the sharing mode is "RateLimited", then we are good here
-                                self.orig_bw[&link_ix]
-                                    * (1.0 - rng.gen_range(1..=amplitude) as f64 / 10.0)
-                            }
-                            SharingMode::Guaranteed => {
-                                // if the sharing mode is "Guaranteed", then we cannot take too much bandwidth from that host
-                                let orig_bw = self.orig_bw[&link_ix];
-                                let guaranteed_bw = self
-                                    .setting
-                                    .guaranteed_bandwidth
-                                    .expect("Expect a bandwidth lower bound.");
-                                let total_slots =
-                                    (orig_bw.val() as f64 / guaranteed_bw.gbps().val() as f64)
-                                        .floor() as u64;
-                                assert!(
-                                    total_slots >= 1,
-                                    "orig_bw: {}, guaranteed_bw: {}",
-                                    orig_bw,
-                                    guaranteed_bw
-                                );
-                                if total_slots == 1 {
-                                    continue;
-                                }
-                                let coeff = rng.gen_range(1..=total_slots - 1) as u64;
-                                let new_bw = orig_bw - guaranteed_bw.gbps() * coeff;
-                                assert!(
-                                    new_bw >= guaranteed_bw.gbps(),
-                                    "new_bw: {}, guaranteed_bw: {}",
-                                    new_bw,
-                                    guaranteed_bw.gbps()
-                                );
-                                new_bw
-                            }
-                        }
-                    };
-
+            if rng.gen_range(0.0..1.0) < probability {
+                // integer overflow will only be checked in debug mode, so I should have detected an error here.
+                let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
+                let total_slots = self.setting.max_slots;
+                let new_bw: Bandwidth = if cluster[cluster.get_target(link_ix)].depth == 1
+                    || cluster[cluster.get_source(link_ix)].depth == 1
+                {
                     assert!(
-                        new_bw.val() > 0,
-                        "current_tenants: {}, total_slots: {}",
-                        current_tenants,
-                        total_slots
+                        amplitude < 10,
+                        "amplitude must be range in [1, 9], got {}",
+                        amplitude
                     );
+                    let new_bw =
+                        self.orig_bw[&link_ix] * (1.0 - zipf.sample(&mut rng) as f64 / 100.0);
+                    // let new_bw = self.orig_bw[&link_ix];
+                    new_bw
+                } else {
+                    match self.setting.sharing_mode {
+                        SharingMode::RateLimited => {
+                            // if the sharing mode is "RateLimited", then we are good here
+                            self.orig_bw[&link_ix] * (1.0 - zipf.sample(&mut rng) as f64 / 100.0)
+                        }
+                        SharingMode::Guaranteed => {
+                            // if the sharing mode is "Guaranteed", then we cannot take too much bandwidth from that host
+                            let orig_bw = self.orig_bw[&link_ix];
+                            let guaranteed_bw = self
+                                .setting
+                                .guaranteed_bandwidth
+                                .expect("Expect a bandwidth lower bound.");
+                            let coeff = if amplitude as f64 * 10.0 / 100.0
+                                < ((orig_bw.val() as f64 - guaranteed_bw.gbps().val() as f64)
+                                    / orig_bw.val() as f64)
+                            {
+                                zipf.sample(&mut rng) as f64 / 100.0
+                            } else {
+                                zipf.sample(&mut rng) as f64 / 100.0
+                                    * ((orig_bw.val() as f64 - guaranteed_bw.gbps().val() as f64)
+                                        / orig_bw.val() as f64)
+                            };
+                            let new_bw = orig_bw * (1.0 - coeff);
+                            assert!(
+                                new_bw >= guaranteed_bw.gbps(),
+                                "new_bw: {}, guaranteed_bw: {}",
+                                new_bw,
+                                guaranteed_bw.gbps()
+                            );
+                            new_bw
+                        }
+                    }
+                };
 
-                    cluster[link_ix] = Link::new(new_bw);
-                    let reverse_link_ix = cluster.get_reverse_link(link_ix);
-                    cluster[reverse_link_ix] = Link::new(new_bw);
-                }
+                assert!(
+                    new_bw.val() > 0,
+                    "current_tenants: {}, total_slots: {}",
+                    current_tenants,
+                    total_slots
+                );
+
+                cluster[link_ix] = Link::new(new_bw);
+                // let reverse_link_ix = cluster.get_reverse_link(link_ix);
+                // cluster[reverse_link_ix] = Link::new(new_bw);
             }
         }
     }
