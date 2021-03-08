@@ -60,7 +60,7 @@ fn compact_chain(
                 if m.contains_key(&chain[i]) {
                     oldrate = m[&chain[i]];
                 }
-                    log::error!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
+                    log::trace!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
 
                 if tx - new_chain_rate > old_chain_rate + oldrate {
                     side_chain.push((chain[i], chain[chain.len() - 1]));
@@ -262,10 +262,10 @@ impl RLAlgorithm for RatTree {
 
         // let n = vcluster.num_hosts();
 
-        log::error!("root_index: {}", root_index);
-        log::error!("{:?}", ringlets);
-        log::error!("{:?}", siderack);
-        log::error!("{:?}", sidechains);
+        log::trace!("root_index: {}", root_index);
+        log::trace!("{:?}", ringlets);
+        log::trace!("{:?}", siderack);
+        log::trace!("{:?}", sidechains);
 
         for i in 0..ringlets[0].0.len()-1 {
             let sender = format!("host_{}", ringlets[0].0[i]);
@@ -325,7 +325,7 @@ impl RLAlgorithm for RatTree {
         //         writeln!(f, "{:?}", sidechains).unwrap();
         //     }
         // }
-        log::error!("{:?}", flows);
+        log::trace!("{:?}", flows);
         flows
     }
 }
