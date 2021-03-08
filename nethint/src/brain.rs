@@ -61,6 +61,10 @@ pub struct BrainSetting {
     pub background_flow_high_freq: BackgroundFlowHighFreq,
 }
 
+// // can only send by replicating the object, user should be very careful about this
+unsafe impl Send for Brain {}
+unsafe impl Sync for Brain {}
+
 /// Brain is the cloud controller. It knows the underlay physical
 /// topology and decides how to provision VMs for tenants.
 #[derive(Debug)]
@@ -109,6 +113,29 @@ pub enum Error {
 }
 
 impl Brain {
+    pub fn replicate_for_multithread(&self) -> Self {
+        let new_cluster = (*self.cluster).clone();
+        let vclusters = self
+            .vclusters
+            .iter()
+            .map(|(&k, v)| {
+                let new_vc = (*v.borrow()).clone();
+                (k, Rc::new(RefCell::new(new_vc)))
+            })
+            .collect();
+        Brain {
+            setting: self.setting.clone(),
+            cluster: Arc::new(new_cluster),
+            orig_bw: self.orig_bw.clone(),
+            used: self.used.clone(),
+            vclusters,
+            plink_to_vlinks: self.plink_to_vlinks.clone(),
+            vlink_to_plink: self.vlink_to_plink.clone(),
+            gc_queue: self.gc_queue.clone(),
+            background_flow_update_cnt: self.background_flow_update_cnt,
+        }
+    }
+
     pub fn build_cloud(setting: BrainSetting) -> Rc<RefCell<Self>> {
         let cluster = match setting.topology {
             TopoArgs::FatTree {

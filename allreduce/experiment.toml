@@ -30,7 +30,7 @@ seed = 1
 directory = "/tmp/allreduce_result"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 3
 
 [[batch]]
 policy = "Random"

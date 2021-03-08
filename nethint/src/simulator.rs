@@ -66,7 +66,8 @@ fn default_average_load() -> f64 {
 
 fn search_zipf_exp(amp: usize, average_load: f64) -> f64 {
     use rand::distributions::Distribution;
-    let mut rng = rand::thread_rng();
+    use rand::{rngs::StdRng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(1);
     let mut eval = |m| -> f64 {
         let zipf = zipf::ZipfDistribution::new(amp * 10, m).unwrap();
         let repeat = 10000;

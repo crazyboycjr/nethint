@@ -23,6 +23,10 @@ pub struct Opt {
     /// The configure file
     #[structopt(short = "c", long = "config")]
     pub config: Option<std::path::PathBuf>,
+
+    /// The maximal concurrency to run the batches
+    #[structopt(short = "P", long = "parallel")]
+    pub parallel: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +128,10 @@ fn main() {
 
     set_env_vars(&config);
 
+    // set rayon max concurrency
+    log::info!("using {} threads", opt.parallel);
+    rayon::ThreadPoolBuilder::new().num_threads(opt.parallel).build_global().unwrap();
+
     let brain = Brain::build_cloud(config.brain.clone());
 
     log::info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -142,13 +150,21 @@ fn main() {
         std::fs::write(file, format!("{:#?}\n", config)).unwrap();
     };
 
-    let mut estimator = nethint::runtime_est::RunningTimeEstimator::new();
-    estimator.set_total_trials(config.batches.len() * config.batch_repeat);
+    // let mut estimator = nethint::runtime_est::RunningTimeEstimator::new();
+    // estimator.set_total_trials(config.batches.len() * config.batch_repeat);
     for i in 0..config.batches.len() {
-        for trial_id in 0..config.batch_repeat {
-            estimator.bench_single_start();
-            run_batch(&config, i, trial_id, Rc::clone(&brain));
-        }
+        // for trial_id in 0..config.batch_repeat {
+        //     estimator.bench_single_start();
+        //     run_batch(&config, i, trial_id, Rc::clone(&brain));
+        // }
+
+        let batch_repeat = config.batch_repeat;
+        let config_clone = config.clone();
+        let brain_clone = brain.borrow().replicate_for_multithread();
+        (0..batch_repeat).into_par_iter().for_each(move |trial_id| {
+            let brain_clone = brain_clone.replicate_for_multithread();
+            run_batch(&config_clone, i, trial_id, Rc::new(RefCell::new(brain_clone)));
+        });
     }
 }
 
@@ -276,14 +292,26 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
     println!("{:?}", app_stats);
 
     // save result to config.directory
-    if let Some(mut path) = config.directory.clone() {
-        use std::io::Write;
-        path.push("result.txt");
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(path)
-            .expect("fail to open or create file");
-        writeln!(f, "{:?}", app_stats).unwrap();
+    if let Some(path) = config.directory.clone() {
+        save_result(path, app_stats);
     }
+}
+
+use rayon::prelude::*;
+
+use std::sync::Mutex;
+lazy_static::lazy_static! {
+    static ref MUTEX: Mutex<()> = Mutex::new(());
+}
+
+fn save_result(mut path: std::path::PathBuf, app_stats: Vec<(usize, u64, u64)>) {
+    let _lk = MUTEX.lock().unwrap();
+    use std::io::Write;
+    path.push("result.txt");
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .expect("fail to open or create file");
+    writeln!(f, "{:?}", app_stats).unwrap();
 }

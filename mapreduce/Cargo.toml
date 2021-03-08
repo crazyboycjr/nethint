@@ -22,6 +22,8 @@ anyhow = "1.0.35"
 zipf = "6.1.0"
 toml = "0.5.8"
 serde = { version = "1.0.122", features = ["derive"] }
+lazy_static = "1.4.0"
+rayon = "1.5.0"
 
 [[bin]]
 name = "mapreduce_experiment"

@@ -52,8 +52,8 @@ impl RLAlgorithm for TopologyAwareTree {
         let pos = ring.iter().position(|x| *x == root_index).unwrap();
 
         // log::error!("pos {} n {}", pos, n);
-        log::error!("{}",root_index);
-        log::error!("{:?}",ring);
+        // log::error!("{}",root_index);
+        // log::error!("{:?}",ring);
 
         for i in pos..n {
             let sender = format!("host_{}", ring[i]);
