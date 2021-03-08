@@ -148,6 +148,7 @@ pub fn connect_peers2(
     }
 
     for i in my_rank + 1..nodes.len() {
+        log::debug!("connnecting to node: {:?}", nodes[i]);
         let stream = TcpStream::connect(&nodes[i])?;
 
         let builder = endpoint::Builder::new()

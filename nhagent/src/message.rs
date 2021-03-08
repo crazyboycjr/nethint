@@ -28,6 +28,7 @@ pub enum Message {
 
     /// send by worker, processed by rack leader
     ServerChunk(Vec<CounterUnit>),
+    /// A potential problem here is that SLinkIx from different machines may not be compatible
     /// send by rack leader, processed by rack leader
     RackChunk(HashMap<SLinkIx, Vec<CounterUnit>>),
     /// send by rack leader, processed by worker

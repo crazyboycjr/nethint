@@ -23,7 +23,7 @@ pub type LinkIxIter = EdgeIndices;
 
 // for serialize and deserialize
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SLinkIx(EdgeIndex);
+pub struct SLinkIx(pub EdgeIndex);
 impl std::convert::Into<LinkIx> for SLinkIx {
     fn into(self) -> LinkIx {
         self.0
@@ -54,9 +54,20 @@ impl<'de> serde::Deserialize<'de> for SLinkIx {
     where
         D: serde::de::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        let index: u64 = s.parse().map_err(serde::de::Error::custom)?;
+        let index = u64::deserialize(deserializer)?;
         Ok(SLinkIx(LinkIx::new(index as usize)))
+    }
+}
+
+#[cfg(test)]
+
+mod tests {
+    use super::*;
+    #[test]
+    fn test_slink_ix() {
+        let slink_ix = SLinkIx(LinkIx::new(199));
+        let s = bincode::serialize(&slink_ix).unwrap();
+        let _o: SLinkIx = bincode::deserialize(&s).unwrap();
     }
 }
 

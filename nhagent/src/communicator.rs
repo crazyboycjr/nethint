@@ -1,8 +1,8 @@
-use crate::{Node, Role};
-use std::collections::HashMap;
-use std::net::{TcpListener, TcpStream};
-use litemsg::endpoint;
 use crate::message;
+use crate::{Node, Role};
+use litemsg::endpoint;
+use std::collections::HashMap;
+use std::net::TcpStream;
 
 pub struct Communicator {
     my_rank: usize,
@@ -18,26 +18,34 @@ impl Communicator {
     pub fn new(my_role: Role) -> anyhow::Result<Self> {
         let controller_uri = std::env::var("NH_CONTROLLER_URI").expect("NH_CONTROLLER_URI");
 
-        let workers = if my_role == Role::GlobalLeader {
-            // start controller
-            let num_workers = std::env::var("NH_NUM_WORKER")
-                .expect("NH_NUM_WORKER")
-                .parse()
-                .expect("NH_NUM_WORKER");
-            Some(litemsg::accept_peers(&controller_uri, num_workers)?)
-        } else {
-            None
-        };
+        let controller_uri2 = controller_uri.clone();
+        let handle = std::thread::spawn(move || {
+            if my_role == Role::GlobalLeader {
+                // start controller
+                let num_workers = std::env::var("NH_NUM_WORKER")
+                    .expect("NH_NUM_WORKER")
+                    .parse()
+                    .expect("NH_NUM_WORKER");
+                Some(litemsg::accept_peers(&controller_uri2, num_workers).unwrap())
+            } else {
+                None
+            }
+        });
 
-        let (nodes, my_node, controller, mut listener) = litemsg::connect_controller(&controller_uri)?;
+        let (nodes, my_node, controller, mut listener) =
+            litemsg::connect_controller(&controller_uri)?;
+        log::debug!("connected to controller");
         let my_rank = nodes.iter().position(|n| n == &my_node).unwrap();
 
         let peers = litemsg::connect_peers2(&nodes, &my_node, &mut listener)?;
+        log::debug!("connected to peers");
 
-        let peers = peers.into_iter().map(|b| {
-            b.readable(true).writable(true).build().unwrap()
-        }).collect();
+        let peers = peers
+            .into_iter()
+            .map(|b| b.readable(true).writable(true).build().unwrap())
+            .collect();
 
+        let workers = handle.join().unwrap();
         Ok(Communicator {
             my_rank,
             my_role,
@@ -54,6 +62,10 @@ impl Communicator {
 
     pub fn my_rank(&self) -> usize {
         self.my_rank
+    }
+
+    pub fn my_role(&self) -> Role {
+        self.my_role
     }
 
     pub fn peer(&self, rank: usize) -> &endpoint::Endpoint {
@@ -94,15 +106,28 @@ impl Communicator {
         use message::Message::*;
 
         if self.my_role == Role::GlobalLeader {
-            for _i in 0..self.world_size() {
-                let msg: message::Message = litemsg::utils::recv_cmd_sync(&mut self.controller)?;
+            for i in 0..self.world_size() {
+                if i == self.my_rank {
+                    continue;
+                }
+                let peer_node = &self.nodes[i];
+                let msg: message::Message = litemsg::utils::recv_cmd_sync(
+                    self.workers.as_mut().unwrap().get_mut(peer_node).unwrap(),
+                )?;
                 match msg {
                     SyncRequest(b) => assert_eq!(b, barrier_id),
                     _ => panic!("msg: {:?}", msg),
                 }
             }
-            for _i in 0..self.world_size() {
-                litemsg::utils::send_cmd_sync(&mut self.controller, &SyncRequest(barrier_id))?;
+            for i in 0..self.world_size() {
+                if i == self.my_rank {
+                    continue;
+                }
+                let peer_node = &self.nodes[i];
+                litemsg::utils::send_cmd_sync(
+                    self.workers.as_mut().unwrap().get_mut(peer_node).unwrap(),
+                    &SyncResponse(barrier_id),
+                )?;
             }
         } else {
             litemsg::utils::send_cmd_sync(&mut self.controller, &SyncRequest(barrier_id))?;
@@ -112,7 +137,6 @@ impl Communicator {
                 _ => panic!("msg: {:?}", msg),
             }
         }
-
         Ok(())
     }
 }

@@ -63,7 +63,7 @@ impl PhysCluster {
         let my_node_ix = cluster.get_node_index(&my_hostname);
 
         let local_eth_table = crate::sampler::get_local_eth_table().unwrap();
-        assert!(local_eth_table.is_empty(), "in our prototype, we assume the VF and the VM are up");
+        assert!(!local_eth_table.is_empty(), "in our prototype, we assume the VF and the VM are up");
         let eth_hostname = local_eth_table.into_keys().map(|eth_addr| {
             (eth_addr, my_hostname.clone())
         }).collect();
@@ -73,6 +73,10 @@ impl PhysCluster {
             my_node_ix,
             eth_hostname,
         }
+    }
+
+    pub fn my_node_ix(&self) -> NodeIx {
+        self.my_node_ix
     }
 
     pub fn inner(&self) -> &Cluster {
@@ -98,11 +102,10 @@ impl PhysCluster {
         }
     }
 
-    pub fn get_my_role(&self) -> Role {
+    pub fn get_role(&self, hostname: &str) -> Role {
         let cluster = &self.inner;
         // without considering fault tolerant, we pick the first node in each rack as the rack leader.
         // We pick the first rack leader as the global leader.
-        let hostname = hostname();
         let host_ix = cluster.get_node_index(hostname);
         let tor_ix = cluster.get_target(cluster.get_uplink(host_ix));
         if Self::is_first_child(cluster, host_ix) {
@@ -114,6 +117,10 @@ impl PhysCluster {
         } else {
             Role::Worker
         }
+    }
+
+    pub fn get_my_role(&self) -> Role {
+        self.get_role(&hostname())
     }
 
     pub fn get_my_rack_ix(&self) -> NodeIx {

@@ -1,12 +1,12 @@
-use std::{borrow::Borrow, process::Command};
 use std::sync::mpsc;
+use std::{borrow::Borrow, process::Command};
 use std::{collections::HashMap, convert::TryInto};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::utils;
 use crate::cluster::CLUSTER;
+use crate::utils;
 
 const _OVS_CMD: &'static str = "ovs-appctl dpctl/dump-flows type=all -m";
 // sudo ovs-appctl dpctl/dump-flows type=all -m
@@ -264,6 +264,13 @@ impl CounterUnit {
             data: [CounterUnitData::default(); 4],
         }
     }
+
+    pub fn merge(&mut self, other: &CounterUnit) {
+        assert_eq!(self.vnodename, other.vnodename);
+        for i in 0..4 {
+            self.data[i] = self.data[i] + other.data[i];
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -284,11 +291,25 @@ impl std::ops::Add for CounterUnitData {
 
 impl std::ops::Sub for CounterUnitData {
     type Output = CounterUnitData;
-    fn add(self, rhs: CounterUnitData) -> Self::Output {
+    fn sub(self, rhs: CounterUnitData) -> Self::Output {
         CounterUnitData {
             bytes: self.bytes - rhs.bytes,
             num_competitors: self.num_competitors - rhs.num_competitors,
         }
+    }
+}
+
+impl std::ops::AddAssign for CounterUnitData {
+    fn add_assign(&mut self, rhs: CounterUnitData) {
+        self.bytes += rhs.bytes;
+        self.num_competitors += rhs.num_competitors;
+    }
+}
+
+impl std::ops::SubAssign for CounterUnitData {
+    fn sub_assign(&mut self, rhs: CounterUnitData) {
+        self.bytes -= rhs.bytes;
+        self.num_competitors -= rhs.num_competitors;
     }
 }
 
@@ -311,12 +332,6 @@ impl OvsSampler {
 
         // initialize local_eth_table
         let local_eth_table = get_local_eth_table().unwrap(); // map eth to node name
-        let mut vnode_counter: HashMap<EthAddr, CounterUnit> = Default::default();
-        for (eth, vnodename) in local_eth_table.iter() {
-            vnode_counter
-                .insert(eth.to_owned(), CounterUnit::new(vnodename))
-                .unwrap_none();
-        }
 
         self.handle = Some(std::thread::spawn(move || loop {
             let output = Command::new("ovs-appctl")
@@ -346,6 +361,12 @@ impl OvsSampler {
             log::trace!("parsed ovs_flow: {:?}", ovs_flows);
 
             let pcluster = CLUSTER.borrow().lock().unwrap();
+            let mut vnode_counter: HashMap<EthAddr, CounterUnit> = Default::default();
+            for (eth, vnodename) in local_eth_table.iter() {
+                vnode_counter
+                    .insert(eth.to_owned(), CounterUnit::new(vnodename))
+                    .unwrap_none();
+            }
 
             for ovs_flow in ovs_flows {
                 // currently we only handle ipv4
@@ -398,25 +419,34 @@ impl OvsSampler {
 
                 // add delta
                 use CounterType::*;
-                let update_counter_unit = |c: &mut CounterUnit, counter_type: CounterType, delta: usize| {
-                    c.data[counter_type].bytes += delta as u64;
-                    c.data[counter_type].num_competitors += 1;
-                };
+                let update_counter_unit =
+                    |c: &mut CounterUnit, counter_type: CounterType, delta: usize| {
+                        if delta > 0 {
+                            c.data[counter_type].bytes += delta as u64;
+                            c.data[counter_type].num_competitors += 1;
+                        }
+                    };
                 if local_eth_table.contains_key(&eth_src) {
+                    // tx
+                    vnode_counter
+                        .entry(eth_src)
+                        .and_modify(|e| update_counter_unit(e, Tx, delta));
                     if pcluster.is_eth_within_rack(&eth_dst) {
                         // tx_in
-                        vnode_counter.entry(eth_src).and_modify(|e| update_counter_unit(e, TxIn, delta));
-                    } else {
-                        // tx
-                        vnode_counter.entry(eth_src).and_modify(|e| update_counter_unit(e, Tx, delta));
+                        vnode_counter
+                            .entry(eth_src)
+                            .and_modify(|e| update_counter_unit(e, TxIn, delta));
                     }
                 } else if local_eth_table.contains_key(&eth_dst) {
-                    if pcluster.is_eth_within_rack(&eth_dst) {
+                    // rx
+                    vnode_counter
+                        .entry(eth_dst)
+                        .and_modify(|e| update_counter_unit(e, Rx, delta));
+                    if pcluster.is_eth_within_rack(&eth_src) {
                         // rx_in
-                        vnode_counter.entry(eth_dst).and_modify(|e| update_counter_unit(e, RxIn, delta));
-                    } else {
-                        // rx
-                        vnode_counter.entry(eth_dst).and_modify(|e| update_counter_unit(e, Rx, delta));
+                        vnode_counter
+                            .entry(eth_dst)
+                            .and_modify(|e| update_counter_unit(e, RxIn, delta));
                     }
                 } else {
                     log::warn!(
@@ -465,4 +495,139 @@ pub fn get_local_eth_table() -> anyhow::Result<HashMap<EthAddr, String>> {
     }
 
     Ok(local_eth_table)
+}
+
+mod mytest {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct TreeIdx(usize);
+    #[derive(Debug, Clone, Default)]
+    struct Node {
+        rank: usize,
+        parent: Option<TreeIdx>,
+        children: Vec<TreeIdx>,
+    }
+
+    impl Node {
+        fn new(rank: usize) -> Self {
+            Node {
+                rank,
+                ..Default::default()
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct Tree {
+        nodes: Vec<Node>,
+    }
+
+    impl Tree {
+        fn push(&mut self, n: Node) -> TreeIdx {
+            let ix = TreeIdx(self.nodes.len());
+            self.nodes.push(n);
+            ix
+        }
+
+        fn connect(&mut self, p: TreeIdx, c: TreeIdx) {
+            self[p].children.push(c);
+            self[c].parent.replace(p).unwrap_none();
+        }
+
+        fn root(&self) -> TreeIdx {
+            assert!(!self.nodes.is_empty());
+            TreeIdx(0)
+        }
+
+        fn cut(&mut self, c: TreeIdx) {
+            if let Some(p) = self[c].parent {
+                let pos = self[p].children.iter().position(|&x| x == c).unwrap();
+                self[p].children.remove(pos);
+            }
+            self[c].parent = None;
+        }
+    }
+
+    impl std::ops::Index<TreeIdx> for Tree {
+        type Output = Node;
+        fn index(&self, index: TreeIdx) -> &Self::Output {
+            assert!(index.0 < self.nodes.len());
+            &self.nodes[index.0]
+        }
+    }
+
+    impl std::ops::IndexMut<TreeIdx> for Tree {
+        fn index_mut(&mut self, index: TreeIdx) -> &mut Self::Output {
+            assert!(index.0 < self.nodes.len());
+            &mut self.nodes[index.0]
+        }
+    }
+
+    pub fn solve(
+        mut tx: Vec<u64>,
+        mut rx: Vec<u64>,
+        src_rate: u64,
+        out_rate: Option<u64>,
+    ) -> Vec<usize> {
+        assert!(!tx.is_empty());
+        assert_eq!(tx.len(), rx.len());
+        let n = tx.len();
+        let mut ranks: Vec<usize> = (0..n).collect();
+        // sort nodes by tx rate
+        ranks.sort_by_key(|&i| tx[i]);
+        ranks.reverse();
+        tx.push(src_rate);
+        // get min_rx rate
+        let min_rx = rx.iter().copied().min().unwrap();
+        // chaining all the nodes by decending tx_rate
+        let mut tree = Tree::default();
+        let root = tree.push(Node::new(n)); // give root_rank: n
+        let mut last_node_ix = root;
+        for &r in ranks.iter() {
+            let new_node_ix = tree.push(Node::new(r));
+            tree.connect(last_node_ix, new_node_ix);
+            last_node_ix = new_node_ix;
+        }
+        // rearrange the tree
+        loop {
+            let rate_before = calculate_flow_rate(tree.root(), &tx, min_rx, &tree);
+            // cut the last node
+            tree.cut(last_node_ix);
+            let rate_after = calculate_flow_rate(tree.root(), &tx, min_rx, &tree);
+            // dfs(tree.root(), &tx, &rx, min_rx, &tree);
+            // the main chain is composed by the first child of each node
+            let mut now = tree.root();
+            let mut found = false;
+            while !tree[now].children.is_empty() {
+                if tx[tree[now].rank] - rate_after > rate_before {
+                    found = true;
+                    break;
+                }
+                // go up
+                if tree[now].parent.is_some() {
+                    now = tree[now].parent.unwrap();
+                } else {
+                    break;
+                }
+            }
+            tree.connect(now, last_node_ix);
+            if !found {
+                break;
+            }
+        }
+        ranks
+    }
+
+    fn calculate_flow_rate(p: TreeIdx, tx: &[u64], min_rx: u64, tree: &Tree) -> u64 {
+        let mut ret = min_rx.min(tx[tree[p].rank]);
+        for &c in &tree[p].children {
+            ret = ret.min(calculate_flow_rate(c, tx, min_rx, tree));
+        }
+        ret
+    }
+
+    fn dfs(p: TreeIdx, tx: &[u64], rx: &[u64], min_rx: u64, tree: &Tree) {
+        for &c in &tree[p].children {
+            dfs(c, tx, rx, min_rx, tree);
+        }
+    }
 }

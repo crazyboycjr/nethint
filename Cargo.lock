@@ -819,6 +819,7 @@ dependencies = [
 name = "nethint"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "fnv",
  "indexmap",
  "lazy_static",
