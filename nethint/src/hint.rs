@@ -456,28 +456,44 @@ impl Estimator for SimpleEstimator {
                 std::mem::swap(&mut high_node, &mut low_node);
             }
             let num_new_flows = if high_node.depth == 1 {
-                if app_hint == 0 {
-                    // for mapreduce
-                    let n = vcluster.num_hosts();
-                    let a = vcluster.get_downlinks(vcluster.get_node_index(&low_node.name)).count();
-                    n * a
-                } else {
-                    // for allreduce
-                    let a = vcluster.get_downlinks(vcluster.get_node_index("virtual_cloud")).count();
-                    let n = vcluster.num_hosts();
-                    let b = vcluster.get_downlinks(vcluster.get_node_index(&low_node.name)).count();
-                    std::cmp::max(1, b * (a - 1) + n - b)
+                match app_hint {
+                    0 => {
+                        // for mapreduce
+                        let n = vcluster.num_hosts();
+                        let a = vcluster.get_downlinks(vcluster.get_node_index(&low_node.name)).count();
+                        n * a
+                    }
+                    1 => {
+                        // for allreduce
+                        let a = vcluster.get_downlinks(vcluster.get_node_index("virtual_cloud")).count();
+                        let n = vcluster.num_hosts();
+                        let b = vcluster.get_downlinks(vcluster.get_node_index(&low_node.name)).count();
+                        std::cmp::max(1, b * (a - 1) + n - b)
+                    }
+                    2 => {
+                        // for rl broadcast
+                        1
+                    }
+                    _ => panic!("unexpected app_hint: {}", app_hint),
                 }
             } else {
-                if app_hint == 0 {
-                    // for mapreduce
-                    vcluster.num_hosts()
-                } else {
-                    // for allreduce
-                    let a = vcluster.get_downlinks(vcluster.get_node_index("virtual_cloud")).count();
-                    let n = vcluster.num_hosts();
-                    let b = vcluster.get_downlinks(vcluster.get_node_index(&high_node.name)).count();
-                    a + n + n * (b - 1) / b
+                match app_hint {
+                    0 => {
+                        // for mapreduce
+                        vcluster.num_hosts()
+                    }
+                    1 => {
+                        // for allreduce
+                        let a = vcluster.get_downlinks(vcluster.get_node_index("virtual_cloud")).count();
+                        let n = vcluster.num_hosts();
+                        let b = vcluster.get_downlinks(vcluster.get_node_index(&high_node.name)).count();
+                        a + n + n * (b - 1) / b
+                    }
+                    2 => {
+                        // for rl broadcast
+                        1
+                    }
+                    _ => panic!("unexpected app_hint: {}", app_hint),
                 }
             };
 
