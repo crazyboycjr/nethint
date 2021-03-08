@@ -29,6 +29,9 @@ impl MapReduceApp {
         let mappers = &workers[..n / 2];
         let reducers = &workers[n / 2..];
 
+        log::info!("mappers: {:?}", mappers);
+        log::info!("reducers: {:?}", reducers);
+
         // emit flows
         for m in mappers {
             for r in reducers {

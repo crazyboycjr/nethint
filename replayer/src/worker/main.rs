@@ -57,8 +57,8 @@ fn main() -> anyhow::Result<()> {
         peers.clone(),
     ))); // peers.clone is to call Arc::clone() on the elements
 
-    // start IO threads
-    let io_threads = std::cmp::max(1, num_cpus::get() - 1);
+    // start IO threads, another half for kthreads running network stack
+    let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
     let mut peers_group = partition(peers, io_threads);
 
     let mut handles = vec![];
