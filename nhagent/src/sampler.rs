@@ -567,7 +567,7 @@ mod mytest {
         mut rx: Vec<u64>,
         src_rate: u64,
         out_rate: Option<u64>,
-    ) -> Vec<usize> {
+    ) -> (Vec<usize>, u64, Option<u64>) {
         assert!(!tx.is_empty());
         assert_eq!(tx.len(), rx.len());
         let n = tx.len();
@@ -588,46 +588,65 @@ mod mytest {
             last_node_ix = new_node_ix;
         }
         // rearrange the tree
-        loop {
-            let rate_before = calculate_flow_rate(tree.root(), &tx, min_rx, &tree);
+        let adjust = |node_ix: TreeIdx, tree: &mut Tree| -> bool {
             // cut the last node
-            tree.cut(last_node_ix);
+            let rate_before = calculate_flow_rate(tree.root(), &tx, min_rx, &tree);
+            tree.cut(node_ix);
             let rate_after = calculate_flow_rate(tree.root(), &tx, min_rx, &tree);
-            // dfs(tree.root(), &tx, &rx, min_rx, &tree);
             // the main chain is composed by the first child of each node
             let mut now = tree.root();
             let mut found = false;
             while !tree[now].children.is_empty() {
-                if tx[tree[now].rank] - rate_after > rate_before {
+                if tx[tree[now].rank] - tree[now].children.len() as u64 * rate_after > rate_before {
                     found = true;
                     break;
                 }
-                // go up
-                if tree[now].parent.is_some() {
-                    now = tree[now].parent.unwrap();
+                // go down
+                if let Some(&first_child) = tree[now].children.first() {
+                    now = first_child;
                 } else {
                     break;
                 }
             }
-            tree.connect(now, last_node_ix);
+            tree.connect(now, node_ix);
+            found
+        };
+        loop {
+            let parent = tree[last_node_ix].parent;
+            let found = adjust(last_node_ix, &mut tree);
             if !found {
                 break;
             }
+            if let Some(p) = parent {
+                last_node_ix = p;
+            } else {
+                break;
+            }
         }
-        ranks
+        let final_rx_rate = calculate_flow_rate(tree.root(), &tx, min_rx, &tree);
+        // now that we have the tree, check if we still need to go outside the tree
+        if let Some(out_rate) = out_rate {
+            // append the extra virtual node to the node with the maximal remaining sending rate
+            // and the node with maximal remaining sending rate must reside on the main chain
+            let out_node = tree.push(Node::new(n + 1));
+            tree.connect(last_node_ix, out_node);
+            adjust(out_node, &mut tree);
+            let p = tree[out_node].parent.unwrap();
+            let final_tx_rate = out_rate.min(tx[tree[p].rank] - tree[p].children.len() as u64 * final_rx_rate);
+            (ranks, final_rx_rate, Some(final_tx_rate))
+        } else {
+            (ranks, final_rx_rate, None)
+        }
     }
 
     fn calculate_flow_rate(p: TreeIdx, tx: &[u64], min_rx: u64, tree: &Tree) -> u64 {
-        let mut ret = min_rx.min(tx[tree[p].rank]);
+        let mut ret = min_rx;
+        if !tree[p].children.is_empty() {
+            ret = ret.min(tx[tree[p].rank] / tree[p].children.len() as u64);
+        }
         for &c in &tree[p].children {
             ret = ret.min(calculate_flow_rate(c, tx, min_rx, tree));
         }
         ret
-    }
-
-    fn dfs(p: TreeIdx, tx: &[u64], rx: &[u64], min_rx: u64, tree: &Tree) {
-        for &c in &tree[p].children {
-            dfs(c, tx, rx, min_rx, tree);
-        }
     }
 }
