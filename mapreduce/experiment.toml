@@ -35,7 +35,7 @@ collocate = true
 # shuffle = { type = "Zipf", args = [ 1000000, 0.1 ] }
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 3
 
 [[batch]]
 reducer_policy = "Random"
@@ -71,7 +71,7 @@ fairness = "TenantFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 0.5, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 0.9, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
