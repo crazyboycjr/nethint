@@ -109,18 +109,22 @@ fn compact_chain(
 
     let mut max_tx = 0;
     let mut max_node = 0;
-    for x in chain {
-        let name = format!("host_{}", x);
+    for i in 0..chain.len() {
+        let name = format!("host_{}", chain[i]);
         let node_ix = vcluster.get_node_index(&name);
         let mut upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
         let mut oldrate = 0;
-        if m.contains_key(&x) {
-            oldrate = m[&x];
+        if m.contains_key(&chain[i]) {
+            oldrate = m[&chain[i]];
         }
         upbandwidth -= oldrate;
         if upbandwidth > max_tx {
+            if i != chain.len() - 1 {
             max_tx = upbandwidth - chain_rate;
-            max_node = x.clone();
+            } else {
+                max_tx = upbandwidth;
+            }
+            max_node = chain[i].clone();
         }
     }
 
