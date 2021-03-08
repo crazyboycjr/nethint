@@ -16,6 +16,7 @@ name = "allreduce"
 version = "0.1.0"
 dependencies = [
  "gnuplot",
+ "lazy_static",
  "log",
  "logging",
  "lpsolve",
@@ -24,6 +25,7 @@ dependencies = [
  "nethint",
  "rand 0.8.3",
  "rand_distr",
+ "rayon",
  "serde",
  "structopt",
  "toml",
@@ -1224,6 +1226,7 @@ name = "rl"
 version = "0.1.0"
 dependencies = [
  "gnuplot",
+ "lazy_static",
  "log",
  "logging",
  "lpsolve",
@@ -1232,6 +1235,7 @@ dependencies = [
  "nethint",
  "rand 0.8.3",
  "rand_distr",
+ "rayon",
  "serde",
  "structopt",
  "toml",

@@ -20,6 +20,8 @@ lpsolve-sys = "5.5.0"
 rand_distr = "0.4.0"
 toml = "0.5.8"
 serde = { version = "1.0.122", features = ["derive"] }
+lazy_static = "1.4.0"
+rayon = "1.5.0"
 
 [[bin]]
 name = "allreduce_experiment"

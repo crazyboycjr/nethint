@@ -32,7 +32,7 @@ seed = 1
 directory = "/tmp/rl_result"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -64,7 +64,7 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 9, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.9, amplitude = 9, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -80,8 +80,8 @@ max_slots = 1
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
 guaranteed_bandwidth = 25
-# background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
-background_flow_high_freq = { enable = false }
+background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
+# background_flow_high_freq = { enable = false }
 
 # The topology for simulation
 [brain.topology]
