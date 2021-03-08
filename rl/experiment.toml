@@ -1,20 +1,20 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 30
+ncases = 3
 
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 8], [5, 64]]
 # job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
-# job_size_distribution = [[40, 6]]
+job_size_distribution = [[40, 6]]
 
 # Buffer size of all jobs, in bytes
 buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 1
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
 # poisson_lambda = 8_000_000_000.0
@@ -94,7 +94,7 @@ type = "Arbitrary"  # another possible value is "FatTree"
 
 [brain.topology.args]         # When type = "Arbitrary"
 nracks = 150        # the number of racks
-rack_size = 12      # the number of hosts under a rack
+rack_size = 6      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 400       # bandwidth of a ToR switch, in Gbps
 
