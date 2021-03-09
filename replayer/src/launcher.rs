@@ -23,6 +23,10 @@ struct Opt {
     #[structopt(short = "n", long = "jobname")]
     jobname: String,
 
+    /// configfile
+    #[structopt(short = "c", long = "config")]
+    configfile: String,
+
     /// Output directory of log files
     #[structopt(short = "o", long = "output", default_value = "output")]
     output: std::path::PathBuf,
@@ -80,6 +84,7 @@ impl std::fmt::Display for Role {
 fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnce() -> () {
     let output_dir = opt.output.clone();
     let env_str = envs.join(" ");
+    let s = format!("--app {} --config {}", opt.jobname, opt.configfile);
 
     move || {
         let (ip, port) = host.rsplit_once(':').or(Some((&host, "22"))).unwrap();
@@ -103,7 +108,7 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
 
         // TODO(cjr): also to distribute binary program to workers
         match role {
-            Role::Controller => cmd.arg(format!("{} /tmp/controller", env_str)),
+            Role::Controller => cmd.arg(format!("{} /tmp/controller {}", env_str, s)),
             Role::Worker => cmd.arg(format!("{} /tmp/worker", env_str)),
         };
 
