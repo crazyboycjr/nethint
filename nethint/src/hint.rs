@@ -43,6 +43,7 @@ pub struct NetHintV1Real {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetHintV2Real {  // not in simulation
     pub hintv1: NetHintV1Real,
+    pub interval_ms: u64,
     pub traffic: std::collections::HashMap<LinkIx, Vec<CounterUnit>>,
 }
 

@@ -1,10 +1,10 @@
+use crate::controller::app::Application;
 use crate::controller::ProbeConfig;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::HashMap;
 use std::rc::Rc;
-use crate::controller::app::Application;
 
 use allreduce::{
     random_ring::RandomRingAllReduce, rat::RatAllReduce,
@@ -12,7 +12,9 @@ use allreduce::{
 };
 
 use nethint::{
-    cluster::Topology,
+    bandwidth::{self, Bandwidth, BandwidthTrait},
+    cluster::{Topology, VirtCluster, LinkIx},
+    counterunit::{CounterType, CounterUnit},
     hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
     TenantId,
 };
@@ -259,8 +261,84 @@ impl AllreduceApp {
         Ok(())
     }
 
+    // write the estimation result to self.cluster
     fn estimate_hintv2(&mut self, hintv2: NetHintV2Real) {
-        unimplemented!("the problem is how to estimate nethint v2 from link traffic information. save to self.cluster");
+        // unimplemented!("the problem is how to estimate nethint v2 from link traffic information. save to self.cluster");
+
+        let mut vc = hintv2.hintv1.vc.clone();
+
+        for vlink_ix in vc.all_links() {
+            // decide the direction
+            let n1 = &vc[vc.get_target(vlink_ix)];
+            let n2 = &vc[vc.get_source(vlink_ix)];
+            assert_ne!(n1.depth, n2.depth);
+            let (traffic, link_ix, direction) = if n1.depth > n2.depth {
+                // tx
+                (&hintv2.traffic[&vlink_ix], vlink_ix, CounterType::Tx)
+            } else {
+                // rx
+                let link_ix = vc.get_reverse_link(vlink_ix);
+                (
+                    &hintv2.traffic[&link_ix],
+                    link_ix,
+                    CounterType::Rx,
+                )
+            };
+            let plink_capacity = vc[vlink_ix].bandwidth;
+            // we are using per flow fairness here
+            let bw = Self::compute_fair_share_per_flow(
+                &vc,
+                link_ix,
+                hintv2.interval_ms,
+                traffic,
+                plink_capacity,
+                direction,
+            );
+            vc[vlink_ix].bandwidth = bw;
+        }
+
+        self.cluster = Some(Rc::new(vc));
+    }
+
+    fn compute_fair_share_per_flow(
+        vc: &VirtCluster,
+        link_ix: LinkIx,
+        interval_ms: u64,
+        traffic: &Vec<CounterUnit>,
+        plink_capacity: Bandwidth,
+        direction: CounterType,
+    ) -> Bandwidth {
+        // XXX(cjr): remember to subtract traffic from this tenant itself from all traffic
+        // assume it has already been subtracted from the return value
+        let demand_sum = traffic.iter().map(|c| c.data[direction].bytes).sum::<u64>() as usize;
+        let num_flows = traffic
+            .iter()
+            .map(|c| c.data[direction].num_competitors)
+            .sum::<u32>() as usize;
+
+        // num_nwe_flows will depend on the app
+        let mut high_node = vc[vc.get_source(link_ix)].clone();
+        let mut low_node = vc[vc.get_target(link_ix)].clone();
+        if high_node.depth > low_node.depth {
+            std::mem::swap(&mut high_node, &mut low_node);
+        }
+        let num_new_flows = if high_node.depth == 1 {
+            // for allreduce
+            let a = vc.get_downlinks(vc.get_node_index("virtual_cloud")).count();
+            let n = vc.num_hosts();
+            let b = vc.get_downlinks(vc.get_node_index(&low_node.name)).count();
+            std::cmp::max(1, b * (a - 1) + n - b)
+        } else {
+            // for allreduce
+            let a = vc.get_downlinks(vc.get_node_index("virtual_cloud")).count();
+            let n = vc.num_hosts();
+            let b = vc.get_downlinks(vc.get_node_index(&high_node.name)).count();
+            a + n + n * (b - 1) / b
+        };
+        std::cmp::max(
+            plink_capacity - (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps(),
+            plink_capacity / (num_flows + num_new_flows) * num_new_flows,
+        )
     }
 
     fn handle_brain_response_event(
@@ -288,5 +366,4 @@ impl AllreduceApp {
         }
         Ok(())
     }
-
 }

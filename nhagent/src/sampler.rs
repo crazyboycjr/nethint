@@ -1,5 +1,5 @@
 use std::sync::mpsc;
-use std::{borrow::Borrow, process::Command};
+use std::process::Command;
 use std::{collections::HashMap, convert::TryInto};
 
 use serde::{Deserialize, Serialize};
@@ -266,7 +266,7 @@ impl OvsSampler {
                 .collect();
             log::trace!("parsed ovs_flow: {:?}", ovs_flows);
 
-            let pcluster = CLUSTER.borrow().lock().unwrap();
+            let pcluster = CLUSTER.lock().unwrap();
             let mut vnode_counter: HashMap<EthAddr, CounterUnit> = Default::default();
             for (eth, vnodename) in local_eth_table.iter() {
                 vnode_counter

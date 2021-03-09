@@ -71,7 +71,7 @@ fn main_loop(
 ) -> anyhow::Result<()> {
     log::info!("entering main loop");
 
-    let mut handler = Handler::new(comm);
+    let mut handler = Handler::new(comm, interval_ms);
 
     use message::Message;
     {
@@ -199,10 +199,11 @@ struct Handler {
     traffic: HashMap<LinkIx, Vec<CounterUnit>>,
     rank_hostname: HashMap<usize, String>,
     brain: Rc<RefCell<Brain>>,
+    interval_ms: u64,
 }
 
 impl Handler {
-    fn new(comm: &mut Communicator) -> Self {
+    fn new(comm: &mut Communicator, interval_ms: u64) -> Self {
         let brain_setting = BrainSetting {
             seed: 1,
             asymmetric: false,
@@ -224,6 +225,7 @@ impl Handler {
             rank_hostname: std::iter::once((comm.my_rank(), nhagent::cluster::hostname().clone()))
                 .collect(),
             brain,
+            interval_ms,
         }
     }
 
@@ -493,6 +495,9 @@ impl Handler {
                                 vlink_ix,
                             );
                             let traffic_on_link = self.traffic[&phys_link].clone();
+                            // TODO(cjr): we need to do some modifications to traffic_on_link
+                            // because it contains all traffic from all tenants
+                            // the traffic from the requestor itself must be subtracted
                             traffic.insert(vlink_ix, traffic_on_link);
                             // set vc.bandwidth to the value of physical links
                             vc[vlink_ix].bandwidth =
@@ -503,7 +508,7 @@ impl Handler {
                             vc,
                             vname_to_hostname,
                         };
-                        let hintv2 = NetHintV2Real { hintv1, traffic };
+                        let hintv2 = NetHintV2Real { hintv1, interval_ms: self.interval_ms, traffic };
                         let msg = NetHintResponseV2(tenant_id, hintv2);
                         comm.send_to(sender_rank, &msg)?;
                     }
