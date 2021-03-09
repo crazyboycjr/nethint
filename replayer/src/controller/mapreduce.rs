@@ -1,4 +1,5 @@
 use crate::{message, Flow, Node};
+use crate::controller::ProbeConfig;
 use litemsg::endpoint::Endpoint;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -20,13 +21,7 @@ use nethint::{
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct ProbeConfig {
-    enable: bool,
-    #[serde(default)]
-    round_ms: u64,
-}
+use crate::controller::app::Application;
 
 /// see mapreduce/experiment.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,27 +139,72 @@ pub struct MapReduceApp {
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
 }
 
-impl MapReduceApp {
-    pub fn workers(&self) -> &HashMap<Node, Endpoint> {
+impl Application for MapReduceApp {
+    fn workers(&self) -> &HashMap<Node, Endpoint> {
         &self.workers
     }
 
-    pub fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
+    fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
         &mut self.workers
     }
 
-    pub fn brain(&self) -> &Endpoint {
+    fn brain(&self) -> &Endpoint {
         &self.brain
     }
 
-    pub fn brain_mut(&mut self) -> &mut Endpoint {
+    fn brain_mut(&mut self) -> &mut Endpoint {
         &mut self.brain
     }
 
-    pub fn tenant_id(&self) -> TenantId {
+    fn tenant_id(&self) -> TenantId {
         self.setting.job_id
     }
 
+    fn start(&mut self) -> anyhow::Result<()> {
+        if self.cluster.is_none() {
+            // self.request_provision()?;
+            let version = match self.setting.nethint_level {
+                1 => NetHintVersion::V1,
+                2 => NetHintVersion::V2,
+                _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
+            };
+            self.request_nethint(version)?;
+        } else {
+            let shuffle = self.generate_shuffle(self.seed);
+            log::info!("shuffle: {:?}", shuffle);
+
+            let mappers = self.place_map();
+            let reducers = self.place_reduce(&mappers, &shuffle);
+            // in shuffle, we do submit the flows
+            self.shuffle(shuffle, mappers, reducers)?;
+        }
+
+        Ok(())
+    }
+
+    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<()> {
+        // wait for all flows to finish
+        use message::Command::*;
+        match cmd {
+            FlowComplete(_flow) => {
+                self.num_remaining_flows -= 1;
+                if self.num_remaining_flows == 0 {
+                    self.finish()?;
+                }
+            }
+            BrainResponse(msg) => {
+                self.handle_brain_response_event(msg)?;
+            }
+            _ => {
+                panic!("unexpected cmd: {:?}", cmd);
+            }
+        }
+        Ok(())
+    }
+}
+
+
+impl MapReduceApp {
     fn generate_shuffle(&mut self, seed: u64) -> Shuffle {
         let mut rng = StdRng::seed_from_u64(seed);
         let n = self.job_spec.num_map;
@@ -256,7 +296,7 @@ impl MapReduceApp {
                 let flow = Flow::new(shuffle.0[i][j], m.clone(), r.clone(), None);
                 let cmd = message::Command::EmitFlow(flow);
                 log::debug!("mapreduce::run, cmd: {:?}", cmd);
-                let endpoint = self.workers.get_mut(&m).unwrap();
+                let endpoint = self.workers.get_mut(m).unwrap();
                 endpoint.post(cmd, None)?;
                 self.num_remaining_flows += 1;
             }
@@ -270,61 +310,6 @@ impl MapReduceApp {
     //     self.brain.post(msg, None)?;
     //     Ok(())
     // }
-
-    fn request_nethint(&mut self, version: NetHintVersion) -> anyhow::Result<()> {
-        let msg = nhagent::message::Message::NetHintRequest(self.tenant_id(), version);
-        self.brain.post(msg, None)?;
-        Ok(())
-    }
-
-    pub fn start(&mut self) -> anyhow::Result<()> {
-        if self.cluster.is_none() {
-            // self.request_provision()?;
-            let version = match self.setting.nethint_level {
-                1 => NetHintVersion::V1,
-                2 => NetHintVersion::V2,
-                _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
-            };
-            self.request_nethint(version)?;
-        } else {
-            let shuffle = self.generate_shuffle(self.seed);
-            log::info!("shuffle: {:?}", shuffle);
-
-            let mappers = self.place_map();
-            let reducers = self.place_reduce(&mappers, &shuffle);
-            // in shuffle, we do submit the flows
-            self.shuffle(shuffle, mappers, reducers)?;
-        }
-
-        let workers: Vec<_> = self.workers.keys().cloned().collect();
-        let n = workers.len();
-        let mappers = &workers[..n / 2];
-        let reducers = &workers[n / 2..];
-
-        log::info!("mappers: {:?}", mappers);
-        log::info!("reducers: {:?}", reducers);
-
-        // emit flows
-        for m in mappers {
-            for r in reducers {
-                let flow = Flow::new(1_000_000_000, m.clone(), r.clone(), None);
-                let cmd = message::Command::EmitFlow(flow);
-                log::trace!("mapreduce::run, cmd: {:?}", cmd);
-                let endpoint = self.workers.get_mut(&m).unwrap();
-                endpoint.post(cmd, None)?;
-                self.num_remaining_flows += 1;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn finish(&mut self) -> anyhow::Result<()> {
-        for worker in self.workers.values_mut() {
-            worker.post(message::Command::AppFinish, None)?;
-        }
-        Ok(())
-    }
 
     fn estimate_hintv2(&mut self, hintv2: NetHintV2Real) {
         unimplemented!("the problem is how to estimate nethint v2 from link traffic information. save to self.cluster");
@@ -357,26 +342,6 @@ impl MapReduceApp {
             }
             _ => {
                 panic!("unexpected brain response: {:?}", msg);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<()> {
-        // wait for all flows to finish
-        use message::Command::*;
-        match cmd {
-            FlowComplete(_flow) => {
-                self.num_remaining_flows -= 1;
-                if self.num_remaining_flows == 0 {
-                    self.finish()?;
-                }
-            }
-            BrainResponse(msg) => {
-                self.handle_brain_response_event(msg)?;
-            }
-            _ => {
-                panic!("unexpected cmd: {:?}", cmd);
             }
         }
         Ok(())

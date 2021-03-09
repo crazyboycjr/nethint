@@ -16,6 +16,7 @@ logging = { path = "../logging" }
 nethint = { path = "../nethint" }
 litemsg = { path = "../litemsg" }
 mapreduce = { path = "../mapreduce" }
+allreduce = { path = "../allreduce" }
 nhagent = { path = "../nhagent" }
 structopt = "0.3.21"
 nix = "0.19.1"

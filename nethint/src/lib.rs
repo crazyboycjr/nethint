@@ -135,9 +135,9 @@ impl std::fmt::Debug for TraceRecord {
 pub struct Flow {
     /// an identifier
     id: usize,
-    bytes: usize,
-    src: String,
-    dst: String,
+    pub bytes: usize,
+    pub src: String,
+    pub dst: String,
     /// an optional tag for application use (e.g. identify the flow in application)
     token: Option<Token>,
     /// this field is to explicitly support tenant based fairness

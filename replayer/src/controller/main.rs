@@ -2,7 +2,9 @@
 use std::collections::HashMap;
 
 use litemsg::endpoint;
-use replayer::controller::mapreduce::{MapReduceApp, MapReduceAppBuilder};
+use replayer::controller::mapreduce::MapReduceAppBuilder;
+use replayer::controller::allreduce::AllreduceAppBuilder;
+use replayer::controller::app::Application;
 use replayer::message;
 use replayer::Node;
 
@@ -81,11 +83,9 @@ fn io_loop(
         .collect();
 
     // initialize application
-    let mut app = match opts.app.as_str() {
-        "mapreduce" => MapReduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build(),
-        "allreduce" => {
-            unimplemented!();
-        }
+    let mut app: Box<dyn Application> = match opts.app.as_str() {
+        "mapreduce" => Box::new(MapReduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()),
+        "allreduce" => Box::new(AllreduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()),
         "rl" => {
             unimplemented!();
         }
@@ -180,7 +180,7 @@ impl Handler {
     fn handle_brain_response(
         &mut self,
         msg: nhagent::message::Message,
-        app: &mut MapReduceApp,
+        app: &mut Box<dyn Application>,
     ) -> anyhow::Result<bool> {
         use nhagent::message::Message::*;
         // let my_tenant_id = app.tenant_id();
@@ -209,7 +209,7 @@ impl Handler {
     fn on_recv_complete(
         &mut self,
         cmd: message::Command,
-        app: &mut MapReduceApp,
+        app: &mut Box<dyn Application>,
     ) -> anyhow::Result<bool> {
         use message::Command::*;
         match cmd {
