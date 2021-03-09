@@ -4,7 +4,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use mapreduce::{
-    mapper::MapperPlacementPolicy, trace::JobTrace, JobSpec, ReducerPlacementPolicy, ShufflePattern,
+    mapper::{
+        GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
+        RandomSkewMapperScheduler, TraceMapperScheduler,
+    },
+    trace::JobTrace, JobSpec, ReducerPlacementPolicy, ShufflePattern,
     GreedyReducerLevel1Scheduler, GreedyReducerScheduler, GreedyReducerSchedulerPaper,
     PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, Shuffle,
 };
@@ -181,6 +185,66 @@ impl MapReduceApp {
         Shuffle(pairs)
     }
 
+    fn place_map(&self) -> Placement {
+        let mut map_scheduler: Box<dyn PlaceMapper> = match self.setting.mapper_policy {
+            MapperPlacementPolicy::Random(seed) => Box::new(RandomMapperScheduler::new(seed)),
+            MapperPlacementPolicy::FromTrace(ref record) => {
+                Box::new(TraceMapperScheduler::new(record.clone()))
+            }
+            MapperPlacementPolicy::Greedy => Box::new(GreedyMapperScheduler::new()),
+            MapperPlacementPolicy::RandomSkew(seed, s) => {
+                Box::new(RandomSkewMapperScheduler::new(seed, s))
+            }
+        };
+        let mappers = map_scheduler.place(&**self.cluster.as_ref().unwrap(), &self.job_spec);
+        log::info!("mappers: {:?}", mappers);
+        mappers
+    }
+
+    fn place_reduce(&self, mappers: &Placement, shuffle: &Shuffle) -> Placement {
+        let mut reduce_scheduler: Box<dyn PlaceReducer> = match self.setting.reducer_policy {
+            ReducerPlacementPolicy::Random => Box::new(RandomReducerScheduler::new()),
+            ReducerPlacementPolicy::GeneticAlgorithm => {
+                panic!("do not use genetic algorithm");
+                // Box::new(GeneticReducerScheduler::new())
+            }
+            ReducerPlacementPolicy::HierarchicalGreedy => Box::new(GreedyReducerScheduler::new()),
+            ReducerPlacementPolicy::HierarchicalGreedyLevel1 => {
+                Box::new(GreedyReducerLevel1Scheduler::new())
+            }
+            ReducerPlacementPolicy::HierarchicalGreedyPaper => {
+                Box::new(GreedyReducerSchedulerPaper::new())
+            }
+        };
+
+        let reducers = reduce_scheduler.place(
+            &**self.cluster.as_ref().unwrap(),
+            &self.job_spec,
+            &mappers,
+            &shuffle,
+            self.setting.collocate,
+        );
+        log::info!("reducers: {:?}", reducers);
+        reducers
+    }
+
+    fn shuffle(&mut self, shuffle: Shuffle, mappers: Placement, reducers: Placement) {
+        // reinitialize replayer with new trace
+        let mut trace = Trace::new();
+        for i in 0..self.job_spec.num_map {
+            for j in 0..self.job_spec.num_reduce {
+                // no translation
+                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
+                let flow = Flow::new(shuffle.0[i][j], m.clone(), r.clone(), None);
+                let cmd = message::Command::EmitFlow(flow);
+                log::debug!("mapreduce::run, cmd: {:?}", cmd);
+                let endpoint = self.workers.get_mut(&m).unwrap();
+                endpoint.post(cmd, None)?;
+                self.num_remaining_flows += 1;
+            }
+        }
+    }
+
     fn request_provision(&mut self) -> anyhow::Result<()> {
         let nhosts_to_acquire = std::cmp::max(self.job_spec.num_map, self.job_spec.num_reduce);
         let msg = nhagent::message::Message::ProvisionRequest(self.tenant_id(), nhosts_to_acquire);
@@ -198,7 +262,13 @@ impl MapReduceApp {
         if self.cluster.is_none() {
             self.request_provision()?;
         } else {
-
+            let shuffle = self.generate_shuffle(self.seed);
+            log::info!("shuffle: {:?}", shuffle);
+            
+            let mappers = self.place_map();
+            let reducers = self.place_reduce(&mappers, &shuffle);
+            // in shuffle, we do submit the flows
+            self.shuffle(shuffle, mappers, reducers);
         }
 
         let workers: Vec<_> = self.workers.keys().cloned().collect();
@@ -247,6 +317,7 @@ impl MapReduceApp {
             NetHintResponse(tenant_id, hintv2) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.estimate_hintv2(hintv2);
+                self.start()?;
             }
             _ => {
                 panic!("unexpected brain response: {:?}", msg);
