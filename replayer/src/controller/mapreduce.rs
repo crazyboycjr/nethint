@@ -8,14 +8,15 @@ use mapreduce::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
     },
-    trace::JobTrace, JobSpec, ReducerPlacementPolicy, ShufflePattern,
-    GreedyReducerLevel1Scheduler, GreedyReducerScheduler, GreedyReducerSchedulerPaper,
-    PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, Shuffle,
+    trace::JobTrace,
+    GreedyReducerLevel1Scheduler, GreedyReducerScheduler, GreedyReducerSchedulerPaper, JobSpec,
+    PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
+    ShufflePattern,
 };
 use nethint::{
-    cluster::{Cluster, Topology},
+    cluster::Topology,
     hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
-    Duration, Trace, TraceRecord, TenantId,
+    TenantId,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -48,14 +49,21 @@ pub struct MapReduceAppBuilder {
     config_path: std::path::PathBuf,
     workers: HashMap<Node, Endpoint>,
     brain: Endpoint,
+    hostname_to_node: HashMap<String, Node>,
 }
 
 impl MapReduceAppBuilder {
-    pub fn new(config_path: std::path::PathBuf, workers: HashMap<Node, Endpoint>, brain: Endpoint) -> Self {
+    pub fn new(
+        config_path: std::path::PathBuf,
+        workers: HashMap<Node, Endpoint>,
+        brain: Endpoint,
+        hostname_to_node: HashMap<String, Node>,
+    ) -> Self {
         MapReduceAppBuilder {
             config_path,
             workers,
             brain,
+            hostname_to_node,
         }
     }
 
@@ -108,12 +116,14 @@ impl MapReduceAppBuilder {
         MapReduceApp {
             workers: self.workers,
             brain: self.brain,
+            hostname_to_node: self.hostname_to_node,
             num_remaining_flows: 0,
             setting,
             seed,
             job_spec,
             // hint1: None,
             // hint2: None,
+            vname_to_hostname: Default::default(),
             cluster: None,
         }
     }
@@ -122,6 +132,7 @@ impl MapReduceAppBuilder {
 pub struct MapReduceApp {
     workers: HashMap<Node, Endpoint>,
     brain: Endpoint,
+    hostname_to_node: HashMap<String, Node>,
     num_remaining_flows: usize,
 
     setting: MapReduceSetting,
@@ -129,6 +140,7 @@ pub struct MapReduceApp {
     job_spec: JobSpec,
     // hint1: Option<NetHintV1Real>,
     // hint2: Option<NetHintV2Real>,
+    vname_to_hostname: HashMap<String, String>,
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
 }
 
@@ -228,13 +240,19 @@ impl MapReduceApp {
         reducers
     }
 
-    fn shuffle(&mut self, shuffle: Shuffle, mappers: Placement, reducers: Placement) {
-        // reinitialize replayer with new trace
-        let mut trace = Trace::new();
+    fn shuffle(
+        &mut self,
+        shuffle: Shuffle,
+        mappers: Placement,
+        reducers: Placement,
+    ) -> anyhow::Result<()> {
         for i in 0..self.job_spec.num_map {
             for j in 0..self.job_spec.num_reduce {
                 // no translation
-                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
+                let m_vm_hostname = &self.vname_to_hostname[&mappers.0[i]];
+                let r_vm_hostname = &self.vname_to_hostname[&reducers.0[i]];
+                let m = &self.hostname_to_node[m_vm_hostname];
+                let r = &self.hostname_to_node[r_vm_hostname];
                 let flow = Flow::new(shuffle.0[i][j], m.clone(), r.clone(), None);
                 let cmd = message::Command::EmitFlow(flow);
                 log::debug!("mapreduce::run, cmd: {:?}", cmd);
@@ -243,32 +261,39 @@ impl MapReduceApp {
                 self.num_remaining_flows += 1;
             }
         }
-    }
-
-    fn request_provision(&mut self) -> anyhow::Result<()> {
-        let nhosts_to_acquire = std::cmp::max(self.job_spec.num_map, self.job_spec.num_reduce);
-        let msg = nhagent::message::Message::ProvisionRequest(self.tenant_id(), nhosts_to_acquire);
-        self.brain.post(msg, None)?;
         Ok(())
     }
 
-    fn request_nethint(&mut self) -> anyhow::Result<()> {
-        let msg = nhagent::message::Message::NetHintRequest(self.tenant_id(), NetHintVersion::V2);
+    // fn request_provision(&mut self) -> anyhow::Result<()> {
+    //     let nhosts_to_acquire = std::cmp::max(self.job_spec.num_map, self.job_spec.num_reduce);
+    //     let msg = nhagent::message::Message::ProvisionRequest(self.tenant_id(), nhosts_to_acquire);
+    //     self.brain.post(msg, None)?;
+    //     Ok(())
+    // }
+
+    fn request_nethint(&mut self, version: NetHintVersion) -> anyhow::Result<()> {
+        let msg = nhagent::message::Message::NetHintRequest(self.tenant_id(), version);
         self.brain.post(msg, None)?;
         Ok(())
     }
 
     pub fn start(&mut self) -> anyhow::Result<()> {
         if self.cluster.is_none() {
-            self.request_provision()?;
+            // self.request_provision()?;
+            let version = match self.setting.nethint_level {
+                1 => NetHintVersion::V1,
+                2 => NetHintVersion::V2,
+                _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
+            };
+            self.request_nethint(version)?;
         } else {
             let shuffle = self.generate_shuffle(self.seed);
             log::info!("shuffle: {:?}", shuffle);
-            
+
             let mappers = self.place_map();
             let reducers = self.place_reduce(&mappers, &shuffle);
             // in shuffle, we do submit the flows
-            self.shuffle(shuffle, mappers, reducers);
+            self.shuffle(shuffle, mappers, reducers)?;
         }
 
         let workers: Vec<_> = self.workers.keys().cloned().collect();
@@ -305,17 +330,28 @@ impl MapReduceApp {
         unimplemented!("the problem is how to estimate nethint v2 from link traffic information. save to self.cluster");
     }
 
-    fn handle_brain_response_event(&mut self, msg: nhagent::message::Message) -> anyhow::Result<()> {
+    fn handle_brain_response_event(
+        &mut self,
+        msg: nhagent::message::Message,
+    ) -> anyhow::Result<()> {
         use nhagent::message::Message::*;
         let my_tenant_id = self.tenant_id();
         match msg {
-            ProvisionResponse(tenant_id, hintv1) => {
+            // ProvisionResponse(tenant_id, hintv1) => {
+            //     assert_eq!(my_tenant_id, tenant_id);
+            //     // self.hint1 = Some(hintv1);
+            //     self.vname_to_hostname = hintv1.vname_to_hostname;
+            //     self.cluster = Some(Rc::new(hintv1.vc));
+            // }
+            NetHintResponseV1(tenant_id, hintv1) => {
                 assert_eq!(my_tenant_id, tenant_id);
-                // self.hint1 = Some(hintv1);
+                self.vname_to_hostname = hintv1.vname_to_hostname;
                 self.cluster = Some(Rc::new(hintv1.vc));
+                self.start()?;
             }
-            NetHintResponse(tenant_id, hintv2) => {
+            NetHintResponseV2(tenant_id, hintv2) => {
                 assert_eq!(my_tenant_id, tenant_id);
+                self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);
                 self.start()?;
             }

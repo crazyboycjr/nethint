@@ -85,6 +85,13 @@ pub struct VirtCluster {
     pub(crate) tenant_id: TenantId,
 }
 
+impl VirtCluster {
+    #[inline]
+    pub fn virt_to_phys(&self) -> &HashMap<String, String> {
+        &self.virt_to_phys
+    }
+}
+
 impl Index<LinkIx> for VirtCluster {
     type Output = Link;
     fn index(&self, index: LinkIx) -> &Self::Output {

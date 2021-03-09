@@ -37,13 +37,13 @@ pub enum Message {
     /// send by rack leader, processed by worker
     AllHints(HashMap<LinkIx, Vec<CounterUnit>>),
 
-    /// send by app, processed by rack leader, 
+    /// send by experiment scheduler, processed by rack leader, 
     /// forward by rack leader, processed by global leader
     /// in practice, we skip the forwarding pass
     /// tenant_id, nhosts
     ProvisionRequest(TenantId, usize),
     /// send by global leader, processed by rack leader
-    /// forward by rack leader, processed by app
+    /// forward by rack leader, processed by experiment scheduler
     /// in practice, we skip the forwarding pass
     /// tenant_id, hintv1
     ProvisionResponse(TenantId, NetHintV1Real),
@@ -54,5 +54,7 @@ pub enum Message {
     /// send by app, processed by rack/global leader leader
     NetHintRequest(TenantId, NetHintVersion),
     /// send by rack/global leader, processed by app
-    NetHintResponse(TenantId, NetHintV2Real),
+    NetHintResponseV1(TenantId, NetHintV1Real),
+    /// send by rack/global leader, processed by app
+    NetHintResponseV2(TenantId, NetHintV2Real),
 }

@@ -36,11 +36,13 @@ pub type NetHintV2 = VirtCluster;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetHintV1Real {
     pub vc: VirtCluster,
+    // this is a dirty hack, we need to know the mapping between virtual name host_{} to a vm hostname, cpu{}
+    pub vname_to_hostname: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetHintV2Real {  // not in simulation
-    pub vc: VirtCluster,
+    pub hintv1: NetHintV1Real,
     pub traffic: std::collections::HashMap<LinkIx, Vec<CounterUnit>>,
 }
 

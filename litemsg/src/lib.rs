@@ -43,11 +43,12 @@ impl std::net::ToSocketAddrs for Node {
 pub fn accept_peers(
     controller_uri: &str,
     num_workers: usize,
-) -> anyhow::Result<(TcpListener, HashMap<Node, TcpStream>)> {
+) -> anyhow::Result<(TcpListener, HashMap<Node, TcpStream>, HashMap<String, Node>)> {
     log::debug!("binding to controller_uri: {}", controller_uri);
     let listener = std::net::TcpListener::bind(controller_uri.clone()).expect(&controller_uri);
 
     let mut workers: HashMap<Node, std::net::TcpStream> = Default::default();
+    let mut hostname_to_node: HashMap<String, Node> = Default::default();
 
     // process add node event
     while workers.len() < num_workers {
@@ -62,11 +63,12 @@ pub fn accept_peers(
 
         use command::Command::*;
         match cmd {
-            AddNode(node, _hostname) => {
+            AddNode(node, hostname) => {
                 if workers.contains_key(&node) {
                     log::error!("repeated AddNode: {:?}", node);
                 }
-                workers.insert(node, client);
+                workers.insert(node.clone(), client);
+                hostname_to_node.insert(hostname, node);
             }
             _ => {
                 log::error!("received unexpected command: {:?}", cmd);
@@ -85,7 +87,7 @@ pub fn accept_peers(
         utils::send_cmd_sync(worker, &bcast_cmd).unwrap();
     }
 
-    Ok((listener, workers))
+    Ok((listener, workers, hostname_to_node))
 }
 
 // nodes, my_node, controller, listener

@@ -3,7 +3,7 @@
 
 use nethint::{
     brain::{BrainSetting, PlacementStrategy},
-    cluster::{LinkIx, Topology},
+    cluster::{LinkIx, Topology, VirtCluster},
     counterunit::CounterUnit,
     hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
 };
@@ -75,8 +75,7 @@ fn main_loop(
 
     use message::Message;
     {
-        let msg =
-            Message::DeclareEthHostTable(CLUSTER.lock().unwrap().eth_hostname().clone());
+        let msg = Message::DeclareEthHostTable(CLUSTER.lock().unwrap().eth_hostname().clone());
         log::debug!("broadcasting: {:?}", msg);
         comm.broadcast(&msg)?;
     }
@@ -394,6 +393,19 @@ impl Handler {
         Ok(())
     }
 
+    fn get_vname_to_hostname(vc: &VirtCluster) -> HashMap<String, String> {
+        (0..vc.num_hosts())
+            .map(|vid| {
+                // 0 -> 0, 1 -> 1, 2 -> 2, 3 -> 3, 4 -> 8, 5 -> 9
+                let vname = format!("host_{}", vid);
+                let pname = vc.virt_to_phys()[&vname].clone();
+                let pid: usize = pname.strip_prefix("host_").unwrap().parse().unwrap();
+                let hostid = (pid / 4) * 8 + pid % 4;
+                (vname, format!("cpu{}", hostid))
+            })
+            .collect()
+    }
+
     fn on_send_complete(&mut self, _attachment: Option<Vec<u8>>) -> anyhow::Result<()> {
         Ok(())
     }
@@ -439,7 +451,13 @@ impl Handler {
                     .borrow_mut()
                     .provision(tenant_id, nhosts_to_acquire, PlacementStrategy::Compact)
                     .unwrap();
-                let hintv1 = NetHintV1Real { vc };
+                // in our testbed, the virtual machine hostname are just cpu{}
+                // so there is a direct translation between vnode to hostname
+                let vname_to_hostname = Self::get_vname_to_hostname(&vc);
+                let hintv1 = NetHintV1Real {
+                    vc,
+                    vname_to_hostname,
+                };
                 let msg = ProvisionResponse(tenant_id, hintv1);
                 comm.send_to(sender_rank, &msg)?;
             }
@@ -451,27 +469,51 @@ impl Handler {
                 comm.send_to(sender_rank, &msg)?;
             }
             NetHintRequest(tenant_id, version) => {
-                assert!(
-                    version == NetHintVersion::V2,
-                    "requested version: {:?}",
-                    version
-                );
-                // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
-                let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();
-                let mut vc = (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
-                for vlink_ix in vc.all_links() {
-                    let phys_link =
-                        nethint::hint::get_phys_link(&*self.brain.borrow(), tenant_id, vlink_ix);
-                    let traffic_on_link = self.traffic[&phys_link].clone();
-                    traffic.insert(vlink_ix, traffic_on_link);
-                    // set vc.bandwidth to the value of physical links
-                    vc[vlink_ix].bandwidth = self.brain.borrow().cluster()[phys_link].bandwidth;
+                match version {
+                    NetHintVersion::V1 => {
+                        let vc =
+                            (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
+                        let vname_to_hostname = Self::get_vname_to_hostname(&vc);
+                        let hintv1 = NetHintV1Real {
+                            vc,
+                            vname_to_hostname,
+                        };
+                        let msg = NetHintResponseV1(tenant_id, hintv1);
+                        comm.send_to(sender_rank, &msg)?;
+                    }
+                    NetHintVersion::V2 => {
+                        // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
+                        let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();
+                        let mut vc =
+                            (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
+                        for vlink_ix in vc.all_links() {
+                            let phys_link = nethint::hint::get_phys_link(
+                                &*self.brain.borrow(),
+                                tenant_id,
+                                vlink_ix,
+                            );
+                            let traffic_on_link = self.traffic[&phys_link].clone();
+                            traffic.insert(vlink_ix, traffic_on_link);
+                            // set vc.bandwidth to the value of physical links
+                            vc[vlink_ix].bandwidth =
+                                self.brain.borrow().cluster()[phys_link].bandwidth;
+                        }
+                        let vname_to_hostname = Self::get_vname_to_hostname(&vc);
+                        let hintv1 = NetHintV1Real {
+                            vc,
+                            vname_to_hostname,
+                        };
+                        let hintv2 = NetHintV2Real { hintv1, traffic };
+                        let msg = NetHintResponseV2(tenant_id, hintv2);
+                        comm.send_to(sender_rank, &msg)?;
+                    }
                 }
-                let hintv2 = NetHintV2Real { vc, traffic };
-                let msg = NetHintResponse(tenant_id, hintv2);
-                comm.send_to(sender_rank, &msg)?;
             }
-            SyncRequest(_) | SyncResponse(_) | ProvisionResponse(..) | NetHintResponse(..)
+            SyncRequest(_)
+            | SyncResponse(_)
+            | ProvisionResponse(..)
+            | NetHintResponseV1(..)
+            | NetHintResponseV2(..)
             | DestroyResponse(_) => {
                 panic!("shouldn't receive this msg: {:?}", msg);
             }

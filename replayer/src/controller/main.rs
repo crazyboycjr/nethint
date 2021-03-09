@@ -34,7 +34,8 @@ fn main() -> anyhow::Result<()> {
 
     let controller_uri = std::env::var("RP_CONTROLLER_URI").expect("RP_CONTROLLER_URI");
 
-    let (_listener, workers) = litemsg::accept_peers(&controller_uri, num_workers)?;
+    let (_listener, workers, hostname_to_node) =
+        litemsg::accept_peers(&controller_uri, num_workers)?;
 
     let brain_uri = std::env::var("NH_CONTROLLER_URI").expect("NH_CONTROLLER_URI");
     let brain = litemsg::utils::connect_retry(&brain_uri, 5)?;
@@ -48,7 +49,7 @@ fn main() -> anyhow::Result<()> {
         .unwrap();
 
     let start = std::time::Instant::now();
-    io_loop(&opts, workers, brain)?;
+    io_loop(&opts, workers, brain, hostname_to_node)?;
     let end = std::time::Instant::now();
     println!("duration: {:?}", end - start);
 
@@ -59,6 +60,7 @@ fn io_loop(
     opts: &Opt,
     workers: HashMap<Node, std::net::TcpStream>,
     brain: endpoint::Endpoint,
+    hostname_to_node: HashMap<String, Node>,
 ) -> anyhow::Result<()> {
     let poll = mio::Poll::new()?;
 
@@ -80,7 +82,7 @@ fn io_loop(
 
     // initialize application
     let mut app = match opts.app.as_str() {
-        "mapreduce" => MapReduceAppBuilder::new(opts.config.clone(), workers, brain).build(),
+        "mapreduce" => MapReduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build(),
         "allreduce" => {
             unimplemented!();
         }
@@ -175,19 +177,26 @@ impl Handler {
         }
     }
 
-    fn handle_brain_response(&mut self, msg: nhagent::message::Message, app: &mut MapReduceApp) -> anyhow::Result<bool> {
+    fn handle_brain_response(
+        &mut self,
+        msg: nhagent::message::Message,
+        app: &mut MapReduceApp,
+    ) -> anyhow::Result<bool> {
         use nhagent::message::Message::*;
-        let my_tenant_id = app.tenant_id();
+        // let my_tenant_id = app.tenant_id();
         match msg {
-            r @ ProvisionResponse(..) => {
+            // r @ ProvisionResponse(..) => {
+            //     app.on_event(message::Command::BrainResponse(r))?;
+            // }
+            // DestroyResponse(tenant_id) => {
+            //     // exit
+            //     assert_eq!(my_tenant_id, tenant_id);
+            //     return Ok(true);
+            // }
+            r @ NetHintResponseV1(..) => {
                 app.on_event(message::Command::BrainResponse(r))?;
             }
-            DestroyResponse(tenant_id) => {
-                // exit
-                assert_eq!(my_tenant_id, tenant_id);
-                return Ok(true);
-            }
-            r @ NetHintResponse(..) => {
+            r @ NetHintResponseV2(..) => {
                 app.on_event(message::Command::BrainResponse(r))?;
             }
             _ => {
