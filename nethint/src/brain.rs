@@ -61,7 +61,7 @@ pub struct BrainSetting {
     pub background_flow_high_freq: BackgroundFlowHighFreq,
 }
 
-// // can only send by replicating the object, user should be very careful about this
+/// can only send by replicating (deep copy) the object, user should be very careful about this
 unsafe impl Send for Brain {}
 unsafe impl Sync for Brain {}
 
@@ -203,6 +203,10 @@ impl Brain {
 
     pub fn setting(&self) -> &BrainSetting {
         &self.setting
+    }
+
+    pub fn vclusters(&self) -> &HashMap<TenantId, Rc<RefCell<VirtCluster>>> {
+        &self.vclusters
     }
 
     pub fn make_asymmetric(&mut self, probability: f64, amplitude: usize) {
@@ -424,7 +428,7 @@ impl Brain {
         Ok(ret)
     }
 
-    fn garbage_collect(&mut self, until: TenantId) {
+    pub fn garbage_collect(&mut self, until: TenantId) {
         #[allow(clippy::stable_sort_primitive)]
         self.gc_queue.sort();
         self.gc_queue.reverse();

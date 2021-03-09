@@ -915,6 +915,8 @@ checksum = "467d164a6de56270bd7c4d070df81d07beace25012d5103ced4e9ff08d6afdb7"
 dependencies = [
  "fixedbitset",
  "indexmap",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -1212,14 +1214,20 @@ dependencies = [
  "litemsg",
  "log",
  "logging",
+ "mapreduce",
  "mio",
  "nethint",
+ "nhagent",
  "nix",
  "num_cpus",
+ "rand 0.8.3",
+ "rand_distr",
  "serde",
  "serde_bytes",
  "structopt",
  "thiserror",
+ "toml",
+ "zipf 7.0.0",
 ]
 
 [[package]]

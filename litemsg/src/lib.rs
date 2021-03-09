@@ -43,7 +43,7 @@ impl std::net::ToSocketAddrs for Node {
 pub fn accept_peers(
     controller_uri: &str,
     num_workers: usize,
-) -> anyhow::Result<HashMap<Node, TcpStream>> {
+) -> anyhow::Result<(TcpListener, HashMap<Node, TcpStream>)> {
     log::debug!("binding to controller_uri: {}", controller_uri);
     let listener = std::net::TcpListener::bind(controller_uri.clone()).expect(&controller_uri);
 
@@ -85,7 +85,7 @@ pub fn accept_peers(
         utils::send_cmd_sync(worker, &bcast_cmd).unwrap();
     }
 
-    Ok(workers)
+    Ok((listener, workers))
 }
 
 // nodes, my_node, controller, listener

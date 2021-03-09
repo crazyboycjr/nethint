@@ -7,6 +7,7 @@ use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, EdgeIndices, Graph, NodeIndex},
 };
+use serde::{Serialize, Deserialize};
 
 use crate::bandwidth::Bandwidth;
 use crate::brain::TenantId;
@@ -20,56 +21,6 @@ lazy_static! {
 pub type LinkIx = EdgeIndex;
 pub type NodeIx = NodeIndex;
 pub type LinkIxIter = EdgeIndices;
-
-// for serialize and deserialize
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SLinkIx(pub EdgeIndex);
-impl std::convert::Into<LinkIx> for SLinkIx {
-    fn into(self) -> LinkIx {
-        self.0
-    }
-}
-// impl std::ops::Deref for LinkIx {
-//     type Target = EdgeIndex;
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
-// impl std::ops::DerefMut for LinkIx {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         &mut self.0
-//     }
-// }
-impl serde::Serialize for SLinkIx {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        serializer.serialize_u64(self.0.index() as u64)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for SLinkIx {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::de::Deserializer<'de>,
-    {
-        let index = u64::deserialize(deserializer)?;
-        Ok(SLinkIx(LinkIx::new(index as usize)))
-    }
-}
-
-#[cfg(test)]
-
-mod tests {
-    use super::*;
-    #[test]
-    fn test_slink_ix() {
-        let slink_ix = SLinkIx(LinkIx::new(199));
-        let s = bincode::serialize(&slink_ix).unwrap();
-        let _o: SLinkIx = bincode::deserialize(&s).unwrap();
-    }
-}
 
 use std::ops::{Index, IndexMut};
 
@@ -127,7 +78,7 @@ impl std::fmt::Debug for Box<dyn Topology> {
 /// It works just as a Cluster.
 /// Ideally, it should be able to translate the virtual node to a physical node in the physical cluster.
 /// In our implementation, we just maintain the mapping of node name for the translation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtCluster {
     pub(crate) inner: Cluster,
     pub(crate) virt_to_phys: HashMap<String, String>,
@@ -230,7 +181,7 @@ impl Topology for VirtCluster {
 }
 
 /// The network topology and hardware configuration of the cluster.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Cluster {
     graph: Graph<Node, Link>,
     node_map: HashMap<String, NodeIndex>,
@@ -467,7 +418,7 @@ impl Topology for Cluster {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Link {
     id: usize,
     pub bandwidth: Bandwidth,
@@ -505,13 +456,13 @@ impl std::hash::Hash for Link {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NodeType {
     Host,
     Switch,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub name: String,
     pub depth: usize, // 1: core, 2: agg, 3: edge, 4: host
@@ -523,7 +474,7 @@ pub struct Node {
     pub(crate) counters: Counters,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Counters {
     pub(crate) tx_total: u64,
     pub(crate) rx_total: u64,

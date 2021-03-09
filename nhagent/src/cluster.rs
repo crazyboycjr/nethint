@@ -13,10 +13,11 @@ use nethint::{
 use crate::sampler::EthAddr;
 use crate::Role;
 
-const NRACKS: usize = 2;
-const RACK_SIZE: usize = 3;
-const RACK_BW: f64 = 100.0;
-const HOST_BW: f64 = 100.0;
+pub const NRACKS: usize = 2;
+pub const RACK_SIZE: usize = 3;
+pub const RACK_BW: f64 = 100.0;
+pub const HOST_BW: f64 = 100.0;
+pub const MAX_SLOTS: usize = 4;
 
 lazy_static! {
     static ref HOSTNAME: String = crate::utils::get_command_output(Command::new("hostname"))

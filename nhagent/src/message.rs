@@ -1,5 +1,8 @@
-use crate::{sampler::CounterUnit, sampler::EthAddr};
-use nethint::cluster::SLinkIx;
+use crate::sampler::EthAddr;
+
+use nethint::{TenantId, hint::{NetHintV1Real, NetHintV2Real, NetHintVersion}};
+use nethint::counterunit::CounterUnit;
+use nethint::cluster::LinkIx;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -28,9 +31,28 @@ pub enum Message {
 
     /// send by worker, processed by rack leader
     ServerChunk(Vec<CounterUnit>),
-    /// A potential problem here is that SLinkIx from different machines may not be compatible
+    /// A potential problem here is that LinkIx from different machines may not be compatible
     /// send by rack leader, processed by rack leader
-    RackChunk(HashMap<SLinkIx, Vec<CounterUnit>>),
+    RackChunk(HashMap<LinkIx, Vec<CounterUnit>>),
     /// send by rack leader, processed by worker
-    AllHints(HashMap<SLinkIx, Vec<CounterUnit>>),
+    AllHints(HashMap<LinkIx, Vec<CounterUnit>>),
+
+    /// send by app, processed by rack leader, 
+    /// forward by rack leader, processed by global leader
+    /// in practice, we skip the forwarding pass
+    /// tenant_id, nhosts
+    ProvisionRequest(TenantId, usize),
+    /// send by global leader, processed by rack leader
+    /// forward by rack leader, processed by app
+    /// in practice, we skip the forwarding pass
+    /// tenant_id, hintv1
+    ProvisionResponse(TenantId, NetHintV1Real),
+    /// send by app, processed by global leader
+    DestroyRequest(TenantId),
+    /// send by global leader, processed by app
+    DestroyResponse(TenantId),
+    /// send by app, processed by rack/global leader leader
+    NetHintRequest(TenantId, NetHintVersion),
+    /// send by rack/global leader, processed by app
+    NetHintResponse(TenantId, NetHintV2Real),
 }

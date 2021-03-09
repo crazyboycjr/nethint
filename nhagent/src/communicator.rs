@@ -2,7 +2,7 @@ use crate::message;
 use crate::{Node, Role};
 use litemsg::endpoint;
 use std::collections::HashMap;
-use std::net::TcpStream;
+use std::net::{TcpStream, TcpListener};
 
 pub struct Communicator {
     my_rank: usize,
@@ -10,8 +10,14 @@ pub struct Communicator {
     nodes: Vec<Node>,
     peers: Vec<endpoint::Endpoint>,
 
+    listener: TcpListener,
     controller: TcpStream,
+    // only rack leader has these fields set to Some
     workers: Option<HashMap<Node, TcpStream>>,
+    controller_listener: Option<mio::net::TcpListener>,
+
+    // only for controller/global leader
+    apps: Vec<endpoint::Endpoint>,
 }
 
 impl Communicator {
@@ -45,14 +51,24 @@ impl Communicator {
             .map(|b| b.readable(true).writable(true).build().unwrap())
             .collect();
 
-        let workers = handle.join().unwrap();
+        let ret = handle.join().unwrap();
+        let (controller_listener, workers) = if ret.is_some() {
+            let t = ret.unwrap();
+            let listener = mio::net::TcpListener::from_std(t.0)?;
+            (Some(listener), Some(t.1))
+        } else {
+            (None, None)
+        };
         Ok(Communicator {
             my_rank,
             my_role,
             nodes,
             peers,
+            listener,
             controller,
             workers,
+            controller_listener,
+            apps: Vec::new(),
         })
     }
 
@@ -66,6 +82,10 @@ impl Communicator {
 
     pub fn my_role(&self) -> Role {
         self.my_role
+    }
+
+    pub fn controller_listener(&self) -> Option<&mio::net::TcpListener> {
+        self.controller_listener.as_ref()
     }
 
     pub fn peer(&self, rank: usize) -> &endpoint::Endpoint {
@@ -86,8 +106,26 @@ impl Communicator {
         }
     }
 
+    pub fn app_ep(&self, rank: usize) -> &endpoint::Endpoint {
+        assert_eq!(self.my_role, Role::RackLeader);
+        assert!(rank > self.world_size(), "rank: {}", rank);
+        &self.apps[rank - self.world_size() - 1]
+    }
+
+    pub fn app_ep_mut(&mut self, rank: usize) -> &mut endpoint::Endpoint {
+        assert_eq!(self.my_role, Role::RackLeader);
+        assert!(rank > self.world_size(), "rank: {}", rank);
+        let pos= rank - self.world_size() - 1;
+        &mut self.apps[pos]
+    }
+
     pub fn send_to(&mut self, rank: usize, msg: &message::Message) -> anyhow::Result<()> {
-        let ep = self.peer_mut(rank);
+        assert!(rank != self.world_size());
+        let ep = if rank < self.world_size() {
+            self.peer_mut(rank)
+        } else {
+            self.app_ep_mut(rank)
+        };
         ep.post(msg, None)
     }
 
@@ -137,6 +175,28 @@ impl Communicator {
                 _ => panic!("msg: {:?}", msg),
             }
         }
+        Ok(())
+    }
+
+    pub fn accept_app_connection(&mut self, poll: &mio::Poll) -> anyhow::Result<()> {
+        assert_eq!(self.my_role, Role::RackLeader);
+        let (client, addr) = self.controller_listener().unwrap().accept_std()?;
+
+        log::debug!("controller accepts an incoming connection from app addr: {}", addr);
+
+        let builder = endpoint::Builder::new()
+            .stream(client)
+            .readable(true)
+            .writable(true)
+            .node(addr.to_string().parse().unwrap());
+        let ep = builder.build().unwrap();
+        poll.register(
+            ep.stream(),
+            mio::Token(self.world_size() + self.apps.len() + 1),
+            ep.interest(),
+            mio::PollOpt::level(),
+        )?;
+        self.apps.push(ep);
         Ok(())
     }
 }

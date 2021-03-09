@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 lazy_static = "1.4.0"
 log = "0.4.11"
-petgraph = "0.5.1"
+petgraph = { version = "0.5.1", features = ["serde-1"] }
 fnv = "1.0.7"
 indexmap = "1.6.0"
 structopt = "0.3.21"

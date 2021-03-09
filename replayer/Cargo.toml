@@ -15,10 +15,16 @@ serde = { version = "1.0.123", features = ["derive"] }
 logging = { path = "../logging" }
 nethint = { path = "../nethint" }
 litemsg = { path = "../litemsg" }
+mapreduce = { path = "../mapreduce" }
+nhagent = { path = "../nhagent" }
 structopt = "0.3.21"
 nix = "0.19.1"
 serde_bytes = "0.11.5"
 num_cpus = "1.13.0"
+rand = "0.8.3"
+rand_distr = "0.4.0"
+toml = "0.5.8"
+zipf = "7.0.0"
 
 [dependencies.mio]
 version = "0.6.23"

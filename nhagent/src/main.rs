@@ -1,15 +1,21 @@
 #![feature(option_unwrap_none)]
 #![feature(map_into_keys_values)]
 
-use nethint::cluster::{LinkIx, SLinkIx, Topology};
+use nethint::{
+    brain::{BrainSetting, PlacementStrategy},
+    cluster::{LinkIx, Topology},
+    counterunit::CounterUnit,
+    hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
+};
 use nhagent::{
     self,
     cluster::{hostname, CLUSTER},
     communicator::Communicator,
-    sampler::CounterUnit,
     Role,
 };
-use std::{borrow::Borrow, sync::mpsc};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::mpsc;
 
 use anyhow::Result;
 
@@ -21,6 +27,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
 
 use nhagent::message;
+
+use nethint::brain::Brain;
 
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 
@@ -68,7 +76,7 @@ fn main_loop(
     use message::Message;
     {
         let msg =
-            Message::DeclareEthHostTable(CLUSTER.borrow().lock().unwrap().eth_hostname().clone());
+            Message::DeclareEthHostTable(CLUSTER.lock().unwrap().eth_hostname().clone());
         log::debug!("broadcasting: {:?}", msg);
         comm.broadcast(&msg)?;
     }
@@ -92,6 +100,17 @@ fn main_loop(
         log::trace!("registering ep[{}].interest: {:?}", i, ep.interest());
         let interest = ep.interest();
         poll.register(ep.stream(), mio::Token(i), interest, mio::PollOpt::level())?;
+    }
+
+    // if this is a global leader, also add the controller listener to serve cloud provision request
+    if comm.my_role() == Role::GlobalLeader {
+        let listener = comm.controller_listener().unwrap();
+        poll.register(
+            listener,
+            mio::Token(comm.world_size()),
+            mio::Ready::readable(),
+            mio::PollOpt::level(),
+        )?;
     }
 
     let interval = std::time::Duration::from_millis(interval_ms);
@@ -126,10 +145,22 @@ fn main_loop(
 
         for event in events.iter() {
             let rank = event.token().0;
-            assert!(rank < comm.world_size());
+
+            if rank == comm.world_size() {
+                // it must be the controller listener wants to accept new connections
+                assert!(event.readiness().is_readable());
+                comm.accept_app_connection(&poll)?;
+                continue;
+            }
+
             assert!(rank != comm.my_rank());
 
-            let ep = comm.peer_mut(rank);
+            let ep = if rank > comm.world_size() {
+                // it must be the controller, and the request comes from the apps
+                comm.app_ep_mut(rank)
+            } else {
+                comm.peer_mut(rank)
+            };
 
             if event.readiness().is_writable() {
                 match ep.on_send_ready() {
@@ -168,14 +199,32 @@ fn main_loop(
 struct Handler {
     traffic: HashMap<LinkIx, Vec<CounterUnit>>,
     rank_hostname: HashMap<usize, String>,
+    brain: Rc<RefCell<Brain>>,
 }
 
 impl Handler {
     fn new(comm: &mut Communicator) -> Self {
+        let brain_setting = BrainSetting {
+            seed: 1,
+            asymmetric: false,
+            broken: 0.0,
+            max_slots: nhagent::cluster::MAX_SLOTS,
+            sharing_mode: nethint::SharingMode::Guaranteed,
+            guaranteed_bandwidth: Some(25),
+            topology: nethint::architecture::TopoArgs::Arbitrary {
+                nracks: nhagent::cluster::NRACKS,
+                rack_size: nhagent::cluster::RACK_SIZE,
+                host_bw: nhagent::cluster::HOST_BW,
+                rack_bw: nhagent::cluster::RACK_BW,
+            },
+            background_flow_high_freq: Default::default(),
+        };
+        let brain = Brain::build_cloud(brain_setting);
         Handler {
-            traffic: Default::default(),
+            traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
             rank_hostname: std::iter::once((comm.my_rank(), nhagent::cluster::hostname().clone()))
                 .collect(),
+            brain,
         }
     }
 
@@ -226,7 +275,7 @@ impl Handler {
             .entry(rack_uplink)
             .or_insert(vec![CounterUnit::new(rack_name)]);
         for c in &chunk {
-            use nhagent::sampler::CounterType::*;
+            use nethint::counterunit::CounterType::*;
             dataunit[0].data[Tx] += c.data[Tx] - c.data[TxIn];
             dataunit[0].data[Rx] += c.data[Rx] - c.data[RxIn];
         }
@@ -257,11 +306,10 @@ impl Handler {
         ret.into_values().collect()
     }
 
-    // Assume SLinkIx from different agents are compatible with each other
-    fn receive_rack_chunk(&mut self, chunk: HashMap<SLinkIx, Vec<CounterUnit>>) {
+    // Assume LinkIx from different agents are compatible with each other
+    fn receive_rack_chunk(&mut self, chunk: HashMap<LinkIx, Vec<CounterUnit>>) {
         // 1. parse chunk, aggregate
         for (l, c) in chunk {
-            let l: LinkIx = l.into();
             if self.traffic.contains_key(&l) {
                 *self.traffic.get_mut(&l).unwrap() = Self::merge_chunk(&self.traffic[&l], &c);
             } else {
@@ -296,11 +344,7 @@ impl Handler {
             )
             .unwrap_none();
         // 2. send to all other rack leaders
-        let my_rack_traffic_ser = my_rack_traffic
-            .into_iter()
-            .map(|(k, v)| (SLinkIx(k), v))
-            .collect();
-        let msg = message::Message::RackChunk(my_rack_traffic_ser);
+        let msg = message::Message::RackChunk(my_rack_traffic);
         for i in 0..comm.world_size() {
             if i == comm.my_rank() {
                 continue;
@@ -319,11 +363,7 @@ impl Handler {
     fn send_allhints(&self, comm: &mut Communicator) -> anyhow::Result<()> {
         assert!(comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader);
         let pcluster = CLUSTER.lock().unwrap();
-        let chunk = self
-            .traffic
-            .iter()
-            .map(|(&k, v)| (SLinkIx(k), v.clone()))
-            .collect();
+        let chunk = self.traffic.iter().map(|(&k, v)| (k, v.clone())).collect();
         let msg = message::Message::AllHints(chunk);
         // send to all workers within the same rack
         let my_node_ix = pcluster.my_node_ix();
@@ -344,7 +384,7 @@ impl Handler {
 
     fn receive_allhints(
         &mut self,
-        allhints: HashMap<SLinkIx, Vec<CounterUnit>>,
+        allhints: HashMap<LinkIx, Vec<CounterUnit>>,
     ) -> anyhow::Result<()> {
         let pcluster = CLUSTER.lock().unwrap();
         let my_role = pcluster.get_my_role();
@@ -371,7 +411,7 @@ impl Handler {
             }
             DeclareEthHostTable(table) => {
                 // merge table from other hosts
-                let mut pcluster = CLUSTER.borrow().lock().unwrap();
+                let mut pcluster = CLUSTER.lock().unwrap();
                 pcluster.update_eth_hostname(table);
             }
             DeclareHostname(hostname) => {
@@ -391,7 +431,50 @@ impl Handler {
             AllHints(allhints) => {
                 self.receive_allhints(allhints)?;
             }
-            SyncRequest(_) | SyncResponse(_) => panic!("impossible"),
+            // serve as cloud brain, by global leader
+            ProvisionRequest(tenant_id, nhosts_to_acquire) => {
+                // connect the code to Brain, provision VMs, return the vcluster
+                let vc = self
+                    .brain
+                    .borrow_mut()
+                    .provision(tenant_id, nhosts_to_acquire, PlacementStrategy::Compact)
+                    .unwrap();
+                let hintv1 = NetHintV1Real { vc };
+                let msg = ProvisionResponse(tenant_id, hintv1);
+                comm.send_to(sender_rank, &msg)?;
+            }
+            DestroyRequest(tenant_id) => {
+                // destroy and release the resource immediately in testbed
+                self.brain.borrow_mut().destroy(tenant_id);
+                self.brain.borrow_mut().garbage_collect(tenant_id + 1);
+                let msg = DestroyResponse(tenant_id);
+                comm.send_to(sender_rank, &msg)?;
+            }
+            NetHintRequest(tenant_id, version) => {
+                assert!(
+                    version == NetHintVersion::V2,
+                    "requested version: {:?}",
+                    version
+                );
+                // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
+                let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();
+                let mut vc = (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
+                for vlink_ix in vc.all_links() {
+                    let phys_link =
+                        nethint::hint::get_phys_link(&*self.brain.borrow(), tenant_id, vlink_ix);
+                    let traffic_on_link = self.traffic[&phys_link].clone();
+                    traffic.insert(vlink_ix, traffic_on_link);
+                    // set vc.bandwidth to the value of physical links
+                    vc[vlink_ix].bandwidth = self.brain.borrow().cluster()[phys_link].bandwidth;
+                }
+                let hintv2 = NetHintV2Real { vc, traffic };
+                let msg = NetHintResponse(tenant_id, hintv2);
+                comm.send_to(sender_rank, &msg)?;
+            }
+            SyncRequest(_) | SyncResponse(_) | ProvisionResponse(..) | NetHintResponse(..)
+            | DestroyResponse(_) => {
+                panic!("shouldn't receive this msg: {:?}", msg);
+            }
         }
 
         Ok(())
