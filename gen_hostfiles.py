@@ -1,4 +1,4 @@
-import sys
+import os, sys
 import random
 
 filename = sys.argv[1]
