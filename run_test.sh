@@ -9,6 +9,6 @@ mkdir -p $log_dir
 
 for ((i=0;i<$1;i++))
 do
-  ./rplaunch --controller-ssh 192.168.211.35 --controller-uri 192.168.211.35:9000 --hostfile hostfiles/$i --jobname mapreduce 2>&1 | tee $log_dir/$i &
+  ./rplaunch --controller-ssh 192.168.211.35 --controller-uri 192.168.211.35:9000 --hostfile hostfiles/$i --jobname mapreduce --config allreduce_tomls/$i.toml 2>&1 | tee $log_dir/$i &
   sleep 10
 done
