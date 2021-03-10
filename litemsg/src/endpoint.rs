@@ -24,7 +24,7 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Copy, Default)]
-struct MsgLength(u64, u64);
+pub struct MsgLength(pub u64, pub u64);
 
 // the length of meta must be known and fixed
 static_assertions::assert_eq_size!(MsgLength, [u8; 16]);

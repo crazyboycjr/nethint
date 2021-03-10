@@ -38,6 +38,10 @@ struct Opt {
     /// Controller ssh address
     #[structopt(long)]
     controller_ssh: String,
+
+    /// Brain/nethint agent global leader URI, corresponding to NH_CONTROLLER_URI env
+    #[structopt(long)]
+    brain_uri: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -83,7 +87,10 @@ impl std::fmt::Display for Role {
 
 fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnce() -> () {
     let output_dir = opt.output.clone();
-    let env_str = envs.join(" ");
+    let mut env_str = envs.join(" ");
+    if role == Role::Controller {
+        env_str.push_str(&format!(" NH_CONTROLLER_URI={} ", opt.brain_uri));
+    }
     let s = format!("--app {} --config {}", opt.jobname, opt.configfile);
 
     move || {

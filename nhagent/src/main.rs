@@ -144,6 +144,7 @@ fn main_loop(
 
         for event in events.iter() {
             let rank = event.token().0;
+            // log::debug!("handle event from rank: {}", rank);
 
             if rank == comm.world_size() {
                 // it must be the controller listener wants to accept new connections
@@ -162,6 +163,7 @@ fn main_loop(
             };
 
             if event.readiness().is_writable() {
+                // log::debug!("handle write event for rank: {}", rank);
                 match ep.on_send_ready() {
                     Ok(attachment) => {
                         handler.on_send_complete(attachment)?;
@@ -174,9 +176,9 @@ fn main_loop(
                 }
             }
             if event.readiness().is_readable() {
+                // klog::debug!("handle read event for rank: {}", rank);
                 match ep.on_recv_ready() {
                     Ok((cmd, _)) => {
-                        std::mem::drop(ep);
                         handler.on_recv_complete(cmd, rank, comm)?;
                     }
                     Err(endpoint::Error::WouldBlock) => {}
@@ -419,6 +421,7 @@ impl Handler {
         comm: &mut Communicator,
     ) -> anyhow::Result<()> {
         use message::Message::*;
+        log::debug!("on_recv_complete, sender_rank: {} msg: {:?}", sender_rank, msg);
         match msg {
             AppFinish => {
                 TERMINATE.store(true, SeqCst);

@@ -41,6 +41,7 @@ fn main() -> anyhow::Result<()> {
 
     let brain_uri = std::env::var("NH_CONTROLLER_URI").expect("NH_CONTROLLER_URI");
     let brain = litemsg::utils::connect_retry(&brain_uri, 5)?;
+    log::info!("connected to brain at {}", brain_uri);
 
     let brain = endpoint::Builder::new()
         .stream(brain)
@@ -221,8 +222,8 @@ impl Handler {
                 self.num_remaining -= 1;
                 if self.num_remaining == 0 {
                     // send request to destroy VMs
-                    let msg = nhagent::message::Message::DestroyRequest(app.tenant_id());
-                    app.brain_mut().post(msg, None)?;
+                    // let msg = nhagent::message::Message::DestroyRequest(app.tenant_id());
+                    // app.brain_mut().post(msg, None)?;
                 }
             }
             BrainResponse(msg) => {

@@ -1212,6 +1212,7 @@ dependencies = [
  "allreduce",
  "anyhow",
  "bincode",
+ "lazy_static",
  "litemsg",
  "log",
  "logging",

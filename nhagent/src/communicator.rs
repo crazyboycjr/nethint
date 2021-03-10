@@ -107,15 +107,15 @@ impl Communicator {
     }
 
     pub fn app_ep(&self, rank: usize) -> &endpoint::Endpoint {
-        assert_eq!(self.my_role, Role::RackLeader);
+        assert_eq!(self.my_role, Role::GlobalLeader);
         assert!(rank > self.world_size(), "rank: {}", rank);
         &self.apps[rank - self.world_size() - 1]
     }
 
     pub fn app_ep_mut(&mut self, rank: usize) -> &mut endpoint::Endpoint {
-        assert_eq!(self.my_role, Role::RackLeader);
+        assert_eq!(self.my_role, Role::GlobalLeader);
         assert!(rank > self.world_size(), "rank: {}", rank);
-        let pos= rank - self.world_size() - 1;
+        let pos = rank - self.world_size() - 1;
         &mut self.apps[pos]
     }
 
@@ -179,7 +179,7 @@ impl Communicator {
     }
 
     pub fn accept_app_connection(&mut self, poll: &mio::Poll) -> anyhow::Result<()> {
-        assert_eq!(self.my_role, Role::RackLeader);
+        assert_eq!(self.my_role, Role::GlobalLeader);
         let (client, addr) = self.controller_listener().unwrap().accept_std()?;
 
         log::debug!("controller accepts an incoming connection from app addr: {}", addr);
@@ -189,14 +189,18 @@ impl Communicator {
             .readable(true)
             .writable(true)
             .node(addr.to_string().parse().unwrap());
+        log::debug!("accept_app_connect 1");
         let ep = builder.build().unwrap();
+        log::debug!("accept_app_connect 2");
         poll.register(
             ep.stream(),
             mio::Token(self.world_size() + self.apps.len() + 1),
             ep.interest(),
             mio::PollOpt::level(),
         )?;
+        log::debug!("accept_app_connect 3");
         self.apps.push(ep);
+        log::debug!("accept_app_connect 4");
         Ok(())
     }
 }

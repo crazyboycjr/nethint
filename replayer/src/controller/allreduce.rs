@@ -223,6 +223,7 @@ impl AllreduceApp {
         if self.cluster.is_none() {
             // self.request_provision()?;
             let version = match self.setting.nethint_level {
+                0 => NetHintVersion::V1,
                 1 => NetHintVersion::V1,
                 2 => NetHintVersion::V2,
                 _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
