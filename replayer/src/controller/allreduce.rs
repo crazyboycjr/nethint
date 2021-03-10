@@ -251,7 +251,7 @@ impl AllreduceApp {
 
             let flow = Flow::new(size, src_node.clone(), dst_node.clone(), None);
             let cmd = message::Command::EmitFlow(flow);
-            log::debug!("mapreduce::run, cmd: {:?}", cmd);
+            log::debug!("allreduce::run, cmd: {:?}", cmd);
             let endpoint = self.workers.get_mut(src_node).unwrap();
             endpoint.post(cmd, None)?;
 

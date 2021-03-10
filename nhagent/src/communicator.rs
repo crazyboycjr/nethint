@@ -189,18 +189,14 @@ impl Communicator {
             .readable(true)
             .writable(true)
             .node(addr.to_string().parse().unwrap());
-        log::debug!("accept_app_connect 1");
         let ep = builder.build().unwrap();
-        log::debug!("accept_app_connect 2");
         poll.register(
             ep.stream(),
             mio::Token(self.world_size() + self.apps.len() + 1),
             ep.interest(),
             mio::PollOpt::level(),
         )?;
-        log::debug!("accept_app_connect 3");
         self.apps.push(ep);
-        log::debug!("accept_app_connect 4");
         Ok(())
     }
 }

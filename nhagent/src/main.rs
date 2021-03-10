@@ -119,24 +119,27 @@ fn main_loop(
     let timeout = std::time::Duration::from_millis(1);
 
     while !TERMINATE.load(SeqCst) {
-        for v in rx.try_iter() {
-            for c in &v {
-                log::info!("counterunit: {:?}", c);
-            }
-            // receive from local sampler module
-            handler.receive_server_chunk(comm.my_rank(), v);
-        }
 
         let now = std::time::Instant::now();
         if now >= last_tp + interval {
             // it's not very explicit why this is is correct or not, need more thinking on this
+            handler.reset_traffic();
+
+            for v in rx.try_iter() {
+                for c in &v {
+                    log::info!("counterunit: {:?}", c);
+                }
+                // receive from local sampler module
+                handler.receive_server_chunk(comm.my_rank(), v);
+            }
+
             if comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader {
                 handler.send_allhints(comm)?;
                 handler.send_rack_chunk(comm)?;
             } else {
                 handler.send_server_chunk(comm)?;
             }
-            handler.reset_traffic();
+
             last_tp = now;
         }
 
@@ -421,7 +424,7 @@ impl Handler {
         comm: &mut Communicator,
     ) -> anyhow::Result<()> {
         use message::Message::*;
-        log::debug!("on_recv_complete, sender_rank: {} msg: {:?}", sender_rank, msg);
+        log::trace!("on_recv_complete, sender_rank: {} msg: {:?}", sender_rank, msg);
         match msg {
             AppFinish => {
                 TERMINATE.store(true, SeqCst);

@@ -40,6 +40,7 @@ fn main() -> anyhow::Result<()> {
         litemsg::accept_peers(&controller_uri, num_workers)?;
 
     let brain_uri = std::env::var("NH_CONTROLLER_URI").expect("NH_CONTROLLER_URI");
+    log::info!("connecting to brain: {}", brain_uri);
     let brain = litemsg::utils::connect_retry(&brain_uri, 5)?;
     log::info!("connected to brain at {}", brain_uri);
 
@@ -224,6 +225,7 @@ impl Handler {
                     // send request to destroy VMs
                     // let msg = nhagent::message::Message::DestroyRequest(app.tenant_id());
                     // app.brain_mut().post(msg, None)?;
+                    return Ok(true);
                 }
             }
             BrainResponse(msg) => {
