@@ -1,10 +1,11 @@
 use crate::{message, Flow, Node};
-use crate::controller::ProbeConfig;
 use litemsg::endpoint::Endpoint;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::controller::app::Application;
 use mapreduce::{
+    config::ProbeConfig,
     mapper::{
         GreedyMapperScheduler, MapperPlacementPolicy, RandomMapperScheduler,
         RandomSkewMapperScheduler, TraceMapperScheduler,
@@ -16,12 +17,11 @@ use mapreduce::{
 };
 use nethint::{
     cluster::Topology,
-    hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
+    hint::{NetHintV2Real, NetHintVersion},
     TenantId,
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use crate::controller::app::Application;
 
 /// see mapreduce/experiment.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,7 +202,6 @@ impl Application for MapReduceApp {
         Ok(())
     }
 }
-
 
 impl MapReduceApp {
     fn generate_shuffle(&mut self, seed: u64) -> Shuffle {

@@ -170,11 +170,15 @@ impl std::str::FromStr for OvsFlow {
                             .map_err(ovs_flow_field_err_handler!("bytes"))?
                     }
                     "used" => {
-                        ovs_flow.used = value
-                            .strip_suffix("s")
-                            .ok_or(OvsFlowParseError::ParseUsed(value.to_owned()))?
-                            .parse()
-                            .map_err(ovs_flow_field_err_handler!("used"))?;
+                        if value == "never" {
+                            ovs_flow.used = 0.0;
+                        } else {
+                            ovs_flow.used = value
+                                .strip_suffix("s")
+                                .ok_or(OvsFlowParseError::ParseUsed(value.to_owned()))?
+                                .parse()
+                                .map_err(ovs_flow_field_err_handler!("used"))?;
+                        }
                     }
                     _ => {
                         log::trace!("parse ovs flow second part, ignoring {} {}", key, value);

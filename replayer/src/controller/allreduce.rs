@@ -1,18 +1,18 @@
 use crate::controller::app::Application;
-use crate::controller::ProbeConfig;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, SeedableRng};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use allreduce::{
     random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
+    config::ProbeConfig,
 };
 
 use nethint::{
-    bandwidth::{self, Bandwidth, BandwidthTrait},
+    bandwidth::{Bandwidth, BandwidthTrait},
     cluster::{Topology, VirtCluster, LinkIx},
     counterunit::{CounterType, CounterUnit},
     hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
@@ -20,48 +20,22 @@ use nethint::{
 };
 use serde::{Deserialize, Serialize};
 
-use rand_distr::{Distribution, Poisson};
-
-fn get_random_job_size(job_size_dist: &[(usize, usize)], rng: &mut StdRng) -> usize {
-    // let job_sizes = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]];
-    let total: usize = job_size_dist.iter().map(|x| x.0).sum();
-    assert_ne!(total, 0);
-
-    let mut n = rng.gen_range(0..total);
-    let mut i = 0;
-    while i < job_size_dist.len() {
-        if n < job_size_dist[i].0 {
-            return job_size_dist[i].1;
-        }
-        n -= job_size_dist[i].0;
-        i += 1;
-    }
-
-    // default
-    32
-}
-
-fn get_random_arrival_time(lambda: f64, rng: &mut StdRng) -> u64 {
-    let poi = Poisson::new(lambda).unwrap();
-    poi.sample(rng) as u64
-}
-
-/// see allreduce/experiment.rs
+/// see allreduce/config.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AllreduceSetting {
-    job_id: usize, // which item in trace
-    job_size_distribution: Vec<(usize, usize)>,
-    buffer_size: usize,
-    num_iterations: usize,
-    poisson_lambda: f64,
-    seed_base: u64,
-    traffic_scale: f64,
-    allreduce_policy: AllReducePolicy,
-    probe: ProbeConfig,
-    nethint_level: usize,
+    pub job_id: usize, // which item in trace
+    pub job_size_distribution: Vec<(usize, usize)>,
+    pub buffer_size: usize,
+    pub num_iterations: usize,
+    pub poisson_lambda: f64,
+    pub seed_base: u64,
+    pub traffic_scale: f64,
+    pub allreduce_policy: AllReducePolicy,
+    pub probe: ProbeConfig,
+    pub nethint_level: usize,
     #[serde(default)]
-    auto_tune: Option<usize>,
+    pub auto_tune: Option<usize>,
 }
 
 pub struct AllreduceAppBuilder {
@@ -86,25 +60,17 @@ impl AllreduceAppBuilder {
         }
     }
 
-    fn load_config_from_file(&self) -> AllreduceSetting {
-        use std::io::Read;
-        let mut file = std::fs::File::open(&self.config_path).expect("fail to open file");
-        let mut content = String::new();
-        file.read_to_string(&mut content).unwrap();
-        toml::from_str(&content).expect("parse failed")
-    }
-
     fn get_job_spec(setting: &AllreduceSetting) -> JobSpec {
         let mut rng = StdRng::seed_from_u64(setting.seed_base);
         let mut t = 0;
         let mut jobs = Vec::new();
         for i in 0..setting.job_id + 1 {
             let job_spec = JobSpec::new(
-                get_random_job_size(&setting.job_size_distribution, &mut rng),
+                allreduce::config::get_random_job_size(&setting.job_size_distribution, &mut rng),
                 setting.buffer_size,
                 setting.num_iterations,
             );
-            let next = get_random_arrival_time(setting.poisson_lambda, &mut rng);
+            let next = allreduce::config::get_random_arrival_time(setting.poisson_lambda, &mut rng);
             t += next;
             log::info!("job {}: {:?}", i, job_spec);
             jobs.push((t, job_spec));
@@ -114,7 +80,7 @@ impl AllreduceAppBuilder {
     }
 
     pub fn build(self) -> AllreduceApp {
-        let setting = self.load_config_from_file();
+        let setting = allreduce::config::read_config(&self.config_path);
         log::info!("allreduce setting: {:?}", setting);
         let job_spec = Self::get_job_spec(&setting);
         let seed = setting.seed_base;

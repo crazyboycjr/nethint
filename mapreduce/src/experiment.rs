@@ -1,21 +1,22 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 
 use nethint::{
     app::{AppGroup, Application},
-    brain::{self, Brain, BrainSetting},
+    brain::Brain,
     cluster::Topology,
     multitenant::Tenant,
-    simulator::{Executor, SimulatorBuilder, SimulatorSetting},
+    simulator::{Executor, SimulatorBuilder},
 };
 
 use mapreduce::{
     app::MapReduceApp, mapper::MapperPlacementPolicy, plink::PlinkApp, trace::JobTrace, JobSpec,
-    ReducerPlacementPolicy, ShufflePattern,
+    ShufflePattern,
 };
+
+use mapreduce::config::{read_config, ExperimentConfig};
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce Experiment", about = "MapReduce Experiment")]
@@ -27,80 +28,6 @@ pub struct Opt {
     /// The maximal concurrency to run the batches
     #[structopt(short = "P", long = "parallel")]
     pub parallel: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct ProbeConfig {
-    enable: bool,
-    #[serde(default)]
-    round_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BatchConfig {
-    /// Reducer placement policy
-    reducer_policy: ReducerPlacementPolicy,
-    /// whether to use plink
-    probe: ProbeConfig,
-    /// Nethint level.
-    nethint_level: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExperimentConfig {
-    /// Run experiments from trace file
-    #[serde(default)]
-    trace: Option<std::path::PathBuf>,
-
-    /// Number of testcases
-    ncases: usize,
-
-    /// Number of map tasks. When using trace, this parameter means map scale factor
-    num_map: usize,
-
-    /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
-    num_reduce: usize,
-
-    /// Traffic scale, multiply the traffic size by a number to allow job overlaps
-    traffic_scale: f64,
-
-    /// Mapper placement policy
-    mapper_policy: MapperPlacementPolicy,
-
-    /// akin to AWS Placement Group
-    placement_strategy: brain::PlacementStrategy,
-
-    /// Collocate or De-collocate
-    collocate: bool,
-
-    /// Number of repeats for each batch of experiments
-    batch_repeat: usize,
-
-    #[serde(rename = "batch")]
-    batches: Vec<BatchConfig>,
-
-    /// Output path of the figure
-    #[serde(default)]
-    directory: Option<std::path::PathBuf>,
-
-    /// Simulator settings
-    simulator: SimulatorSetting,
-
-    /// Brain settings
-    brain: BrainSetting,
-
-    /// Environment variables
-    #[serde(default)]
-    envs: toml::value::Table,
-}
-
-fn read_config<P: AsRef<std::path::Path>>(path: P) -> ExperimentConfig {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).expect("fail to open file");
-    let mut content = String::new();
-    file.read_to_string(&mut content).unwrap();
-    toml::from_str(&content).expect("parse failed")
 }
 
 fn set_env_vars(config: &ExperimentConfig) {
@@ -130,7 +57,10 @@ fn main() {
 
     // set rayon max concurrency
     log::info!("using {} threads", opt.parallel);
-    rayon::ThreadPoolBuilder::new().num_threads(opt.parallel).build_global().unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(opt.parallel)
+        .build_global()
+        .unwrap();
 
     let brain = Brain::build_cloud(config.brain.clone());
 
@@ -163,12 +93,22 @@ fn main() {
         let brain_clone = brain.borrow().replicate_for_multithread();
         (0..batch_repeat).into_par_iter().for_each(move |trial_id| {
             let brain_clone = brain_clone.replicate_for_multithread();
-            run_batch(&config_clone, i, trial_id, Rc::new(RefCell::new(brain_clone)));
+            run_batch(
+                &config_clone,
+                i,
+                trial_id,
+                Rc::new(RefCell::new(brain_clone)),
+            );
         });
     }
 }
 
-fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain: Rc<RefCell<Brain>>) {
+fn run_batch(
+    config: &ExperimentConfig,
+    batch_id: usize,
+    trial_id: usize,
+    brain: Rc<RefCell<Brain>>,
+) {
     let job_trace = config
         .trace
         .as_ref()

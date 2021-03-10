@@ -8,8 +8,8 @@ use std::process::Command;
 
 use structopt::StructOpt;
 
-use nethint::{cluster::Topology, hint::NetHintV1Real};
 use nethint::TenantId;
+use nethint::{cluster::Topology, hint::NetHintV1Real};
 use std::collections::HashMap;
 
 #[derive(Debug, StructOpt)]
@@ -17,7 +17,7 @@ use std::collections::HashMap;
     name = "scheduler",
     about = "Launch jobs in batch by calling rplaunch."
 )]
-struct Opt {
+pub struct Opt {
     /// Job name, used to isolate potential overlapped files
     #[structopt(short = "n", long = "jobname")]
     jobname: String,
@@ -133,7 +133,12 @@ fn generate_hostfile(hintv1: &NetHintV1Real, hostfile_path: &std::path::PathBuf)
     std::fs::write(hostfile_path, content.join("\n")).unwrap();
 }
 
-fn submit(opt: &Opt, job_id: usize) -> impl FnOnce() -> () {
+fn submit(
+    opt: &Opt,
+    job_id: usize,
+    nhosts: usize,
+    config_path: std::path::PathBuf,
+) -> impl FnOnce() -> () {
     let output_dir = opt.output.clone();
     let jobname = opt.jobname.clone();
     let brain_uri = opt.brain_uri.clone();
@@ -142,7 +147,7 @@ fn submit(opt: &Opt, job_id: usize) -> impl FnOnce() -> () {
         // send provision request to brain
         let mut brain = litemsg::utils::connect_retry(&brain_uri, 5).unwrap();
         let this_tenant_id = job_id;
-        let nhosts_to_acquire = 4;
+        let nhosts_to_acquire = nhosts;
         let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire).unwrap();
 
         // construct job config according to the provision result
@@ -155,15 +160,18 @@ fn submit(opt: &Opt, job_id: usize) -> impl FnOnce() -> () {
         hostfile_path.push("hostfile");
         generate_hostfile(&hintv1, &hostfile_path);
 
+        // select a host as controller
         let ipaddrs = get_ipaddrs(&hintv1);
         log::info!("job_id: {}, ipaddrs: {:?}", job_id, ipaddrs);
         let controller_ssh = ipaddrs[0].clone();
         let controller_uri = format!("{}:{}", ipaddrs[0], 9900);
 
+        job_output_dir.push("output");
+        std::fs::create_dir_all(&job_output_dir).expect("fail to create directory");
         let jobconfig = JobConfig {
             job_id,
             output_dir: job_output_dir,
-            config_path: "~/allreduce_single.toml".into(),
+            config_path: config_path.clone(),
             hostfile_path,
             controller_ssh,
             controller_uri,
@@ -239,16 +247,113 @@ fn submit(opt: &Opt, job_id: usize) -> impl FnOnce() -> () {
     }
 }
 
-fn schedule_jobs(opt: Opt) -> anyhow::Result<()> {
-    let mut handles = vec![];
+pub fn write_setting<T: serde::Serialize, P: AsRef<std::path::Path>>(setting: &T, path: P) {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path).expect("fail to create file");
+    let value = toml::Value::try_from(&setting).unwrap();
+    let content = value.to_string();
+    file.write_all(content.as_bytes()).unwrap();
+}
 
-    let handle = std::thread::spawn(submit(&opt, 0));
-    handles.push(handle);
+mod sched_allreduce {
+    use super::*;
+    use allreduce::config;
+    use allreduce::JobSpec;
+    use rand::{rngs::StdRng, SeedableRng};
 
-    for h in handles {
-        h.join()
-            .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
+    fn gen_job_specs(config: &config::ExperimentConfig) -> Vec<(u64, JobSpec)> {
+        let mut jobs = Vec::new();
+        let mut rng = StdRng::seed_from_u64(config.seed as u64);
+        let mut t = 0;
+        for i in 0..config.ncases {
+            let job_spec = JobSpec::new(
+                config::get_random_job_size(&config.job_size_distribution, &mut rng),
+                config.buffer_size,
+                config.num_iterations,
+            );
+            let next = config::get_random_arrival_time(config.poisson_lambda, &mut rng);
+            t += next;
+            log::info!("job {}: {:?}", i, job_spec);
+            jobs.push((t, job_spec));
+        }
+        jobs
     }
+
+    pub fn submit_jobs(opt: &Opt) {
+        let config: config::ExperimentConfig = config::read_config(&opt.configfile);
+
+        for batch_id in 0..config.batches.len() {
+            let mut handles = Vec::new();
+            let now0 = std::time::Instant::now();
+
+            let jobs = gen_job_specs(&config);
+            let batch = config.batches[batch_id].clone();
+            for i in 0..config.ncases {
+                let job_id = i;
+                let start_ts = jobs[i].0;
+
+                // prepare output directory
+                let mut job_output_dir = opt.output.clone();
+                job_output_dir.push(format!("{}_{}", opt.jobname, job_id));
+
+                if job_output_dir.exists() {
+                    // rm -r output_dir
+                    std::fs::remove_dir_all(&job_output_dir).unwrap();
+                }
+
+                std::fs::create_dir_all(&job_output_dir).expect("fail to create directory");
+
+                let setting = replayer::controller::allreduce::AllreduceSetting {
+                    job_id,
+                    job_size_distribution: config.job_size_distribution.clone(),
+                    buffer_size: config.buffer_size,
+                    num_iterations: config.num_iterations,
+                    poisson_lambda: config.poisson_lambda,
+                    seed_base: config.seed,
+                    traffic_scale: 1.0,
+                    allreduce_policy: batch.policy,
+                    probe: batch.probe.clone(),
+                    nethint_level: batch.nethint_level,
+                    auto_tune: batch.auto_tune,
+                };
+
+                let mut setting_path = job_output_dir.clone();
+                setting_path.push("setting.toml");
+
+                write_setting(&setting, &setting_path);
+
+                let now = std::time::Instant::now();
+                if now0 + std::time::Duration::from_nanos(start_ts) > now {
+                    std::thread::sleep(now0 + std::time::Duration::from_nanos(start_ts) - now);
+                }
+                handles.push(std::thread::spawn(submit(
+                    opt,
+                    job_id,
+                    jobs[i].1.num_workers,
+                    setting_path,
+                )));
+            }
+
+            for h in handles {
+                h.join()
+                    .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
+            }
+        }
+    }
+}
+
+fn schedule_jobs(opt: Opt) -> anyhow::Result<()> {
+    match opt.jobname.as_str() {
+        "allreduce" => {
+            sched_allreduce::submit_jobs(&opt);
+        }
+        _ => panic!("unknown job {}", opt.jobname),
+    };
+
+    // for h in handles {
+    //     h.join()
+    //         .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
+    // }
 
     Ok(())
 }
