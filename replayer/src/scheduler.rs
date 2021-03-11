@@ -125,7 +125,7 @@ fn submit(
     opt: &Opt,
     job_id: usize,
     nhosts: usize,
-    mut job_output_dir: std::path::PathBuf,
+    job_dir: std::path::PathBuf,
     config_path: std::path::PathBuf,
 ) -> impl FnOnce() -> () {
     let output_dir = opt.output.clone();
@@ -140,11 +140,10 @@ fn submit(
         let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire).unwrap();
 
         // construct job config according to the provision result
-        std::fs::create_dir_all(&job_output_dir).expect("fail to create directory");
+        std::fs::create_dir_all(&job_dir).expect("fail to create directory");
 
         // genenrate hostfile from hintv1
-        let mut hostfile_path = job_output_dir.clone();
-        hostfile_path.push("hostfile");
+        let hostfile_path = job_dir.join("hostfile");
         generate_hostfile(&hintv1, &hostfile_path);
 
         // select a host as controller
@@ -153,7 +152,7 @@ fn submit(
         let controller_ssh = ipaddrs[0].clone();
         let controller_uri = format!("{}:{}", ipaddrs[0], 9900);
 
-        job_output_dir.push("output");
+        let job_output_dir = job_dir.join("output");
         std::fs::create_dir_all(&job_output_dir).expect("fail to create directory");
         let jobconfig = JobConfig {
             job_id,
@@ -235,15 +234,14 @@ mod sched_allreduce {
                 let start_ts = jobs[i].0;
 
                 // prepare output directory
-                let mut job_output_dir = opt.output.clone();
-                job_output_dir.push(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
+                let job_dir = opt.output.join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
 
-                if job_output_dir.exists() {
+                if job_dir.exists() {
                     // rm -r output_dir
-                    std::fs::remove_dir_all(&job_output_dir).unwrap();
+                    std::fs::remove_dir_all(&job_dir).unwrap();
                 }
 
-                std::fs::create_dir_all(&job_output_dir).expect("fail to create directory");
+                std::fs::create_dir_all(&job_dir).expect("fail to create directory");
 
                 let setting = replayer::controller::allreduce::AllreduceSetting {
                     job_id,
@@ -259,8 +257,7 @@ mod sched_allreduce {
                     auto_tune: batch.auto_tune,
                 };
 
-                let mut setting_path = job_output_dir.clone();
-                setting_path.push("setting.toml");
+                let setting_path = job_dir.join("setting.toml");
 
                 write_setting(&setting, &setting_path);
 
@@ -272,7 +269,7 @@ mod sched_allreduce {
                     opt,
                     job_id,
                     jobs[i].1.num_workers,
-                    job_output_dir,
+                    job_dir,
                     setting_path,
                 )));
             }

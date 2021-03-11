@@ -4,16 +4,37 @@ use serde::{Deserialize, Serialize};
 
 const PORT: u16 = 9000;
 
+lazy_static::lazy_static! {
+    static ref OPTS: Opts = parse_opts();
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Message {
     Data,
 }
 
+#[derive(Debug, Clone, Default)]
+struct Opts {
+    bidirectional: bool,
+}
+
 fn usage() {
     let app = std::env::args().next().unwrap();
     println!("Usage:");
-    println!("  {} --server", app);
-    println!("  {} --client <addr>", app);
+    println!("  {} --server [options]", app);
+    println!("  {} --client <addr> [options]", app);
+    println!("Options:");
+    println!("  --bidirectional    bidirectional traffic");
+}
+
+fn parse_opts() -> Opts {
+    let mut opts = Opts::default();
+    for opt in std::env::args() {
+        if opt == "--bidirectional" {
+            opts.bidirectional = true;
+        }
+    }
+    opts
 }
 
 fn main() {
@@ -32,12 +53,20 @@ fn run_server() -> anyhow::Result<()> {
     let listener = std::net::TcpListener::bind(("0.0.0.0", PORT))?;
     let (stream, addr) = listener.accept()?;
     let poll = mio::Poll::new()?;
-    let endpoint = endpoint::Builder::new()
+    let mut endpoint = endpoint::Builder::new()
         .stream(stream)
         .readable(true)
         .writable(true)
         .node(addr.to_string().parse().unwrap())
         .build()?;
+
+    if OPTS.bidirectional {
+        let mut data = Vec::with_capacity(1_000_000);
+        unsafe {
+            data.set_len(data.capacity());
+        }
+        endpoint.post(Message::Data, Some(data))?;
+    }
     io_run(endpoint, &poll)?;
     Ok(())
 }
@@ -98,8 +127,7 @@ fn io_run(mut ep: Endpoint, poll: &mio::Poll) -> anyhow::Result<()> {
                         assert!(attach.is_some());
                         meter.add_bytes(attach.as_ref().unwrap().len() as _);
 
-                        // let a = attach.map(|x| x.to_vec());
-                        // ep.post(Message::Data, a)?;
+                        // ep.post(Message::Data, attach)?;
                     }
                     Err(endpoint::Error::WouldBlock) => {}
                     Err(endpoint::Error::ConnectionLost) => {

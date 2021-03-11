@@ -162,9 +162,9 @@ fn submit(opt: Opt) -> anyhow::Result<()> {
     let output_dir = &opt.output;
     if output_dir.exists() {
         // rm -r output_dir
-        std::fs::remove_dir_all(&output_dir)?;
+        std::fs::remove_dir_all(output_dir)?;
     }
-    std::fs::create_dir_all(&output_dir)?;
+    std::fs::create_dir_all(output_dir)?;
 
     let envs = [
         format!("RP_CONTROLLER_URI={}", opt.controller_uri),

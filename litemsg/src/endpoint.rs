@@ -279,7 +279,7 @@ impl Endpoint {
 
     pub fn on_recv_ready<T: DeserializeOwned + std::fmt::Debug>(
         &mut self,
-    ) -> Result<(T, Option<&[u8]>)> {
+    ) -> Result<(T, Option<Vec<u8>>)> {
         use RecvStage::*;
         match self.recv_state.stage {
             RecvMeta => {
@@ -302,7 +302,7 @@ impl Endpoint {
         log::trace!("on_recv_ready: cmd: {:?}", cmd);
 
         if self.recv_state.meta.1 != 0 {
-            let attachment = self.recv_state.attachment.as_slice();
+            let attachment = self.recv_state.attachment.take();
             Ok((cmd, Some(attachment)))
         } else {
             Ok((cmd, None))
