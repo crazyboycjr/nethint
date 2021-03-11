@@ -204,10 +204,6 @@ fn save_result(mut path: std::path::PathBuf, app_stats: Vec<(usize, u64, u64)>) 
     let _lk = MUTEX.lock().unwrap();
     use std::io::Write;
     path.push("result.txt");
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .expect("fail to open or create file");
+    let mut f = utils::fs::open_with_create_append(path);
     writeln!(f, "{:?}", app_stats).unwrap();
 }

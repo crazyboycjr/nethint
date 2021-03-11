@@ -2,9 +2,7 @@ use nethint::Token;
 use serde::{Deserialize, Serialize};
 
 pub mod message;
-
 pub mod controller;
-
 pub mod worker;
 
 pub use litemsg::Node;

@@ -39,7 +39,7 @@ impl Communicator {
         });
 
         let (nodes, my_node, controller, mut listener) =
-            litemsg::connect_controller(&controller_uri)?;
+            litemsg::connect_controller(&controller_uri, 10)?;
         log::debug!("connected to controller");
         let my_rank = nodes.iter().position(|n| n == &my_node).unwrap();
 

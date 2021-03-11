@@ -62,14 +62,6 @@ fn parse_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Hostfil
     Ok(hostfile)
 }
 
-fn open_or_create_append<P: AsRef<std::path::Path>>(path: P) -> std::fs::File {
-    std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(&path)
-        .unwrap_or_else(|e| panic!("fail to open or create {:?}: {}", path.as_ref(), e))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Role {
     Controller,
@@ -85,13 +77,34 @@ impl std::fmt::Display for Role {
     }
 }
 
+fn hash_file<P: AsRef<std::path::Path>>(path: P) -> String {
+    use sha2::Digest;
+    
+    log::debug!("hash content of file: {}", path.as_ref().display());
+    let content = std::fs::read(path).unwrap();
+
+    // create a Sha256 object
+    let mut hasher = sha2::Sha256::new();
+
+    // write input message
+    hasher.update(content);
+
+    // read hash digest and consume hasher
+    let result = hasher.finalize();
+
+    format!("{:X}", result)
+}
+
+
+
 fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnce() -> () {
+    let jobname = opt.jobname.clone();
     let output_dir = opt.output.clone();
     let mut env_str = envs.join(" ");
+    let configfile = opt.configfile.clone();
     if role == Role::Controller {
         env_str.push_str(&format!(" NH_CONTROLLER_URI={} ", opt.brain_uri));
     }
-    let s = format!("--app {} --config {}", opt.jobname, opt.configfile);
 
     move || {
         let (ip, port) = host.rsplit_once(':').or(Some((&host, "22"))).unwrap();
@@ -103,8 +116,8 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
             .join(format!("{}_{}.log", role, ip))
             .with_extension("stderr");
 
-        let stdout = open_or_create_append(stdout_file);
-        let stderr = open_or_create_append(stderr_file);
+        let stdout = utils::fs::open_with_create_append(stdout_file);
+        let stderr = utils::fs::open_with_create_append(stderr_file);
         let mut cmd = Command::new("ssh");
         cmd.stdout(stdout).stderr(stderr);
         cmd.arg("-oStrictHostKeyChecking=no")
@@ -113,58 +126,31 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
             .arg(port)
             .arg(ip);
 
+        // for controller, scp configfile first
+        let mut controller_args = String::new();
+        if role == Role::Controller {
+            let hash = &hash_file(&configfile)[..7];
+            let src = configfile;
+            let dst = format!("/tmp/{}_setting_{}.toml", jobname, hash);
+            let dst_full = format!("{}:{}", ip, dst);
+            Command::new("scp")
+                .arg("-P")
+                .arg(port)
+                .arg(src)
+                .arg(dst_full)
+                .spawn()
+                .expect("Failed to scp");
+
+            controller_args = format!("--app {} --config {}", jobname, dst);
+        }
+
         // TODO(cjr): also to distribute binary program to workers
         match role {
-            Role::Controller => cmd.arg(format!("{} /tmp/controller {}", env_str, s)),
+            Role::Controller => cmd.arg(format!("{} /tmp/controller {}", env_str, controller_args)),
             Role::Worker => cmd.arg(format!("{} /tmp/worker", env_str)),
         };
 
-        let prog = cmd.get_program().to_str().unwrap();
-        let args: Vec<&str> = cmd.get_args().map(|x| x.to_str().unwrap()).collect();
-        let cmd_str = (std::iter::once(prog).chain(args).collect::<Vec<_>>()).join(" ");
-        log::debug!("command: {}", cmd_str);
-
-        let mut child = cmd.spawn().expect("Failed to start ssh submit command");
-        use std::os::unix::process::ExitStatusExt; // for status.signal()
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if !status.success() {
-                        match status.code() {
-                            Some(code) => {
-                                log::error!("Exited with code: {}, cmd: {}", code, cmd_str)
-                            }
-                            None => log::error!(
-                                "Process terminated by signal: {}, cmd: {}",
-                                status.signal().unwrap(),
-                                cmd_str,
-                            ),
-                        }
-                    }
-                    break;
-                }
-                Ok(None) => {
-                    log::trace!("status not ready yet, sleep for 5 ms");
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                Err(e) => {
-                    panic!("Command wasn't running: {}", e);
-                }
-            }
-            // check if kill is needed
-            if TERMINATE.load(SeqCst) {
-                log::warn!("killing the child process: {}", cmd_str);
-                // instead of SIGKILL, we use SIGTERM here to gracefully shutdown ssh process tree.
-                // SIGKILL can cause terminal control characters to mess up, which must be
-                // fixed later with sth like "stty sane".
-                // signal::kill(nix::unistd::Pid::from_raw(child.id() as _), signal::SIGTERM)
-                //     .unwrap_or_else(|e| panic!("Failed to kill: {}", e));
-                child
-                    .kill()
-                    .unwrap_or_else(|e| panic!("Failed to kill: {}", e));
-                log::warn!("child process terminated")
-            }
-        }
+        utils::poll_cmd!(cmd, TERMINATE);
     }
 }
 

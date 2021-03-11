@@ -8,7 +8,6 @@ use thiserror::Error;
 use nethint::counterunit::{CounterType, CounterUnit};
 
 use crate::cluster::CLUSTER;
-use crate::utils;
 
 const _OVS_CMD: &'static str = "ovs-appctl dpctl/dump-flows type=all -m";
 // sudo ovs-appctl dpctl/dump-flows type=all -m
@@ -390,7 +389,7 @@ pub fn get_local_eth_table() -> anyhow::Result<HashMap<EthAddr, String>> {
     let mut local_eth_table = HashMap::default(); // map eth to node name
     let mut cmd = Command::new("ip");
     cmd.args(&["link", "show", "rdma0"]);
-    let iplink_output = utils::get_command_output(cmd)?;
+    let iplink_output = utils::cmd_helper::get_command_output(cmd)?;
 
     // parse the output
     for s in iplink_output.lines() {

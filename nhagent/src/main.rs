@@ -127,7 +127,7 @@ fn main_loop(
 
             for v in rx.try_iter() {
                 for c in &v {
-                    log::info!("counterunit: {:?}", c);
+                    log::trace!("counterunit: {:?}", c);
                 }
                 // receive from local sampler module
                 handler.receive_server_chunk(comm.my_rank(), v);
@@ -446,7 +446,7 @@ impl Handler {
                 let my_role = comm.my_role();
                 assert_ne!(my_role, Role::Worker);
                 self.receive_rack_chunk(chunk);
-                log::info!("rack leader agent link traffic: {:?}", self.traffic);
+                log::trace!("rack leader agent link traffic: {:?}", self.traffic);
             }
             AllHints(allhints) => {
                 self.receive_allhints(allhints)?;

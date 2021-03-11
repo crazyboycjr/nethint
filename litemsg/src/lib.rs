@@ -92,7 +92,7 @@ pub fn accept_peers(
 
 // nodes, my_node, controller, listener
 pub fn connect_controller(
-    controller_uri: &str,
+    controller_uri: &str, max_retry: usize,
 ) -> anyhow::Result<(Vec<Node>, Node, TcpStream, TcpListener)> {
     log::info!("finding available port to bind");
     let port = utils::find_avail_port()?;
@@ -100,7 +100,7 @@ pub fn connect_controller(
     log::info!("binding to port: {:?}", port);
     let listener = std::net::TcpListener::bind(("0.0.0.0", port))?;
 
-    let mut controller = utils::connect_retry(&controller_uri, 5)?;
+    let mut controller = utils::connect_retry(&controller_uri, max_retry)?;
 
     let my_node = Node {
         addr: controller.local_addr()?.ip().to_string(),

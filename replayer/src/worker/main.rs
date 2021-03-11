@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     log::info!("connecting to controller_uri: {}", controller_uri);
 
     let (mut nodes, my_node, controller, mut listener) =
-        litemsg::connect_controller(&controller_uri)?;
+        litemsg::connect_controller(&controller_uri, 7)?;
     let controller_ep = Arc::new(Mutex::new(
         endpoint::Builder::new()
             .stream(controller)

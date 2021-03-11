@@ -377,11 +377,7 @@ impl Brain {
 
         if let Ok(path) = std::env::var("NETHINT_PROVISION_LOG_FILE") {
             use std::io::{Seek, Write};
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(path)
-                .unwrap();
+            let mut f = utils::fs::open_with_create_append(path);
             f.seek(std::io::SeekFrom::End(0)).unwrap();
             writeln!(f, "{:?}", virt_to_phys).unwrap();
         }

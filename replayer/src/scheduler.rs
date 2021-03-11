@@ -61,26 +61,15 @@ struct JobConfig {
     controller_uri: String,
 }
 
-fn open_or_create_append<P: AsRef<std::path::Path>>(path: P) -> std::fs::File {
-    std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(&path)
-        .unwrap_or_else(|e| panic!("fail to open or create {:?}: {}", path.as_ref(), e))
-}
-
 fn request_provision(
     brain: &mut std::net::TcpStream,
     this_tenant_id: TenantId,
     nhosts_to_acquire: usize,
 ) -> anyhow::Result<NetHintV1Real> {
-    log::debug!("request_provision 1");
     use nhagent::message::Message;
     let msg = Message::ProvisionRequest(this_tenant_id, nhosts_to_acquire);
     litemsg::utils::send_cmd_sync(brain, &msg)?;
-    log::debug!("request_provision 2");
     let reply: Message = litemsg::utils::recv_cmd_sync(brain)?;
-    log::debug!("request_provision 3");
     match reply {
         Message::ProvisionResponse(tenant_id, hintv1) => {
             assert_eq!(tenant_id, this_tenant_id);
@@ -90,7 +79,6 @@ fn request_provision(
             panic!("unexpected reply from brain: {:?}", reply);
         }
     }
-    // Err(())
 }
 
 fn request_destroy(brain: &mut std::net::TcpStream, tenant_id: TenantId) -> anyhow::Result<()> {
@@ -137,6 +125,7 @@ fn submit(
     opt: &Opt,
     job_id: usize,
     nhosts: usize,
+    mut job_output_dir: std::path::PathBuf,
     config_path: std::path::PathBuf,
 ) -> impl FnOnce() -> () {
     let output_dir = opt.output.clone();
@@ -151,8 +140,6 @@ fn submit(
         let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire).unwrap();
 
         // construct job config according to the provision result
-        let mut job_output_dir = output_dir.clone();
-        job_output_dir.push(format!("{}_{}", jobname, job_id));
         std::fs::create_dir_all(&job_output_dir).expect("fail to create directory");
 
         // genenrate hostfile from hintv1
@@ -178,13 +165,13 @@ fn submit(
         };
         log::info!("jobconfig: {:?}", jobconfig);
 
-        // execute rplaunch command poll result
+        // execute rplaunch command and poll result
 
         let stdout_file = output_dir.join("launcher.log").with_extension("stdout");
         let stderr_file = output_dir.join("launcher.log").with_extension("stderr");
 
-        let stdout = open_or_create_append(stdout_file);
-        let stderr = open_or_create_append(stderr_file);
+        let stdout = utils::fs::open_with_create_append(stdout_file);
+        let stderr = utils::fs::open_with_create_append(stderr_file);
         let mut cmd = Command::new("./rplaunch");
         cmd.stdout(stdout).stderr(stderr);
         // cmd.arg(args);
@@ -196,52 +183,7 @@ fn submit(
         cmd.arg("--controller-ssh").arg(jobconfig.controller_ssh);
         cmd.arg("--controller-uri").arg(jobconfig.controller_uri);
 
-        let prog = cmd.get_program().to_str().unwrap();
-        let args: Vec<&str> = cmd.get_args().map(|x| x.to_str().unwrap()).collect();
-        let cmd_str = (std::iter::once(prog).chain(args).collect::<Vec<_>>()).join(" ");
-        log::debug!("command: {}", cmd_str);
-
-        let mut child = cmd.spawn().expect("Failed to rplaunch");
-        use std::os::unix::process::ExitStatusExt; // for status.signal()
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if !status.success() {
-                        match status.code() {
-                            Some(code) => {
-                                log::error!("Exited with code: {}, cmd: {}", code, cmd_str)
-                            }
-                            None => log::error!(
-                                "Process terminated by signal: {}, cmd: {}",
-                                status.signal().unwrap(),
-                                cmd_str,
-                            ),
-                        }
-                    }
-                    break;
-                }
-                Ok(None) => {
-                    log::trace!("status not ready yet, sleep for 5 ms");
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                Err(e) => {
-                    panic!("Command wasn't running: {}", e);
-                }
-            }
-            // check if kill is needed
-            if TERMINATE.load(SeqCst) {
-                log::warn!("killing the child process: {}", cmd_str);
-                // instead of SIGKILL, we use SIGTERM here to gracefully shutdown ssh process tree.
-                // SIGKILL can cause terminal control characters to mess up, which must be
-                // fixed later with sth like "stty sane".
-                // signal::kill(nix::unistd::Pid::from_raw(child.id() as _), signal::SIGTERM)
-                //     .unwrap_or_else(|e| panic!("Failed to kill: {}", e));
-                child
-                    .kill()
-                    .unwrap_or_else(|e| panic!("Failed to kill: {}", e));
-                log::warn!("child process terminated")
-            }
-        }
+        utils::poll_cmd!(cmd, TERMINATE);
 
         request_destroy(&mut brain, this_tenant_id).unwrap();
     }
@@ -294,7 +236,7 @@ mod sched_allreduce {
 
                 // prepare output directory
                 let mut job_output_dir = opt.output.clone();
-                job_output_dir.push(format!("{}_{}", opt.jobname, job_id));
+                job_output_dir.push(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
 
                 if job_output_dir.exists() {
                     // rm -r output_dir
@@ -330,6 +272,7 @@ mod sched_allreduce {
                     opt,
                     job_id,
                     jobs[i].1.num_workers,
+                    job_output_dir,
                     setting_path,
                 )));
             }

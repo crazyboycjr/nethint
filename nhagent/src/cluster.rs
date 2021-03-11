@@ -20,7 +20,7 @@ pub const HOST_BW: f64 = 100.0;
 pub const MAX_SLOTS: usize = 4;
 
 lazy_static! {
-    static ref HOSTNAME: String = crate::utils::get_command_output(Command::new("hostname"))
+    static ref HOSTNAME: String = utils::cmd_helper::get_command_output(Command::new("hostname"))
         .unwrap()
         .trim()
         .to_owned();
