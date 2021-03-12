@@ -12,6 +12,8 @@ if [ $1 = "up" ]; then
 
 	echo 0000:18:00.5 | sudo tee /sys/bus/pci/drivers/vfio-pci/unbind
 	echo 0000:18:00.5 | sudo tee /sys/bus/pci/drivers/mlx5_core/bind
+	echo "sleep for 5 seconds to wait for the interface ready"
+	sleep 5
 	sudo ip link set enp24s0v4 up
 	cidr=`ip a show rdma0 | grep 'inet ' | awk '{print $2}'`
 	sudo ip addr del ${cidr} dev rdma0
