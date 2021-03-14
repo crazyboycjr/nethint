@@ -124,13 +124,14 @@ fn io_loop(handler: Arc<Mutex<Handler>>, peers: Vec<Endpoint>) -> anyhow::Result
     while !TERMINATE.load(SeqCst) {
         poll.poll(&mut events, Some(timeout))?;
         for event in events.iter() {
-            assert!(event.token().0 <= peers.len());
-
-            let mut ep = peers[event.token().0].lock().unwrap();
+            let rank = event.token().0;
+            assert!(rank < peers.len());
 
             if event.readiness().is_writable() {
+                let mut ep = peers[rank].lock().unwrap();
                 match ep.on_send_ready() {
                     Ok(attachment) => {
+                        std::mem::drop(ep);
                         handler.lock().unwrap().on_send_complete(attachment)?;
                     }
                     Err(endpoint::Error::NothingToSend) => {}
@@ -141,6 +142,7 @@ fn io_loop(handler: Arc<Mutex<Handler>>, peers: Vec<Endpoint>) -> anyhow::Result
                 }
             }
             if event.readiness().is_readable() {
+                let mut ep = peers[rank].lock().unwrap();
                 match ep.on_recv_ready() {
                     Ok((cmd, _)) => {
                         // to prevent circular wait
