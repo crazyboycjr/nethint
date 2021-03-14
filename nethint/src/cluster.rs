@@ -81,7 +81,10 @@ impl std::fmt::Debug for Box<dyn Topology> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtCluster {
     pub(crate) inner: Cluster,
+    /// translate a name in the virtual topology to the corresponding name of physical server in the physical clsuter
     pub(crate) virt_to_phys: HashMap<String, String>,
+    /// translate a name in the virtual topology to the number of the VM in the corersponding physical server.
+    pub(crate) virt_to_vmno: HashMap<String, usize>,
     pub(crate) tenant_id: TenantId,
 }
 
@@ -89,6 +92,11 @@ impl VirtCluster {
     #[inline]
     pub fn virt_to_phys(&self) -> &HashMap<String, String> {
         &self.virt_to_phys
+    }
+
+    #[inline]
+    pub fn virt_to_vmno(&self) -> &HashMap<String, usize> {
+        &self.virt_to_vmno
     }
 }
 

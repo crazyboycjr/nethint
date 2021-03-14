@@ -407,7 +407,9 @@ impl Handler {
                 let vname = format!("host_{}", vid);
                 let pname = vc.virt_to_phys()[&vname].clone();
                 let pid: usize = pname.strip_prefix("host_").unwrap().parse().unwrap();
-                let hostid = (pid / 4) * 8 + pid % 4;
+                let vm_local_id = vc.virt_to_vmno()[&vname];
+                let vmid = pid * nhagent::cluster::MAX_SLOTS + vm_local_id;
+                let hostid = (vmid / 4) * 8 + vmid % 4;
                 (vname, format!("cpu{}", hostid))
             })
             .collect()
@@ -500,11 +502,12 @@ impl Handler {
                                 tenant_id,
                                 vlink_ix,
                             );
-                            let traffic_on_link = self.traffic[&phys_link].clone();
-                            // TODO(cjr): we need to do some modifications to traffic_on_link
-                            // because it contains all traffic from all tenants
-                            // the traffic from the requestor itself must be subtracted
-                            traffic.insert(vlink_ix, traffic_on_link);
+                            if let Some(traffic_on_link) = self.traffic.get(&phys_link) {
+                                // TODO(cjr): we need to do some modifications to traffic_on_link
+                                // because it contains all traffic from all tenants
+                                // the traffic from the requestor itself must be subtracted
+                                traffic.insert(vlink_ix, traffic_on_link.clone());
+                            }
                             // set vc.bandwidth to the value of physical links
                             vc[vlink_ix].bandwidth =
                                 self.brain.borrow().cluster()[phys_link].bandwidth;

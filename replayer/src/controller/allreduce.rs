@@ -239,14 +239,15 @@ impl AllreduceApp {
             let n1 = &vc[vc.get_target(vlink_ix)];
             let n2 = &vc[vc.get_source(vlink_ix)];
             assert_ne!(n1.depth, n2.depth);
+            let empty_traffic = &Vec::new();
             let (traffic, link_ix, direction) = if n1.depth > n2.depth {
                 // tx
-                (&hintv2.traffic[&vlink_ix], vlink_ix, CounterType::Tx)
+                (hintv2.traffic.get(&vlink_ix).unwrap_or(empty_traffic), vlink_ix, CounterType::Tx)
             } else {
                 // rx
                 let link_ix = vc.get_reverse_link(vlink_ix);
                 (
-                    &hintv2.traffic[&link_ix],
+                    hintv2.traffic.get(&link_ix).unwrap_or(empty_traffic),
                     link_ix,
                     CounterType::Rx,
                 )

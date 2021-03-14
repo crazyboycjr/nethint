@@ -76,8 +76,9 @@ pub struct Brain {
     /// original bandwidth
     orig_bw: HashMap<LinkIx, Bandwidth>,
     /// used set of nodes in phycisal cluster, the value
-    /// represents how much VM has been allocated on this physical node
-    used: HashMap<NodeIx, usize>,
+    /// represents which VMs have been allocated on this physical node
+    /// the VM are numbered from 0 to max_slots - 1.
+    used: HashMap<NodeIx, Vec<usize>>,
     /// now we only support each tenant owns a single VirtCluster
     pub(crate) vclusters: HashMap<TenantId, Rc<RefCell<VirtCluster>>>,
     /// map from physical link to virtual links
@@ -158,7 +159,7 @@ impl Brain {
         let used = (0..cluster.num_hosts())
             .map(|i| {
                 let host_ix = cluster.get_node_index(&format!("host_{}", i));
-                (host_ix, 0)
+                (host_ix, Vec::new())
             })
             .collect();
 
@@ -248,7 +249,9 @@ impl Brain {
         for i in 0..cluster.num_hosts() {
             let node_ix = cluster.get_node_index(&format!("host_{}", i));
             if rng.gen_range(0.0..1.0) < ratio {
-                self.used.entry(node_ix).and_modify(|e| *e = max_slots);
+                self.used
+                    .entry(node_ix)
+                    .and_modify(|e| *e = (0..max_slots).collect());
             }
         }
     }
@@ -359,7 +362,7 @@ impl Brain {
             self.garbage_collect(tenant_id - 100);
         }
 
-        if self.used.values().cloned().sum::<usize>() + nhosts
+        if self.used.values().map(|x| x.len()).sum::<usize>() + nhosts
             > self.cluster.num_hosts() * self.setting.max_slots
         {
             return Err(Error::NoHost(
@@ -368,7 +371,7 @@ impl Brain {
             ));
         }
 
-        let (inner, virt_to_phys) = match strategy {
+        let (inner, virt_to_phys, virt_to_vmno) = match strategy {
             PlacementStrategy::Compact => self.place_compact(nhosts),
             PlacementStrategy::CompactLoadBalanced => self.place_compact_load_balanced(nhosts),
             PlacementStrategy::Spread => unimplemented!(),
@@ -385,6 +388,7 @@ impl Brain {
         let vcluster = VirtCluster {
             inner,
             virt_to_phys,
+            virt_to_vmno,
             tenant_id,
         };
 
@@ -451,11 +455,15 @@ impl Brain {
 
             vcluster
                 .borrow()
-                .virt_to_phys
+                .virt_to_vmno()
                 .iter()
-                .for_each(|(_, phys_name)| {
+                .for_each(|(name, &vmno)| {
+                    let phys_name = vcluster.borrow().virt_to_phys()[name].clone();
                     let pnode_ix = self.cluster.get_node_index(&phys_name);
-                    self.used.entry(pnode_ix).and_modify(|e| *e -= 1);
+                    self.used.entry(pnode_ix).and_modify(|e| {
+                        let pos = e.iter().position(|&x| x == vmno).unwrap();
+                        e.remove(pos);
+                    });
                 });
         }
     }
@@ -474,7 +482,10 @@ impl Brain {
         self.gc_queue.push(tenant_id);
     }
 
-    fn place_specified(&mut self, hosts_spec: &[NodeIx]) -> (Cluster, HashMap<String, String>) {
+    fn place_specified(
+        &mut self,
+        hosts_spec: &[NodeIx],
+    ) -> (Cluster, HashMap<String, String>, HashMap<String, usize>) {
         if hosts_spec.iter().cloned().collect::<HashSet<_>>().len() < hosts_spec.len() {
             log::warn!(
                 "multiple VMs will be placed on the same host, hosts_spec: {:?}",
@@ -482,7 +493,8 @@ impl Brain {
             );
         }
         let mut tor_alloc: HashMap<NodeIx, String> = HashMap::default();
-        let mut host_alloc: HashMap<NodeIx, String> = HashMap::default();
+        let mut host_alloc: Vec<(NodeIx, String)> = Default::default();
+        let mut virt_to_vmno: HashMap<String, usize> = HashMap::default();
 
         let mut inner = Cluster::new();
         let root = "virtual_cloud";
@@ -504,9 +516,8 @@ impl Brain {
             }
 
             let host_len = host_alloc.len();
-            let vhost_name = host_alloc
-                .entry(host_ix)
-                .or_insert(format!("host_{}", host_len));
+            let vhost_name = &format!("host_{}", host_len);
+            host_alloc.push((host_ix, vhost_name.clone()));
 
             // connect the host to the ToR
             inner.add_node(Node::new(vhost_name, 3, NodeType::Host));
@@ -520,7 +531,13 @@ impl Brain {
             };
             inner.add_link_by_name(&tor_alloc[&tor_ix], vhost_name, allocated_bw);
 
-            self.used.entry(host_ix).and_modify(|e| *e += 1);
+            let max_slots = self.setting.max_slots;
+            self.used.entry(host_ix).and_modify(|e| {
+                let next = Self::find_next_slot(e, max_slots)
+                    .unwrap_or_else(|| panic!("host_ix: {:?}, used: {:?}", host_ix, e));
+                e.push(next);
+                virt_to_vmno.insert(vhost_name.clone(), next).unwrap_none();
+            });
         }
 
         tor_alloc
@@ -536,10 +553,14 @@ impl Brain {
             .map(|(k, v)| (v, self.cluster[k].name.clone()))
             .collect();
 
-        (inner, virt_to_phys)
+        (inner, virt_to_phys, virt_to_vmno)
     }
 
-    fn place_random(&mut self, nhosts: usize, seed: u64) -> (Cluster, HashMap<String, String>) {
+    fn place_random(
+        &mut self,
+        nhosts: usize,
+        seed: u64,
+    ) -> (Cluster, HashMap<String, String>, HashMap<String, usize>) {
         use rand::seq::{IteratorRandom, SliceRandom};
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(seed);
@@ -548,7 +569,7 @@ impl Brain {
             let avail_hosts = (0..self.cluster.num_hosts())
                 .into_iter()
                 .map(|i| self.cluster.get_node_index(&format!("host_{}", i)))
-                .filter(|node_ix| self.used[node_ix] < self.setting.max_slots);
+                .filter(|node_ix| self.used[node_ix].len() < self.setting.max_slots);
             let mut choosed: Vec<NodeIx> = avail_hosts.choose_multiple(&mut rng, nhosts);
             choosed.shuffle(&mut rng);
             choosed
@@ -559,33 +580,34 @@ impl Brain {
         self.place_specified(&alloced_hosts)
     }
 
-    fn place_compact(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
+    fn place_compact(
+        &mut self,
+        nhosts: usize,
+    ) -> (Cluster, HashMap<String, String>, HashMap<String, usize>) {
         let mut allocated = 0;
         let mut alloced_hosts = Vec::new();
 
         // place VMs at the next empty slot, and try to avoid collocation
         let num_hosts = self.cluster.num_hosts();
+        let mut used: HashMap<NodeIx, usize> =
+            self.used.iter().map(|(&k, v)| (k, v.len())).collect();
         while allocated < nhosts {
             for i in 0..num_hosts {
                 let host_name = format!("host_{}", i);
                 let host_ix = self.cluster.get_node_index(&host_name);
-                if self.used[&host_ix] < self.setting.max_slots {
+                if used[&host_ix] < self.setting.max_slots {
                     let n = &self.cluster[host_ix];
                     assert_eq!(n.depth, 3); // this doesn't have to be true
 
                     allocated += 1;
                     alloced_hosts.push(host_ix);
-                    self.used.entry(host_ix).and_modify(|e| *e += 1);
+                    used.entry(host_ix).and_modify(|e| *e += 1);
 
                     if allocated >= nhosts {
                         break;
                     }
                 }
             }
-        }
-
-        for &host_ix in &alloced_hosts {
-            self.used.entry(host_ix).and_modify(|e| *e -= 1);
         }
 
         use rand::seq::SliceRandom;
@@ -596,9 +618,15 @@ impl Brain {
         self.place_specified(&alloced_hosts)
     }
 
-    fn place_compact_load_balanced(&mut self, nhosts: usize) -> (Cluster, HashMap<String, String>) {
+    fn place_compact_load_balanced(
+        &mut self,
+        nhosts: usize,
+    ) -> (Cluster, HashMap<String, String>, HashMap<String, usize>) {
         let mut allocated = 0;
         let mut alloced_hosts = Vec::new();
+
+        let mut used: HashMap<NodeIx, usize> =
+            self.used.iter().map(|(&k, v)| (k, v.len())).collect();
 
         while allocated < nhosts {
             let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches() - 1)
@@ -610,7 +638,7 @@ impl Brain {
                         .get_downlinks(tor_ix)
                         .map(|&link_ix| {
                             let host_ix = self.cluster.get_target(link_ix);
-                            self.setting.max_slots - self.used[&host_ix]
+                            self.setting.max_slots - used[&host_ix]
                         })
                         .sum();
                     (cap, tor_ix)
@@ -627,20 +655,20 @@ impl Brain {
                     .get_downlinks(tor_ix)
                     .map(|&link_ix| self.cluster.get_target(link_ix))
                     .collect();
-                avail_host_ixs.sort_by_key(|host_ix| self.used[host_ix]);
+                avail_host_ixs.sort_by_key(|host_ix| used[host_ix]);
 
                 for host_ix in avail_host_ixs {
                     if to_pick == 0 {
                         break;
                     }
-                    if self.used[&host_ix] < self.setting.max_slots {
+                    if used[&host_ix] < self.setting.max_slots {
                         let n = &self.cluster[host_ix];
                         assert_eq!(n.depth, 3); // this doesn't have to be true
 
                         to_pick -= 1;
                         allocated += 1;
                         alloced_hosts.push(host_ix);
-                        self.used.entry(host_ix).and_modify(|e| *e += 1);
+                        used.entry(host_ix).and_modify(|e| *e += 1);
                     }
                 }
 
@@ -655,10 +683,15 @@ impl Brain {
         let mut rng = StdRng::seed_from_u64(0); // use a constant seed
         alloced_hosts.shuffle(&mut rng);
 
-        for &host_ix in &alloced_hosts {
-            self.used.entry(host_ix).and_modify(|e| *e -= 1);
-        }
-
         self.place_specified(&alloced_hosts)
+    }
+
+    fn find_next_slot(v: &[usize], max_slots: usize) -> Option<usize> {
+        for i in 0..max_slots {
+            if v.iter().find(|&&x| x == i).is_none() {
+                return Some(i);
+            }
+        }
+        None
     }
 }

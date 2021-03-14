@@ -197,6 +197,7 @@ impl Handler {
         use message::Command::*;
         match cmd {
             EmitFlow(flow) => {
+                log::info!("start a flow: {:?}", flow);
                 let dst_ep = self.peer_table.get_mut(&flow.dst).unwrap();
                 let mut data = Vec::with_capacity(flow.bytes);
                 unsafe {

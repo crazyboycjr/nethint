@@ -105,8 +105,12 @@ fn get_ipaddrs(hintv1: &NetHintV1Real) -> Vec<String> {
     for i in 0..nhosts {
         let vname = format!("host_{}", i);
         let hostname = &hintv1.vname_to_hostname[&vname];
-        let ip = HOSTNAME_IP_TABLE.table[hostname].clone();
-        content.push(ip);
+        let ip = HOSTNAME_IP_TABLE
+            .table
+            .get(hostname)
+            .unwrap_or_else(|| panic!("key not found: key: {}", hostname));
+        // let ip = HOSTNAME_IP_TABLE.table[hostname].clone();
+        content.push(ip.clone());
     }
     content
 }
@@ -234,7 +238,9 @@ mod sched_allreduce {
                 let start_ts = jobs[i].0;
 
                 // prepare output directory
-                let job_dir = opt.output.join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
+                let job_dir = opt
+                    .output
+                    .join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
 
                 if job_dir.exists() {
                     // rm -r output_dir
