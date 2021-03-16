@@ -16,6 +16,8 @@ pub trait Application {
 
     fn tenant_id(&self) -> TenantId;
 
+    fn hostname_to_node(&self) -> &HashMap<String, Node>;
+
     fn request_nethint(&mut self, version: NetHintVersion) -> anyhow::Result<()> {
         let msg = nhagent::message::Message::NetHintRequest(self.tenant_id(), version);
         self.brain_mut().post(msg, None)?;
@@ -24,7 +26,7 @@ pub trait Application {
 
     fn start(&mut self) -> anyhow::Result<()>;
 
-    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<()>;
+    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool>;
 
     fn finish(&mut self) -> anyhow::Result<()> {
         for worker in self.workers_mut().values_mut() {

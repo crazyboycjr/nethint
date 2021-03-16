@@ -160,6 +160,10 @@ impl Application for MapReduceApp {
         self.setting.job_id
     }
 
+    fn hostname_to_node(&self) -> &HashMap<String, Node> {
+        &self.hostname_to_node
+    }
+
     fn start(&mut self) -> anyhow::Result<()> {
         if self.cluster.is_none() {
             // self.request_provision()?;
@@ -182,7 +186,7 @@ impl Application for MapReduceApp {
         Ok(())
     }
 
-    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<()> {
+    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
@@ -190,6 +194,7 @@ impl Application for MapReduceApp {
                 self.num_remaining_flows -= 1;
                 if self.num_remaining_flows == 0 {
                     self.finish()?;
+                    return Ok(true);
                 }
             }
             BrainResponse(msg) => {
@@ -199,7 +204,7 @@ impl Application for MapReduceApp {
                 panic!("unexpected cmd: {:?}", cmd);
             }
         }
-        Ok(())
+        Ok(false)
     }
 }
 

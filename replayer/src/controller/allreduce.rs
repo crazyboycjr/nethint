@@ -1,4 +1,5 @@
 use crate::controller::app::Application;
+use crate::controller::plink::PlinkApp;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::{rngs::StdRng, SeedableRng};
@@ -15,7 +16,7 @@ use nethint::{
     bandwidth::{Bandwidth, BandwidthTrait},
     cluster::{Topology, VirtCluster, LinkIx},
     counterunit::{CounterType, CounterUnit},
-    hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
+    hint::{NetHintV2Real, NetHintVersion},
     TenantId,
 };
 use serde::{Deserialize, Serialize};
@@ -79,24 +80,30 @@ impl AllreduceAppBuilder {
         jobs.last().unwrap().1.clone()
     }
 
-    pub fn build(self) -> AllreduceApp {
+    pub fn build(self) -> Box<dyn Application> {
         let setting = allreduce::config::read_config(&self.config_path);
         log::info!("allreduce setting: {:?}", setting);
         let job_spec = Self::get_job_spec(&setting);
         let seed = setting.seed_base;
-        AllreduceApp {
+        let mut app: Box<dyn Application> = Box::new(AllreduceApp {
             workers: self.workers,
             brain: self.brain,
             hostname_to_node: self.hostname_to_node,
             remaining_iterations: 0,
             num_remaining_flows: 0,
-            setting,
+            setting: setting.clone(),
             seed,
-            job_spec,
+            job_spec: job_spec.clone(),
             allreduce_algorithm: None,
             vname_to_hostname: Default::default(),
             cluster: None,
+        });
+
+        if setting.probe.enable {
+            app = Box::new(PlinkApp::new(job_spec.num_workers, setting.probe.round_ms, app));
         }
+
+        app
     }
 }
 
@@ -137,6 +144,10 @@ impl Application for AllreduceApp {
         self.setting.job_id
     }
 
+    fn hostname_to_node(&self) -> &HashMap<String, Node> {
+        &self.hostname_to_node
+    }
+
     fn start(&mut self) -> anyhow::Result<()> {
         self.remaining_iterations = self.job_spec.num_iterations;
         self.allreduce_algorithm = Some(self.new_allreduce_algorithm());
@@ -145,7 +156,7 @@ impl Application for AllreduceApp {
         Ok(())
     }
 
-    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<()> {
+    fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
@@ -158,11 +169,13 @@ impl Application for AllreduceApp {
                     {
                         self.cluster = None;
                         assert_eq!(self.setting.nethint_level, 2);
-                        return self.request_nethint(NetHintVersion::V2);
+                        self.request_nethint(NetHintVersion::V2)?;
+                        return Ok(false);
                     }
                     self.allreduce()?;
                 } else if self.num_remaining_flows == 0 && self.remaining_iterations == 0 {
                     self.finish()?;
+                    return Ok(true);
                 }
             }
             BrainResponse(msg) => {
@@ -172,7 +185,7 @@ impl Application for AllreduceApp {
                 panic!("unexpected cmd: {:?}", cmd);
             }
         }
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -309,7 +322,7 @@ impl AllreduceApp {
         )
     }
 
-    fn handle_brain_response_event(
+    pub fn handle_brain_response_event(
         &mut self,
         msg: nhagent::message::Message,
     ) -> anyhow::Result<()> {

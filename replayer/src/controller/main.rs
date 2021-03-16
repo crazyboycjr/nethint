@@ -87,7 +87,7 @@ fn io_loop(
     // initialize application
     let mut app: Box<dyn Application> = match opts.app.as_str() {
         "mapreduce" => Box::new(MapReduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()),
-        "allreduce" => Box::new(AllreduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()),
+        "allreduce" => AllreduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build(),
         "rl" => {
             unimplemented!();
         }

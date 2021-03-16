@@ -113,6 +113,20 @@ pub struct Endpoint {
     recv_state: RecvState,
 }
 
+impl Clone for Endpoint {
+    fn clone(&self) -> Self {
+        assert!(self.tx_queue.is_empty() && self.recv_state.stage == RecvStage::RecvMeta);
+        Endpoint {
+            // this will set stream to non-blocking for us
+            stream: self.stream.try_clone().unwrap(),
+            interest: self.interest,
+            node: self.node.clone(),
+            tx_queue: Default::default(),
+            recv_state: RecvState::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecvStage {
     RecvMeta,
