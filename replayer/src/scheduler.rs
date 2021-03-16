@@ -65,9 +65,10 @@ fn request_provision(
     brain: &mut std::net::TcpStream,
     this_tenant_id: TenantId,
     nhosts_to_acquire: usize,
+    allow_delay: bool,
 ) -> anyhow::Result<NetHintV1Real> {
     use nhagent::message::Message;
-    let msg = Message::ProvisionRequest(this_tenant_id, nhosts_to_acquire);
+    let msg = Message::ProvisionRequest(this_tenant_id, nhosts_to_acquire, allow_delay);
     litemsg::utils::send_cmd_sync(brain, &msg)?;
     let reply: Message = litemsg::utils::recv_cmd_sync(brain)?;
     match reply {
@@ -129,6 +130,7 @@ fn submit(
     opt: &Opt,
     job_id: usize,
     nhosts: usize,
+    allow_delay: bool,
     job_dir: std::path::PathBuf,
     config_path: std::path::PathBuf,
 ) -> impl FnOnce() -> () {
@@ -141,7 +143,7 @@ fn submit(
         let mut brain = litemsg::utils::connect_retry(&brain_uri, 5).unwrap();
         let this_tenant_id = job_id;
         let nhosts_to_acquire = nhosts;
-        let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire).unwrap();
+        let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire, allow_delay).unwrap();
 
         // construct job config according to the provision result
         std::fs::create_dir_all(&job_dir).expect("fail to create directory");
@@ -275,6 +277,7 @@ mod sched_allreduce {
                     opt,
                     job_id,
                     jobs[i].1.num_workers,
+                    config.allow_delay.unwrap_or(false),
                     job_dir,
                     setting_path,
                 )));

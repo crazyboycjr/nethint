@@ -40,8 +40,8 @@ pub enum Message {
     /// send by experiment scheduler, processed by rack leader, 
     /// forward by rack leader, processed by global leader
     /// in practice, we skip the forwarding pass
-    /// tenant_id, nhosts
-    ProvisionRequest(TenantId, usize),
+    /// tenant_id, nhosts, allow_delay
+    ProvisionRequest(TenantId, usize, bool),
     /// send by global leader, processed by rack leader
     /// forward by rack leader, processed by experiment scheduler
     /// in practice, we skip the forwarding pass

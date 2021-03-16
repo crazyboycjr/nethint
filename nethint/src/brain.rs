@@ -107,7 +107,7 @@ pub enum PlacementStrategy {
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("not enough empty host available, available: {0}, requested: {1}")]
+    #[error("insufficient empty host available, available: {0}, requested: {1}")]
     NoHost(usize, usize),
     #[error("invalid host name: {0}")]
     InvalidHostName(String),
@@ -362,11 +362,12 @@ impl Brain {
             self.garbage_collect(tenant_id - 100);
         }
 
-        if self.used.values().map(|x| x.len()).sum::<usize>() + nhosts
+        let taken = self.used.values().map(|x| x.len()).sum::<usize>();
+        if taken + nhosts
             > self.cluster.num_hosts() * self.setting.max_slots
         {
             return Err(Error::NoHost(
-                self.cluster.num_hosts() * self.setting.max_slots,
+                self.cluster.num_hosts() * self.setting.max_slots - taken,
                 nhosts,
             ));
         }

@@ -6,6 +6,7 @@ use nethint::{
     cluster::{LinkIx, Topology, VirtCluster},
     counterunit::CounterUnit,
     hint::{NetHintV1Real, NetHintV2Real, NetHintVersion},
+    TenantId,
 };
 use nhagent::{
     self,
@@ -14,6 +15,7 @@ use nhagent::{
     Role,
 };
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -119,7 +121,6 @@ fn main_loop(
     let timeout = std::time::Duration::from_millis(1);
 
     while !TERMINATE.load(SeqCst) {
-
         let now = std::time::Instant::now();
         if now >= last_tp + interval {
             // it's not very explicit why this is is correct or not, need more thinking on this
@@ -205,6 +206,8 @@ struct Handler {
     rank_hostname: HashMap<usize, String>,
     brain: Rc<RefCell<Brain>>,
     interval_ms: u64,
+    /// (controller_rank, tenant_id, nhosts_to_acquire)
+    provision_req_queue: VecDeque<(usize, TenantId, usize)>,
 }
 
 impl Handler {
@@ -231,6 +234,7 @@ impl Handler {
                 .collect(),
             brain,
             interval_ms,
+            provision_req_queue: VecDeque::new(),
         }
     }
 
@@ -400,6 +404,53 @@ impl Handler {
         Ok(())
     }
 
+    fn handle_provision(
+        &mut self,
+        sender_rank: usize,
+        comm: &mut Communicator,
+        tenant_id: TenantId,
+        nhosts_to_acquire: usize,
+        allow_delay: bool,
+    ) -> anyhow::Result<()> {
+        log::info!("handle_provision: {} {} {} {}", sender_rank, tenant_id, nhosts_to_acquire, allow_delay);
+        use message::Message::*;
+        // connect the code to Brain, provision VMs, return the vcluster
+        match self.brain.borrow_mut().provision(
+            tenant_id,
+            nhosts_to_acquire,
+            PlacementStrategy::Compact,
+        ) {
+            Ok(vc) => {
+                // in our testbed, the virtual machine hostname are just cpu{}
+                // so there is a direct translation between vnode to hostname
+                let vname_to_hostname = Self::get_vname_to_hostname(&vc);
+                let hintv1 = NetHintV1Real {
+                    vc,
+                    vname_to_hostname,
+                };
+                let msg = ProvisionResponse(tenant_id, hintv1);
+                comm.send_to(sender_rank, &msg)?;
+            }
+            Err(e @ nethint::brain::Error::NoHost(_, _)) if allow_delay => {
+                log::warn!("delaying the request because of the provision error: {}", e);
+                return Err(anyhow::anyhow!("delaying the request"));
+            }
+            Err(e) => {
+                panic!("provision error: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    fn delay_provision(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
+        log::info!("delay_provision");
+        while let Some(&(sender_rank, tid, nhosts)) = self.provision_req_queue.front() {
+            self.handle_provision(sender_rank, comm, tid, nhosts, true)?;
+            self.provision_req_queue.pop_front();
+        }
+        Ok(())
+    }
+
     fn get_vname_to_hostname(vc: &VirtCluster) -> HashMap<String, String> {
         (0..vc.num_hosts())
             .map(|vid| {
@@ -426,7 +477,11 @@ impl Handler {
         comm: &mut Communicator,
     ) -> anyhow::Result<()> {
         use message::Message::*;
-        log::trace!("on_recv_complete, sender_rank: {} msg: {:?}", sender_rank, msg);
+        log::trace!(
+            "on_recv_complete, sender_rank: {} msg: {:?}",
+            sender_rank,
+            msg
+        );
         match msg {
             AppFinish => {
                 TERMINATE.store(true, SeqCst);
@@ -454,22 +509,14 @@ impl Handler {
                 self.receive_allhints(allhints)?;
             }
             // serve as cloud brain, by global leader
-            ProvisionRequest(tenant_id, nhosts_to_acquire) => {
-                // connect the code to Brain, provision VMs, return the vcluster
-                let vc = self
-                    .brain
-                    .borrow_mut()
-                    .provision(tenant_id, nhosts_to_acquire, PlacementStrategy::Compact)
-                    .unwrap();
-                // in our testbed, the virtual machine hostname are just cpu{}
-                // so there is a direct translation between vnode to hostname
-                let vname_to_hostname = Self::get_vname_to_hostname(&vc);
-                let hintv1 = NetHintV1Real {
-                    vc,
-                    vname_to_hostname,
-                };
-                let msg = ProvisionResponse(tenant_id, hintv1);
-                comm.send_to(sender_rank, &msg)?;
+            ProvisionRequest(tenant_id, nhosts_to_acquire, allow_delay) => {
+                if allow_delay {
+                    self.provision_req_queue
+                        .push_back((sender_rank, tenant_id, nhosts_to_acquire));
+                    self.delay_provision(comm).unwrap_or_default();
+                } else {
+                    self.handle_provision(sender_rank, comm, tenant_id, nhosts_to_acquire, false)?;
+                }
             }
             DestroyRequest(tenant_id) => {
                 // destroy and release the resource immediately in testbed
@@ -477,12 +524,13 @@ impl Handler {
                 self.brain.borrow_mut().garbage_collect(tenant_id + 1);
                 let msg = DestroyResponse(tenant_id);
                 comm.send_to(sender_rank, &msg)?;
+
+                self.delay_provision(comm).unwrap_or_default();
             }
             NetHintRequest(tenant_id, version) => {
                 match version {
                     NetHintVersion::V1 => {
-                        let vc =
-                            (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
+                        let vc = (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
                         let vname_to_hostname = Self::get_vname_to_hostname(&vc);
                         let hintv1 = NetHintV1Real {
                             vc,
@@ -517,7 +565,11 @@ impl Handler {
                             vc,
                             vname_to_hostname,
                         };
-                        let hintv2 = NetHintV2Real { hintv1, interval_ms: self.interval_ms, traffic };
+                        let hintv2 = NetHintV2Real {
+                            hintv1,
+                            interval_ms: self.interval_ms,
+                            traffic,
+                        };
                         let msg = NetHintResponseV2(tenant_id, hintv2);
                         comm.send_to(sender_rank, &msg)?;
                     }

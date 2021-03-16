@@ -45,6 +45,9 @@ pub struct ExperimentConfig {
     /// akin to AWS Placement Group
     pub placement_strategy: brain::PlacementStrategy,
 
+    /// whether to allow delay scheduling, default to false, in simulation, it must be false
+    pub allow_delay: Option<bool>,
+
     /// Collocate or De-collocate
     pub collocate: bool,
 
