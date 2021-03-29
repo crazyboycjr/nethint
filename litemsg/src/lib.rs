@@ -40,6 +40,14 @@ impl std::net::ToSocketAddrs for Node {
     }
 }
 
+pub fn get_my_rank(my_node: &Node, nodes: &[Node]) -> usize {
+    let my_rank = nodes
+        .iter()
+        .position(|n| n == my_node)
+        .unwrap_or_else(|| panic!("my_node: {:?} not found in nodes: {:?}", my_node, nodes));
+    my_rank
+}
+
 pub fn accept_peers(
     controller_uri: &str,
     num_workers: usize,
@@ -132,10 +140,7 @@ pub fn connect_peers2(
 
     let mut peers: Vec<endpoint::Builder> = Vec::new();
 
-    let my_rank = nodes
-        .iter()
-        .position(|n| n == my_node)
-        .unwrap_or_else(|| panic!("my_node: {:?} not found in nodes: {:?}", my_node, nodes));
+    let my_rank = get_my_rank(my_node, nodes);
     log::debug!("number of connections to accept: {}", my_rank);
 
     for i in 0..my_rank {

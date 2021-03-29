@@ -1,10 +1,10 @@
 #![feature(option_unwrap_none)]
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use replayer::message;
 use replayer::Node;
@@ -42,6 +42,8 @@ fn main() -> anyhow::Result<()> {
             .unwrap(),
     ));
 
+    let my_rank = litemsg::get_my_rank(&my_node, &nodes);
+
     let mut peers = litemsg::connect_peers2(&nodes, &my_node, &mut listener)?;
     nodes.reverse();
     let mut peers2 = litemsg::connect_peers2(&nodes, &my_node, &mut listener)?;
@@ -55,7 +57,8 @@ fn main() -> anyhow::Result<()> {
     let handler = Arc::new(Mutex::new(Handler::new(
         Arc::clone(&controller_ep),
         peers.clone(),
-    ))); // peers.clone is to call Arc::clone() on the elements
+        my_rank,
+    ))); // peers.clone will call Arc::clone() on its elements
 
     // start IO threads, another half for kthreads running network stack
     let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
@@ -109,7 +112,10 @@ fn io_loop(handler: Arc<Mutex<Handler>>, peers: Vec<Endpoint>) -> anyhow::Result
     let mut events = mio::Events::with_capacity(256);
 
     for (i, ep) in peers.iter().enumerate() {
-        log::trace!("registering ep.interest: {:?}", ep.lock().unwrap().interest());
+        log::trace!(
+            "registering ep.interest: {:?}",
+            ep.lock().unwrap().interest()
+        );
         let interest = ep.lock().unwrap().interest();
         poll.register(
             ep.lock().unwrap().stream(),
@@ -171,7 +177,7 @@ struct Handler {
 }
 
 impl Handler {
-    fn new(controller: Endpoint, peers: Vec<Endpoint>) -> Self {
+    fn new(controller: Endpoint, peers: Vec<Endpoint>, my_rank: usize) -> Self {
         let mut peer_table: HashMap<Node, Endpoint> = HashMap::new();
         for ep in peers {
             if ep.lock().unwrap().interest().is_writable() {
@@ -181,7 +187,7 @@ impl Handler {
 
         Handler {
             controller,
-            meter: Meter::new(),
+            meter: Meter::new(my_rank),
             peer_table,
         }
     }
@@ -230,14 +236,16 @@ pub struct Meter {
     accumulated: isize,
     last_tp: std::time::Instant,
     refresh_interval: std::time::Duration,
+    my_rank: usize,
 }
 
 impl Meter {
-    fn new() -> Self {
+    fn new(my_rank: usize) -> Self {
         Meter {
             accumulated: 0,
             last_tp: std::time::Instant::now(),
             refresh_interval: std::time::Duration::new(1, 0),
+            my_rank,
         }
     }
 
@@ -247,7 +255,8 @@ impl Meter {
         let now = std::time::Instant::now();
         if now - self.last_tp >= self.refresh_interval {
             println!(
-                "Speed: {} Gb/s",
+                "Rank: {}, Speed: {} Gb/s",
+                self.my_rank,
                 8e-9 * self.accumulated as f64 / (now - self.last_tp).as_secs_f64()
             );
             self.accumulated = 0;
