@@ -220,6 +220,7 @@ impl AllreduceApp {
             self.job_spec.buffer_size as u64,
             &**self.cluster.as_ref().unwrap(),
         );
+        log::debug!("flows from result of allreduce algorithm: {:?}", flows);
 
         for flow in flows {
             let size = flow.bytes;

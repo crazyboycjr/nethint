@@ -144,6 +144,7 @@ fn submit(
         let this_tenant_id = job_id;
         let nhosts_to_acquire = nhosts;
         let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire, allow_delay).unwrap();
+        log::info!("hintv1: vname_to_hostname: {:?}, vcluster: {}", hintv1.vname_to_hostname, hintv1.vc.to_dot());
 
         // construct job config according to the provision result
         std::fs::create_dir_all(&job_dir).expect("fail to create directory");
