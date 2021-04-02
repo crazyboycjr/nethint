@@ -168,8 +168,8 @@ fn main_loop(
 
             if event.readiness().is_writable() {
                 // log::debug!("handle write event for rank: {}", rank);
-                match ep.on_send_ready() {
-                    Ok(attachment) => {
+                match ep.on_send_ready::<nhagent::message::Message>() {
+                    Ok((_cmd, attachment)) => {
                         handler.on_send_complete(attachment)?;
                     }
                     Err(endpoint::Error::NothingToSend) => {}

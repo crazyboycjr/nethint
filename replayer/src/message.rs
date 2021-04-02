@@ -12,6 +12,8 @@ pub enum Command {
     /// send by worker, processed by controller
     LeaveNode(Node),
     /// send by worker, processed by worker
+    DataChunk(Flow),
+    /// send by worker, processed by worker
     Data(Flow),
     /// send by nhagent global leader, processed by controller
     BrainResponse(nhagent::message::Message),

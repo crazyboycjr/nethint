@@ -130,12 +130,21 @@ fn io_loop(
                 app.workers_mut().get_mut(node).unwrap()
             };
             if event.readiness().is_writable() {
-                match ep.on_send_ready() {
-                    Ok(_) => {}
-                    Err(endpoint::Error::NothingToSend) => {}
-                    Err(endpoint::Error::WouldBlock) => {}
-                    Err(e) => return Err(e.into()),
-                }
+                if rank == token_table.len() {
+                    match ep.on_send_ready::<nhagent::message::Message>() {
+                        Ok(..) => {}
+                        Err(endpoint::Error::NothingToSend) => {}
+                        Err(endpoint::Error::WouldBlock) => {}
+                        Err(e) => return Err(e.into()),
+                    }
+                } else {
+                    match ep.on_send_ready::<message::Command>() {
+                        Ok(..) => {}
+                        Err(endpoint::Error::NothingToSend) => {}
+                        Err(endpoint::Error::WouldBlock) => {}
+                        Err(e) => return Err(e.into()),
+                    }
+                };
             }
             if event.readiness().is_readable() {
                 // warp nhagent msg into Command and ignore attachment

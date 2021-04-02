@@ -99,9 +99,6 @@ fn run_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-use std::sync::Arc;
-// type ZMsg = Arc<&[u8]>;
-
 fn run_client() -> anyhow::Result<()> {
     let addr = std::env::args().skip(2).next().unwrap();
     let stream = std::net::TcpStream::connect((addr.clone(), PORT))?;

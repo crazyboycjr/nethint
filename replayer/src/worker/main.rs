@@ -77,6 +77,7 @@ fn main() -> anyhow::Result<()> {
 
     // start IO threads, another half for kthreads running network stack
     let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
+    let io_threads = 0;
     // let mut peers_group = partition(peers, io_threads);
 
     // completion queue of io worker thread
@@ -115,8 +116,8 @@ fn main() -> anyhow::Result<()> {
     log::info!("worker is leaving the group");
     controller_ep.post(message::Command::LeaveNode(my_node), None)?;
     loop {
-        match controller_ep.on_send_ready() {
-            Ok(_) => break,
+        match controller_ep.on_send_ready::<message::Command>() {
+            Ok(..) => break,
             Err(endpoint::Error::NothingToSend) => {}
             Err(endpoint::Error::WouldBlock) => {}
             Err(e) => {
@@ -152,8 +153,8 @@ fn io_worker(wq: Receiver<WorkRequest>, cq: Sender<Completion>) -> anyhow::Resul
                 }
             }
             Operation::SEND => {
-                match ep.on_send_ready() {
-                    Ok(attachment) => Completion::SendComplete(rank, ep, Box::new(attachment)),
+                match ep.on_send_ready::<message::Command>() {
+                    Ok((cmd, attachment)) => Completion::SendComplete(rank, ep, Box::new(attachment)),
                     Err(endpoint::Error::NothingToSend) => Completion::NothingToSend(rank, ep),
                     Err(endpoint::Error::WouldBlock) => Completion::WouldBlock(rank, ep),
                     Err(e) => {
@@ -186,6 +187,8 @@ struct EventLoop<'a> {
     peer_index: HashMap<Node, usize>, // index into peers vec
     // in case that dst_ep is not currently available, we buffer the post request, the key is a index into peers
     post_buffer: Vec<VecDeque<replayer::Flow>>,
+
+    data_store: HashMap<usize, Vec<Vec<u8>>>,
 }
 
 impl<'a> EventLoop<'a> {
@@ -217,29 +220,65 @@ impl<'a> EventLoop<'a> {
             meter: Meter::new(my_rank),
             peer_index,
             post_buffer,
+            data_store: Default::default(),
         }
     }
 
     fn on_send_complete(&mut self, attachment: Option<Vec<u8>>) -> anyhow::Result<()> {
         // count the sending rate
-        let len = attachment.map(|a| a.len()).unwrap_or(0);
+        let len = attachment.as_ref().map(|a| a.len()).unwrap_or(0);
+        if len > 0 {
+            let q = self.data_store.entry(len).or_insert_with(|| Vec::new());
+            q.push(attachment.unwrap());
+        }
         if len > 0 {
             self.meter.add_bytes(len as _);
         }
         Ok(())
     }
 
-    fn on_recv_complete(&mut self, cmd: message::Command) -> anyhow::Result<()> {
+    fn on_recv_complete(&mut self, cmd: message::Command, poll: &mio::Poll) -> anyhow::Result<()> {
         use message::Command::*;
         match cmd {
             EmitFlow(flow) => {
                 log::info!("prepare to start a flow: {:?}", flow);
                 let rank = self.peer_index[&flow.dst];
-                self.post_buffer[rank].push_back(flow);
+                // self.post_buffer[rank].push_back(flow);
+
+                log::info!("start a flow: {:?}", flow);
+                let dst_ep = self.peers[rank].as_mut().unwrap();
+                let total_bytes = flow.bytes;
+                let bound = 1000000;
+                for i in 0..(total_bytes + bound - 1) / bound {
+                    let chunk_size = if (i + 1) * bound < total_bytes { bound } else { total_bytes - i * bound };
+                    let q = self.data_store.entry(chunk_size).or_insert_with(|| Vec::new());
+                    if q.is_empty() {
+                        let mut data = Vec::with_capacity(chunk_size);
+                        unsafe {
+                            data.set_len(chunk_size);
+                        }
+                        q.push(data);
+                    }
+                    let data = q.pop().unwrap();
+                    let msg = if i * bound + chunk_size >= total_bytes {
+                        message::Command::Data(flow.clone())
+                    } else {
+                        message::Command::DataChunk(flow.clone())
+                    };
+                    dst_ep.post(msg, Some(data))?;
+                }
+                // reactivate
+                poll.reregister(
+                    dst_ep.stream(),
+                    mio::Token(rank),
+                    dst_ep.interest(),
+                    mio::PollOpt::level(),
+                )?;
             }
             AppFinish => {
                 TERMINATE.store(true, SeqCst);
             }
+            DataChunk(_flow) => { }
             Data(flow) => {
                 // flow received, notify controller with FlowComplete
                 let msg = FlowComplete(flow);
@@ -289,14 +328,14 @@ impl<'a> EventLoop<'a> {
         )?;
 
         // steer flow to a particular io thread
-        let mut flow_worker_id = Vec::with_capacity(self.peers.len());
-        for (i, _ep) in self.peers.iter().enumerate() {
-            flow_worker_id.push(i % self.io_threads);
-        }
+        // let mut flow_worker_id = Vec::with_capacity(self.peers.len());
+        // for (i, _ep) in self.peers.iter().enumerate() {
+        //     flow_worker_id.push(i % self.io_threads);
+        // }
 
         let cq = self.cq.take().unwrap();
 
-        let timeout = std::time::Duration::from_micros(1);
+        let timeout = std::time::Duration::from_millis(1);
 
         while !TERMINATE.load(SeqCst) {
             poll.poll(&mut events, Some(timeout))?;
@@ -306,17 +345,34 @@ impl<'a> EventLoop<'a> {
 
                 if event.readiness().is_writable() {
                     if rank < self.peers.len() {
-                        if let Some(ep) = self.peers[rank].take() {
-                            let tid = flow_worker_id[rank];
-                            self.wqs[tid].send(WorkRequest {
-                                rank,
-                                ep,
-                                op: Operation::SEND,
-                            })?;
-                        } // else ignore this event because we're using level trigger
+                        // if let Some(ep) = self.peers[rank].take() {
+                        //     let tid = flow_worker_id[rank];
+                        //     self.wqs[tid].send(WorkRequest {
+                        //         rank,
+                        //         ep,
+                        //         op: Operation::SEND,
+                        //     })?;
+                        // } // else ignore this event because we're using level trigger
+                        match self.peers[rank].as_mut().unwrap().on_send_ready::<message::Command>() {
+                            Ok((_cmd, attachment)) => {
+                                self.on_send_complete(attachment)?;
+                            }
+                            Err(endpoint::Error::NothingToSend) => {
+                                poll.reregister(
+                                    self.peers[rank].as_mut().unwrap().stream(),
+                                    mio::Token(rank),
+                                    mio::Ready::empty(),
+                                    mio::PollOpt::level(),
+                                )?;
+                            }
+                            Err(endpoint::Error::WouldBlock) => {}
+                            Err(e) => {
+                                return Err(e.into());
+                            }
+                        }
                     } else {
-                        match self.controller_ep.on_send_ready() {
-                            Ok(attachment) => {
+                        match self.controller_ep.on_send_ready::<message::Command>() {
+                            Ok((_cmd, attachment)) => {
                                 self.on_send_complete(attachment)?;
                             }
                             Err(endpoint::Error::NothingToSend) => {}
@@ -329,18 +385,31 @@ impl<'a> EventLoop<'a> {
                 }
                 if event.readiness().is_readable() {
                     if rank < self.peers.len() {
-                        if let Some(ep) = self.peers[rank].take() {
-                            let tid = flow_worker_id[rank];
-                            self.wqs[tid].send(WorkRequest {
-                                rank,
-                                ep,
-                                op: Operation::RECV,
-                            })?;
+                        // if let Some(ep) = self.peers[rank].take() {
+                        //     let tid = flow_worker_id[rank];
+                        //     self.wqs[tid].send(WorkRequest {
+                        //         rank,
+                        //         ep,
+                        //         op: Operation::RECV,
+                        //     })?;
+                        // }
+                        match self.peers[rank].as_mut().unwrap().on_recv_ready() {
+                            Ok((cmd, _)) => {
+                                self.on_recv_complete(cmd, &poll)?;
+                            }
+                            Err(endpoint::Error::WouldBlock) => {}
+                            Err(endpoint::Error::ConnectionLost) => {
+                                // looks strange here, then what is the next step?
+                                poll.deregister(self.peers[rank].as_mut().unwrap().stream()).unwrap();
+                            }
+                            Err(e) => {
+                                return Err(e.into());
+                            }
                         }
                     } else {
                         match self.controller_ep.on_recv_ready() {
                             Ok((cmd, _)) => {
-                                self.on_recv_complete(cmd)?;
+                                self.on_recv_complete(cmd, &poll)?;
                             }
                             Err(endpoint::Error::WouldBlock) => {}
                             Err(endpoint::Error::ConnectionLost) => {
@@ -356,6 +425,7 @@ impl<'a> EventLoop<'a> {
             }
 
             // poll cq
+            /*
             for comp in cq.try_iter() {
                 use Completion::*;
                 match comp {
@@ -390,8 +460,10 @@ impl<'a> EventLoop<'a> {
                     }
                 }
             }
+            */
 
             // clear post buffers is possible
+            /*
             for rank in 0..self.peers.len() {
                 if let Some(dst_ep) = self.peers[rank].as_mut() {
                     let mut has_new_data = false;
@@ -417,6 +489,7 @@ impl<'a> EventLoop<'a> {
                     }
                 }
             }
+            */
         }
 
         for i in 0..self.io_threads {
@@ -427,6 +500,7 @@ impl<'a> EventLoop<'a> {
             })?;
         }
 
+        /*
         for comp in cq.iter() {
             if matches!(comp, Completion::WorkerThreadExit) {
                 log::info!("a worker thread is finished");
@@ -436,6 +510,7 @@ impl<'a> EventLoop<'a> {
                 break;
             }
         }
+        */
 
         Ok(())
     }
