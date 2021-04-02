@@ -16,15 +16,6 @@ use litemsg::endpoint::Endpoint;
 
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 
-fn partition(mut peers: Vec<Endpoint>, num_groups: usize) -> Vec<Vec<Endpoint>> {
-    let mut groups = Vec::with_capacity(num_groups);
-    groups.resize_with(num_groups, Vec::new);
-    for (i, s) in peers.drain(..).enumerate() {
-        groups[i % num_groups].push(s);
-    }
-    groups
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Operation {
     RECV,
@@ -77,8 +68,6 @@ fn main() -> anyhow::Result<()> {
 
     // start IO threads, another half for kthreads running network stack
     let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
-    let io_threads = 0;
-    // let mut peers_group = partition(peers, io_threads);
 
     // completion queue of io worker thread
     let (comp_tx, comp_rx) = mpsc::channel();
@@ -144,7 +133,6 @@ fn io_worker(wq: Receiver<WorkRequest>, cq: Sender<Completion>) -> anyhow::Resul
                     Err(endpoint::Error::WouldBlock) => Completion::WouldBlock(rank, ep),
                     Err(endpoint::Error::ConnectionLost) => {
                         Completion::ConnectionLost(rank, ep)
-                        // poll.deregister(ep.stream()).unwrap();
                     }
                     Err(e) => {
                         // unexpected error, exit the io worker
@@ -154,7 +142,7 @@ fn io_worker(wq: Receiver<WorkRequest>, cq: Sender<Completion>) -> anyhow::Resul
             }
             Operation::SEND => {
                 match ep.on_send_ready::<message::Command>() {
-                    Ok((cmd, attachment)) => Completion::SendComplete(rank, ep, Box::new(attachment)),
+                    Ok((_cmd, attachment)) => Completion::SendComplete(rank, ep, Box::new(attachment)),
                     Err(endpoint::Error::NothingToSend) => Completion::NothingToSend(rank, ep),
                     Err(endpoint::Error::WouldBlock) => Completion::WouldBlock(rank, ep),
                     Err(e) => {
@@ -237,43 +225,21 @@ impl<'a> EventLoop<'a> {
         Ok(())
     }
 
-    fn on_recv_complete(&mut self, cmd: message::Command, poll: &mio::Poll) -> anyhow::Result<()> {
+    fn on_recv_complete(&mut self, cmd: message::Command) -> anyhow::Result<()> {
         use message::Command::*;
         match cmd {
             EmitFlow(flow) => {
                 log::info!("prepare to start a flow: {:?}", flow);
                 let rank = self.peer_index[&flow.dst];
-                // self.post_buffer[rank].push_back(flow);
+                self.post_buffer[rank].push_back(flow);
 
-                log::info!("start a flow: {:?}", flow);
-                let dst_ep = self.peers[rank].as_mut().unwrap();
-                let total_bytes = flow.bytes;
-                let bound = 1000000;
-                for i in 0..(total_bytes + bound - 1) / bound {
-                    let chunk_size = if (i + 1) * bound < total_bytes { bound } else { total_bytes - i * bound };
-                    let q = self.data_store.entry(chunk_size).or_insert_with(|| Vec::new());
-                    if q.is_empty() {
-                        let mut data = Vec::with_capacity(chunk_size);
-                        unsafe {
-                            data.set_len(chunk_size);
-                        }
-                        q.push(data);
-                    }
-                    let data = q.pop().unwrap();
-                    let msg = if i * bound + chunk_size >= total_bytes {
-                        message::Command::Data(flow.clone())
-                    } else {
-                        message::Command::DataChunk(flow.clone())
-                    };
-                    dst_ep.post(msg, Some(data))?;
-                }
-                // reactivate
-                poll.reregister(
-                    dst_ep.stream(),
-                    mio::Token(rank),
-                    dst_ep.interest(),
-                    mio::PollOpt::level(),
-                )?;
+                // // reactivate
+                // poll.reregister(
+                //     dst_ep.stream(),
+                //     mio::Token(rank),
+                //     dst_ep.interest(),
+                //     mio::PollOpt::level(),
+                // )?;
             }
             AppFinish => {
                 TERMINATE.store(true, SeqCst);
@@ -328,10 +294,10 @@ impl<'a> EventLoop<'a> {
         )?;
 
         // steer flow to a particular io thread
-        // let mut flow_worker_id = Vec::with_capacity(self.peers.len());
-        // for (i, _ep) in self.peers.iter().enumerate() {
-        //     flow_worker_id.push(i % self.io_threads);
-        // }
+        let mut flow_worker_id = Vec::with_capacity(self.peers.len());
+        for (i, _ep) in self.peers.iter().enumerate() {
+            flow_worker_id.push(i % self.io_threads);
+        }
 
         let cq = self.cq.take().unwrap();
 
@@ -345,31 +311,31 @@ impl<'a> EventLoop<'a> {
 
                 if event.readiness().is_writable() {
                     if rank < self.peers.len() {
-                        // if let Some(ep) = self.peers[rank].take() {
-                        //     let tid = flow_worker_id[rank];
-                        //     self.wqs[tid].send(WorkRequest {
-                        //         rank,
-                        //         ep,
-                        //         op: Operation::SEND,
-                        //     })?;
-                        // } // else ignore this event because we're using level trigger
-                        match self.peers[rank].as_mut().unwrap().on_send_ready::<message::Command>() {
-                            Ok((_cmd, attachment)) => {
-                                self.on_send_complete(attachment)?;
-                            }
-                            Err(endpoint::Error::NothingToSend) => {
-                                poll.reregister(
-                                    self.peers[rank].as_mut().unwrap().stream(),
-                                    mio::Token(rank),
-                                    mio::Ready::empty(),
-                                    mio::PollOpt::level(),
-                                )?;
-                            }
-                            Err(endpoint::Error::WouldBlock) => {}
-                            Err(e) => {
-                                return Err(e.into());
-                            }
-                        }
+                        if let Some(ep) = self.peers[rank].take() {
+                            let tid = flow_worker_id[rank];
+                            self.wqs[tid].send(WorkRequest {
+                                rank,
+                                ep,
+                                op: Operation::SEND,
+                            })?;
+                        } // else ignore this event because we're using level trigger
+                        // match self.peers[rank].as_mut().unwrap().on_send_ready::<message::Command>() {
+                        //     Ok((_cmd, attachment)) => {
+                        //         self.on_send_complete(attachment)?;
+                        //     }
+                        //     Err(endpoint::Error::NothingToSend) => {
+                        //         poll.reregister(
+                        //             self.peers[rank].as_mut().unwrap().stream(),
+                        //             mio::Token(rank),
+                        //             mio::Ready::empty(),
+                        //             mio::PollOpt::level(),
+                        //         )?;
+                        //     }
+                        //     Err(endpoint::Error::WouldBlock) => {}
+                        //     Err(e) => {
+                        //         return Err(e.into());
+                        //     }
+                        // }
                     } else {
                         match self.controller_ep.on_send_ready::<message::Command>() {
                             Ok((_cmd, attachment)) => {
@@ -385,31 +351,31 @@ impl<'a> EventLoop<'a> {
                 }
                 if event.readiness().is_readable() {
                     if rank < self.peers.len() {
-                        // if let Some(ep) = self.peers[rank].take() {
-                        //     let tid = flow_worker_id[rank];
-                        //     self.wqs[tid].send(WorkRequest {
-                        //         rank,
-                        //         ep,
-                        //         op: Operation::RECV,
-                        //     })?;
-                        // }
-                        match self.peers[rank].as_mut().unwrap().on_recv_ready() {
-                            Ok((cmd, _)) => {
-                                self.on_recv_complete(cmd, &poll)?;
-                            }
-                            Err(endpoint::Error::WouldBlock) => {}
-                            Err(endpoint::Error::ConnectionLost) => {
-                                // looks strange here, then what is the next step?
-                                poll.deregister(self.peers[rank].as_mut().unwrap().stream()).unwrap();
-                            }
-                            Err(e) => {
-                                return Err(e.into());
-                            }
+                        if let Some(ep) = self.peers[rank].take() {
+                            let tid = flow_worker_id[rank];
+                            self.wqs[tid].send(WorkRequest {
+                                rank,
+                                ep,
+                                op: Operation::RECV,
+                            })?;
                         }
+                        // match self.peers[rank].as_mut().unwrap().on_recv_ready() {
+                        //     Ok((cmd, _)) => {
+                        //         self.on_recv_complete(cmd, &poll)?;
+                        //     }
+                        //     Err(endpoint::Error::WouldBlock) => {}
+                        //     Err(endpoint::Error::ConnectionLost) => {
+                        //         // looks strange here, then what is the next step?
+                        //         poll.deregister(self.peers[rank].as_mut().unwrap().stream()).unwrap();
+                        //     }
+                        //     Err(e) => {
+                        //         return Err(e.into());
+                        //     }
+                        // }
                     } else {
                         match self.controller_ep.on_recv_ready() {
                             Ok((cmd, _)) => {
-                                self.on_recv_complete(cmd, &poll)?;
+                                self.on_recv_complete(cmd)?;
                             }
                             Err(endpoint::Error::WouldBlock) => {}
                             Err(endpoint::Error::ConnectionLost) => {
@@ -425,7 +391,6 @@ impl<'a> EventLoop<'a> {
             }
 
             // poll cq
-            /*
             for comp in cq.try_iter() {
                 use Completion::*;
                 match comp {
@@ -460,22 +425,35 @@ impl<'a> EventLoop<'a> {
                     }
                 }
             }
-            */
 
             // clear post buffers is possible
-            /*
             for rank in 0..self.peers.len() {
                 if let Some(dst_ep) = self.peers[rank].as_mut() {
                     let mut has_new_data = false;
                     while let Some(flow) = self.post_buffer[rank].pop_front() {
                         has_new_data = true;
                         log::info!("start a flow: {:?}", flow);
-                        let mut data = Vec::with_capacity(flow.bytes);
-                        unsafe {
-                            data.set_len(flow.bytes);
+                        // chunking
+                        let total_bytes = flow.bytes;
+                        let bound = 1000000;
+                        for i in 0..(total_bytes + bound - 1) / bound {
+                            let chunk_size = if (i + 1) * bound < total_bytes { bound } else { total_bytes - i * bound };
+                            let q = self.data_store.entry(chunk_size).or_insert_with(|| Vec::new());
+                            if q.is_empty() {
+                                let mut data = Vec::with_capacity(chunk_size);
+                                unsafe {
+                                    data.set_len(chunk_size);
+                                }
+                                q.push(data);
+                            }
+                            let data = q.pop().unwrap();
+                            let msg = if i * bound + chunk_size >= total_bytes {
+                                message::Command::Data(flow.clone())
+                            } else {
+                                message::Command::DataChunk(flow.clone())
+                            };
+                            dst_ep.post(msg, Some(data))?;
                         }
-                        let msg = message::Command::Data(flow);
-                        dst_ep.post(msg, Some(data))?;
                     }
                     if has_new_data {
                         // because there's new data to send, so we reactivate the ep
@@ -489,7 +467,6 @@ impl<'a> EventLoop<'a> {
                     }
                 }
             }
-            */
         }
 
         for i in 0..self.io_threads {
@@ -500,7 +477,6 @@ impl<'a> EventLoop<'a> {
             })?;
         }
 
-        /*
         for comp in cq.iter() {
             if matches!(comp, Completion::WorkerThreadExit) {
                 log::info!("a worker thread is finished");
@@ -510,7 +486,6 @@ impl<'a> EventLoop<'a> {
                 break;
             }
         }
-        */
 
         Ok(())
     }
