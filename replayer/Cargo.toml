@@ -29,6 +29,7 @@ toml = "0.5.8"
 zipf = "7.0.0"
 lazy_static = "1.4.0"
 sha2 = "0.9.3"
+crossbeam = "0.8.0"
 
 [dependencies.mio]
 version = "0.6.23"
