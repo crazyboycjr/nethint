@@ -79,7 +79,7 @@ impl std::fmt::Display for Role {
 
 fn hash_file<P: AsRef<std::path::Path>>(path: P) -> String {
     use sha2::Digest;
-    
+
     log::debug!("hash content of file: {}", path.as_ref().display());
     let content = std::fs::read(path).unwrap();
 
@@ -94,8 +94,6 @@ fn hash_file<P: AsRef<std::path::Path>>(path: P) -> String {
 
     format!("{:X}", result)
 }
-
-
 
 fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnce() -> () {
     let jobname = opt.jobname.clone();
@@ -133,13 +131,9 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
             let src = configfile;
             let dst = format!("/tmp/{}_setting_{}.toml", jobname, hash);
             let dst_full = format!("{}:{}", ip, dst);
-            Command::new("scp")
-                .arg("-P")
-                .arg(port)
-                .arg(src)
-                .arg(dst_full)
-                .spawn()
-                .expect("Failed to scp");
+            let mut scp_cmd = Command::new("scp");
+            scp_cmd.arg("-P").arg(port).arg(src).arg(dst_full);
+            let _output = utils::cmd_helper::get_command_output(scp_cmd);
 
             controller_args = format!("--app {} --config {}", jobname, dst);
         }
