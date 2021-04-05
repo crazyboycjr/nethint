@@ -6,6 +6,7 @@ use nethint::{
     Duration, Timestamp, Trace, TraceRecord,
 };
 use std::rc::Rc;
+use std::cmp;
 
 use crate::{
     random_ring::RandomRingAllReduce, rat::RatAllReduce,
@@ -17,6 +18,7 @@ pub struct AllReduceApp<'c> {
     cluster: Option<Rc<dyn Topology>>,
     replayer: Replayer,
     jct: Option<Duration>,
+    network_time: Option<Duration>,
     seed: u64,
     allreduce_policy: AllReducePolicy,
     remaining_iterations: usize,
@@ -47,6 +49,7 @@ impl<'c> AllReduceApp<'c> {
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
+            network_time: None,
             seed,
             allreduce_policy,
             remaining_iterations: job_spec.num_iterations,
@@ -105,6 +108,11 @@ impl<'c> AllReduceApp<'c> {
         }
     }
 }
+//computation time for allreuce job
+//para: job_size and constant of k 
+fn calc_job_computation_time(buffer_size: u64, k: u64) -> u64{
+    return k*buffer_size;
+}
 
 impl<'c> Application for AllReduceApp<'c> {
     type Output = Option<Duration>;
@@ -134,7 +142,15 @@ impl<'c> Application for AllReduceApp<'c> {
 
         if let AppEventKind::FlowComplete(ref flows) = &event.event {
             let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
+            self.network_time = self.network_time.iter().cloned().chain(fct_cur).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();
+            // get max jct and coputation time
+            let buffer_size = 500_000_00;
+            let comp_time: Option<u64> = Some(calc_job_computation_time(buffer_size, 1));
+            println!("comp_time: {:?}", comp_time);
+            self.jct = cmp::max(self.jct, comp_time);
+            // println!("self jct: {:?}", self.jct);
+
             self.remaining_flows -= flows.len();
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
@@ -146,9 +162,10 @@ impl<'c> Application for AllReduceApp<'c> {
                     return self.request_nethint();
                 }
                 self.allreduce(self.jct.unwrap());
+                println!("self.jct.unwrap()-self.network_time.unwrap(): {:?}", self.jct.unwrap()-self.network_time.unwrap());
                 return self
                     .replayer
-                    .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                    .on_event(AppEvent::new(event.ts+self.jct.unwrap()-self.network_time.unwrap(), AppEventKind::AppStart));
             }
         }
         self.replayer.on_event(event)
@@ -157,3 +174,21 @@ impl<'c> Application for AllReduceApp<'c> {
         self.jct
     }
 }
+//comment out later
+
+//  parameter:data size,  operator
+// return computation time
+
+// def computation_time(data_size, opertor=allreduce):
+//     comp_time = 0
+//     k = get_k_from distribution()
+//     return comp_time*k
+
+// def computation_time(data_size, operator):
+//     if operator==mapper:
+//         return k1*data_size
+//     elif operator==reduceer:
+//         return k2*data_size
+//     else:
+//         return Constant
+

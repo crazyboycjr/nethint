@@ -664,8 +664,9 @@ impl<'a> Executor<'a> for Simulator {
         let start = std::time::Instant::now();
         let mut events = app.on_event(app_event!(AppEventKind::AppStart));
         let mut new_events = Events::new();
-
+        println!("test here");
         loop {
+            
             let mut finished = false;
             events.reverse();
 

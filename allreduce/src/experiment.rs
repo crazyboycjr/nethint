@@ -157,7 +157,7 @@ fn main() {
         //     estimator.bench_single_start();
         //     run_batch(&config, i, trial_id, seed, Rc::clone(&brain));
         // }
-
+        println!("app stats: {:?}", i);
         let batch_repeat = config.batch_repeat;
         let config_clone = config.clone();
         let brain_clone = brain.borrow().replicate_for_multithread();
@@ -277,7 +277,7 @@ fn run_batch(
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
         .collect();
 
-    println!("{:?}", app_stats);
+    println!("app stats: {:?}", app_stats);
 
     // save result to config.directory
     if let Some(path) = config.directory.clone() {
