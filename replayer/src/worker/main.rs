@@ -47,7 +47,7 @@ fn main() -> anyhow::Result<()> {
     log::info!("connecting to controller_uri: {}", controller_uri);
 
     let (mut nodes, my_node, controller, mut listener) =
-        litemsg::connect_controller(&controller_uri, 7)?;
+        litemsg::connect_controller(&controller_uri, 8)?;
     let mut controller_ep = endpoint::Builder::new()
         .stream(controller)
         .readable(true)

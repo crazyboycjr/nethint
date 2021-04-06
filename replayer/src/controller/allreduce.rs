@@ -211,6 +211,8 @@ impl AllreduceApp {
             return Ok(());
         }
 
+        let start = std::time::Instant::now();
+
         // then we have the hint, self.cluster is set
         if self.allreduce_algorithm.is_none() {
             self.allreduce_algorithm = Some(self.new_allreduce_algorithm());
@@ -220,12 +222,25 @@ impl AllreduceApp {
             self.job_spec.buffer_size as u64,
             &**self.cluster.as_ref().unwrap(),
         );
+
+        let end = std::time::Instant::now();
+        log::debug!("it take {:?} to run the allreduce algorithm", end - start);
         log::debug!("flows from result of allreduce algorithm: {:?}", flows);
 
+        // merge the flows with the same src and dst pair
+        log::debug!("merging the flows with the same src and dst pair");
+        let mut matrix: HashMap<(String, String), usize> = Default::default();
         for flow in flows {
             let size = flow.bytes;
-            let src_hostname = &self.vname_to_hostname[&flow.src];
-            let dst_hostname = &self.vname_to_hostname[&flow.dst];
+            *matrix.entry((flow.src.clone(), flow.dst.clone())).or_default() += size;
+        }
+
+        for (k, size) in matrix {
+            // let size = flow.bytes;
+            // let src_hostname = &self.vname_to_hostname[&flow.src];
+            // let dst_hostname = &self.vname_to_hostname[&flow.dst];
+            let src_hostname = &self.vname_to_hostname[&k.0];
+            let dst_hostname = &self.vname_to_hostname[&k.1];
             let src_node = &self.hostname_to_node[src_hostname];
             let dst_node = &self.hostname_to_node[dst_hostname];
 

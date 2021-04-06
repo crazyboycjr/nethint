@@ -400,7 +400,7 @@ impl Handler {
         let my_role = pcluster.get_my_role();
         assert_eq!(my_role, Role::Worker);
         self.receive_rack_chunk(allhints);
-        log::info!("worker agent link traffic: {:?}", self.traffic);
+        log::debug!("worker agent link traffic: {:?}", self.traffic);
         Ok(())
     }
 

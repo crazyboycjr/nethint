@@ -15,8 +15,8 @@ use crate::Role;
 
 pub const NRACKS: usize = 2;
 pub const RACK_SIZE: usize = 3;
-pub const RACK_BW: f64 = 100.0;
-pub const HOST_BW: f64 = 100.0;
+pub const RACK_BW: f64 = 40.0;
+pub const HOST_BW: f64 = 40.0;
 pub const MAX_SLOTS: usize = 4;
 
 lazy_static! {

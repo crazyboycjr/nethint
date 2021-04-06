@@ -53,8 +53,10 @@ fn main() -> anyhow::Result<()> {
         .unwrap();
 
     let start = std::time::Instant::now();
+    log::info!("start io_loop");
     io_loop(&opts, workers, brain, hostname_to_node)?;
     let end = std::time::Instant::now();
+    log::info!("end io_loop");
     println!("duration: {:?}", end - start);
 
     Ok(())
