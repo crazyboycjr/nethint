@@ -97,6 +97,7 @@ impl AllreduceAppBuilder {
             allreduce_algorithm: None,
             vname_to_hostname: Default::default(),
             cluster: None,
+            flow_iters: Default::default(),
         });
 
         if setting.probe.enable {
@@ -121,6 +122,7 @@ pub struct AllreduceApp {
     allreduce_algorithm: Option<Box<dyn AllReduceAlgorithm>>,
     vname_to_hostname: HashMap<String, String>,
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
+    flow_iters: HashMap<(Node, Node), usize>,
 }
 
 impl Application for AllreduceApp {
@@ -160,19 +162,38 @@ impl Application for AllreduceApp {
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
-            FlowComplete(_flow) => {
-                self.num_remaining_flows -= 1;
+            FlowComplete(flow) => {
+                log::info!("remaining iter: {}, flow complete: {:?}", self.remaining_iterations, flow);
+                // self.num_remaining_flows -= 1;
+                let mut no_more_flow = false;
+                self.flow_iters.entry((flow.src.clone(), flow.dst.clone())).and_modify(|e| {
+                    assert!(*e > 0);
+                    *e -= 1;
+                    if *e == 0 {
+                        no_more_flow = true;
+                    }
+                });
+                self.num_remaining_flows -= no_more_flow as usize;
+                if !no_more_flow {
+                    // re-emit the flow
+                    let endpoint = self.workers.get_mut(&flow.src).unwrap();
+                    let cmd = message::Command::EmitFlow(flow);
+                    log::debug!("allreduce::run, cmd: {:?}", cmd);
+                    endpoint.post(cmd, None).unwrap();
+                }
+
                 if self.num_remaining_flows == 0 && self.remaining_iterations > 0 {
                     if self.setting.auto_tune.is_some()
                         && self.setting.auto_tune.unwrap() > 0
-                        && self.remaining_iterations % self.setting.auto_tune.unwrap() == 0
+                        // && self.remaining_iterations % self.setting.auto_tune.unwrap() == 0
                     {
                         self.cluster = None;
                         assert_eq!(self.setting.nethint_level, 2);
                         self.request_nethint(NetHintVersion::V2)?;
                         return Ok(false);
                     }
-                    self.allreduce()?;
+                    unreachable!();
+                    // self.allreduce()?;
                 } else if self.num_remaining_flows == 0 && self.remaining_iterations == 0 {
                     self.finish()?;
                     return Ok(true);
@@ -235,6 +256,7 @@ impl AllreduceApp {
             *matrix.entry((flow.src.clone(), flow.dst.clone())).or_default() += size;
         }
 
+        let niters = self.setting.auto_tune.unwrap_or(self.job_spec.num_iterations);
         for (k, size) in matrix {
             // let size = flow.bytes;
             // let src_hostname = &self.vname_to_hostname[&flow.src];
@@ -244,6 +266,8 @@ impl AllreduceApp {
             let src_node = &self.hostname_to_node[src_hostname];
             let dst_node = &self.hostname_to_node[dst_hostname];
 
+            let e = self.flow_iters.entry((src_node.clone(), dst_node.clone())).or_insert(niters);
+            *e = niters;
             let flow = Flow::new(size, src_node.clone(), dst_node.clone(), None);
             let cmd = message::Command::EmitFlow(flow);
             log::debug!("allreduce::run, cmd: {:?}", cmd);
@@ -253,7 +277,7 @@ impl AllreduceApp {
             self.num_remaining_flows += 1;
         }
 
-        self.remaining_iterations -= 1;
+        self.remaining_iterations -= niters;
         Ok(())
     }
 
