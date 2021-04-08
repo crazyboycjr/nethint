@@ -649,7 +649,7 @@ impl<'a> Executor<'a> for Simulator {
                 AppEvent::new(self.ts, kind)
             }};
         }
-
+        // println!("app {:?}", app);
         // set background flow hard at the very beginning
         if self.setting.background_flow_hard.enable {
             // ask brain to update background flow
@@ -664,12 +664,12 @@ impl<'a> Executor<'a> for Simulator {
         let start = std::time::Instant::now();
         let mut events = app.on_event(app_event!(AppEventKind::AppStart));
         let mut new_events = Events::new();
-        println!("test here");
+        
+        // this was called 12 time and 3 times as a group
         loop {
-            
             let mut finished = false;
-            events.reverse();
-
+            events.reverse();//get last event
+            println!("events {:?}", events);
             trace!("simulator: events.len: {:?}", events.len());
             while let Some(event) = events.pop() {
                 trace!("simulator: on event {:?}", event);

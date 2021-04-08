@@ -209,6 +209,7 @@ fn run_experiments_multitenant(
             policy,
             nethint_level,
             opt.collocate,
+            0, //add computation time here
         ));
 
         let nhosts_to_acquire = if opt.collocate {

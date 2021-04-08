@@ -17,7 +17,7 @@ use nethint::{
     simulator::{Event, Events, Executor, Simulator},
     Duration, Flow, Trace, TraceRecord,
 };
-use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng};
+use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, prelude::*};
 
 pub struct MapReduceApp<'c> {
     seed: u64,
@@ -29,12 +29,22 @@ pub struct MapReduceApp<'c> {
     collocate: bool,
     replayer: Replayer,
     jct: Option<Duration>,
+    computation_time: u64,
 }
 
 impl<'c> std::fmt::Debug for MapReduceApp<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "MapReduceApp")
     }
+}
+
+/// get shuffle duration 
+fn get_shuffle_dur()->usize{
+    let choices = [(24, 61), (37, 13), (62, 14), (85, 12)];
+    let mut rng = thread_rng();
+    let val = choices.choose_weighted(&mut rng, |item| item.1).unwrap().0;
+    println!("{:?}", choices.choose_weighted(&mut rng, |item| item.1).unwrap().0);
+    return val;
 }
 
 impl<'c> MapReduceApp<'c> {
@@ -46,6 +56,7 @@ impl<'c> MapReduceApp<'c> {
         reducer_place_policy: ReducerPlacementPolicy,
         nethint_level: usize,
         collocate: bool,
+        computation_time: u64,
     ) -> Self {
         assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
@@ -58,6 +69,7 @@ impl<'c> MapReduceApp<'c> {
             collocate,
             replayer: Replayer::new(Trace::new()),
             jct: None,
+            computation_time,
         }
     }
 
@@ -121,9 +133,13 @@ impl<'c> MapReduceApp<'c> {
         let mut trace = Trace::new();
         for i in 0..self.job_spec.num_map {
             for j in 0..self.job_spec.num_reduce {
+                // let shuffle_percentage = get_percentage(); //25%
                 // no translation
+                // shuffle matrix - > shuffle time -> total time(mapper, reducer, shuffle)
+                // k1 == k2 -> 
+
                 let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
-                let rec = TraceRecord::new(0, flow, None);
+                let rec = TraceRecord::new(self.computation_time, flow, None);
                 trace.add_record(rec);
             }
         }
@@ -199,12 +215,15 @@ impl<'c> Application for MapReduceApp<'c> {
         let now = event.ts;
         let events = self.replayer.on_event(event);
 
+        //cal reducer time * k2
+        //max(reducer[i]*k2 + flow.ts)
         if let Some(sim_ev) = events.last() {
             if matches!(sim_ev, Event::AppFinish) {
                 self.jct = Some(now);
+                println!("jct: {:?}", self.jct);
             }
         }
-
+        
         events
     }
     fn answer(&mut self) -> Self::Output {
@@ -233,6 +252,7 @@ pub fn run_map_reduce(
         reduce_place_policy,
         2,
         false,
+        1,
     ));
     app.start();
 

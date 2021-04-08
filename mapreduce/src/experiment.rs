@@ -65,6 +65,12 @@ struct ExperimentConfig {
     /// Traffic scale, multiply the traffic size by a number to allow job overlaps
     traffic_scale: f64,
 
+    /// Computation time switch
+    computation_time_switch: bool,
+
+    /// Computation time
+    computation_time: u64,
+
     /// Mapper placement policy
     mapper_policy: MapperPlacementPolicy,
 
@@ -179,7 +185,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
         .unwrap();
 
     let ncases = std::cmp::min(config.ncases, job_trace.count);
-
+    
     // Read job information (start_ts, job_spec) from file
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
@@ -194,6 +200,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
                 .map(|(a, b)| (a, b * config.traffic_scale))
                 .collect();
             let start_ts = record.ts * 1_000_000;
+            
             log::debug!("record: {:?}", record);
             let job_spec = JobSpec::new(
                 record.num_map * config.num_map,
@@ -231,6 +238,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
             batch.reducer_policy,
             batch.nethint_level,
             config.collocate,
+            config.computation_time,
         ));
 
         let nhosts_to_acquire = if config.collocate {
@@ -259,7 +267,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
 
         app_group.add(*start_ts, virtualized_app);
     }
-
+    
     log::debug!("app_group: {:?}", app_group);
 
     // setup simulator
@@ -271,6 +279,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
 
     // run application in simulator
     let app_jct = simulator.run_with_application(Box::new(app_group));
+    
     let app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
