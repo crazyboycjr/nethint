@@ -69,7 +69,7 @@ impl<'c> AllReduceApp<'c> {
         match self.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, 1)),
             AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed, 1)),
-            AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
+            AllReducePolicy::RAT => Box::new(RatAllReduce::new(self.job_spec.num_workers)),
         }
     }
 

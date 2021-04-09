@@ -215,10 +215,11 @@ impl Application for AllreduceApp {
 impl AllreduceApp {
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         let num_rings = self.setting.num_rings.unwrap_or(1);
+        let num_trees = self.setting.num_rings.unwrap_or(self.job_spec.num_workers);
         match self.setting.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, num_rings)),
             AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed, num_rings)),
-            AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
+            AllReducePolicy::RAT => Box::new(RatAllReduce::new(num_trees)),
         }
     }
 
