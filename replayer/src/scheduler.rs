@@ -264,6 +264,7 @@ mod sched_allreduce {
                     probe: batch.probe.clone(),
                     nethint_level: batch.nethint_level,
                     auto_tune: batch.auto_tune,
+                    num_rings: batch.num_rings,
                 };
 
                 let setting_path = job_dir.join("setting.toml");

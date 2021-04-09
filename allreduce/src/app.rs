@@ -67,8 +67,8 @@ impl<'c> AllReduceApp<'c> {
 
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         match self.allreduce_policy {
-            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
-            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
+            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, 1)),
+            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed, 1)),
             AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
         }
     }

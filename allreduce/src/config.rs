@@ -23,6 +23,9 @@ pub struct BatchConfig {
     /// Whether to auto tune after a certain iterations
     #[serde(default)]
     pub auto_tune: Option<usize>,
+    /// Whether to constructs multiple ring to max utilize cpu
+    #[serde(default)]
+    pub num_rings: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

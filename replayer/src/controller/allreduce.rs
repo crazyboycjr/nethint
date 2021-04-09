@@ -37,6 +37,8 @@ pub struct AllreduceSetting {
     pub nethint_level: usize,
     #[serde(default)]
     pub auto_tune: Option<usize>,
+    #[serde(default)]
+    pub num_rings: Option<usize>,
 }
 
 pub struct AllreduceAppBuilder {
@@ -212,9 +214,10 @@ impl Application for AllreduceApp {
 
 impl AllreduceApp {
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
+        let num_rings = self.setting.num_rings.unwrap_or(1);
         match self.setting.allreduce_policy {
-            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed)),
-            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed)),
+            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, num_rings)),
+            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed, num_rings)),
             AllReducePolicy::RAT => Box::new(RatAllReduce::new()),
         }
     }
