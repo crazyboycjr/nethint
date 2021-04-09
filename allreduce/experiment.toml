@@ -12,6 +12,10 @@ job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
 buffer_size = 100_000_000
 
+# k is used to present the relationship between buffer_size and computation time
+# computation_time = buffer_size*k
+k = 0.5
+
 # Number of iterations for all jobs
 num_iterations = 10
 

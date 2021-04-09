@@ -281,7 +281,6 @@ fn run_batch(
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
         .collect();
 
-    println!("{:?}", app_stats);
 
     // save result to config.directory
     if let Some(path) = config.directory.clone() {

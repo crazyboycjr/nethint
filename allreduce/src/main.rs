@@ -156,7 +156,6 @@ fn run_experiments(
         .collect();
     app_stats.sort();
 
-    println!("{:?}", app_stats);
     // let mut simulator = Simulator::new((**brain.borrow().cluster()).clone());
     // let app_jct = simulator.run_with_application(Box::new(app_group));
     // info!("{:?}", app_jct);
