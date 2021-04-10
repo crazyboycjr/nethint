@@ -15,7 +15,7 @@ use crate::{
 
 pub struct AllReduceApp<'c> {
     job_spec: &'c JobSpec,
-    k: f64,
+    computation_speed: f64,
     cluster: Option<Rc<dyn Topology>>,
     replayer: Replayer,
     jct: Option<Duration>,
@@ -38,7 +38,7 @@ impl<'c> std::fmt::Debug for AllReduceApp<'c> {
 impl<'c> AllReduceApp<'c> {
     pub fn new(
         job_spec: &'c JobSpec,
-        k: f64,
+        computation_speed: f64,
         cluster: Option<Rc<dyn Topology>>,
         seed: u64,
         allreduce_policy: AllReducePolicy,
@@ -48,7 +48,7 @@ impl<'c> AllReduceApp<'c> {
         let trace = Trace::new();
         AllReduceApp {
             job_spec,
-            k,
+            computation_speed,
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
@@ -150,8 +150,8 @@ impl<'c> Application for AllReduceApp<'c> {
             self.fct = self.fct.iter().cloned().chain(fct_cur).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();
             // get max jct and coputation time
-            let comp_time: u64 = calc_job_computation_time(self.job_spec.buffer_size, self.k);
-            self.jct = cmp::max(self.jct, Some(self.fct.unwrap() + comp_time));
+            let computation_time: u64 = calc_job_computation_time(self.job_spec.buffer_size, self.computation_speed);
+            self.jct = Some(cmp::max(self.jct.unwrap(), self.fct.unwrap() + computation_time));
             
             self.remaining_flows -= flows.len();
 

@@ -64,7 +64,7 @@ struct ExperimentConfig {
     buffer_size: usize,
 
     /// computation_time = k * buffer_size 
-    k: f64,
+    computation_speed: f64,
 
     /// Number of iterations for all jobs
     num_iterations: usize,
@@ -233,7 +233,7 @@ fn run_batch(
 
         let allreduce_app = Box::new(AllReduceApp::new(
             job_spec,
-            config.k,
+            config.computation_speed,
             None,
             seed,
             batch.policy,
@@ -279,6 +279,8 @@ fn run_batch(
         .iter()
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
         .collect();
+    
+    println!("{:?}", app_stats);
 
     // save result to config.directory
     if let Some(path) = config.directory.clone() {

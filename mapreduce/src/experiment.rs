@@ -289,6 +289,8 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
     // remember to garbage collect remaining jobs
     brain.borrow_mut().reset();
 
+    println!("{:?}", app_stats);
+
     // save result to config.directory
     if let Some(path) = config.directory.clone() {
         save_result(path, app_stats);
