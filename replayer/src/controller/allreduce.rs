@@ -7,14 +7,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use allreduce::{
-    random_ring::RandomRingAllReduce, rat::RatAllReduce,
+    config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
-    config::ProbeConfig,
 };
 
 use nethint::{
     bandwidth::{Bandwidth, BandwidthTrait},
-    cluster::{Topology, VirtCluster, LinkIx},
+    cluster::{LinkIx, Topology, VirtCluster},
     counterunit::{CounterType, CounterUnit},
     hint::{NetHintV2Real, NetHintVersion},
     TenantId,
@@ -103,7 +102,11 @@ impl AllreduceAppBuilder {
         });
 
         if setting.probe.enable {
-            app = Box::new(PlinkApp::new(job_spec.num_workers, setting.probe.round_ms, app));
+            app = Box::new(PlinkApp::new(
+                job_spec.num_workers,
+                setting.probe.round_ms,
+                app,
+            ));
         }
 
         app
@@ -165,16 +168,22 @@ impl Application for AllreduceApp {
         use message::Command::*;
         match cmd {
             FlowComplete(flow) => {
-                log::info!("remaining iter: {}, flow complete: {:?}", self.remaining_iterations, flow);
+                log::info!(
+                    "remaining iter: {}, flow complete: {:?}",
+                    self.remaining_iterations,
+                    flow
+                );
                 // self.num_remaining_flows -= 1;
                 let mut no_more_flow = false;
-                self.flow_iters.entry((flow.src.clone(), flow.dst.clone())).and_modify(|e| {
-                    assert!(*e > 0);
-                    *e -= 1;
-                    if *e == 0 {
-                        no_more_flow = true;
-                    }
-                });
+                self.flow_iters
+                    .entry((flow.src.clone(), flow.dst.clone()))
+                    .and_modify(|e| {
+                        assert!(*e > 0);
+                        *e -= 1;
+                        if *e == 0 {
+                            no_more_flow = true;
+                        }
+                    });
                 self.num_remaining_flows -= no_more_flow as usize;
                 if !no_more_flow {
                     // re-emit the flow
@@ -185,9 +194,8 @@ impl Application for AllreduceApp {
                 }
 
                 if self.num_remaining_flows == 0 && self.remaining_iterations > 0 {
-                    if self.setting.auto_tune.is_some()
-                        && self.setting.auto_tune.unwrap() > 0
-                        // && self.remaining_iterations % self.setting.auto_tune.unwrap() == 0
+                    if self.setting.auto_tune.is_some() && self.setting.auto_tune.unwrap() > 0
+                    // && self.remaining_iterations % self.setting.auto_tune.unwrap() == 0
                     {
                         self.cluster = None;
                         assert_eq!(self.setting.nethint_level, 2);
@@ -218,7 +226,9 @@ impl AllreduceApp {
         let num_trees = self.setting.num_rings.unwrap_or(self.job_spec.num_workers);
         match self.setting.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, num_rings)),
-            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed, num_rings)),
+            AllReducePolicy::TopologyAware => {
+                Box::new(TopologyAwareRingAllReduce::new(self.seed, num_rings))
+            }
             AllReducePolicy::RAT => Box::new(RatAllReduce::new(num_trees)),
         }
     }
@@ -243,13 +253,14 @@ impl AllreduceApp {
             self.allreduce_algorithm = Some(self.new_allreduce_algorithm());
         }
 
+        log::debug!("hint: {}", self.cluster.as_ref().unwrap().to_dot());
         let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
             self.job_spec.buffer_size as u64,
             &**self.cluster.as_ref().unwrap(),
         );
 
         let end = std::time::Instant::now();
-        log::debug!("it take {:?} to run the allreduce algorithm", end - start);
+        log::debug!("it takes {:?} to run the allreduce algorithm", end - start);
         log::debug!("flows from result of allreduce algorithm: {:?}", flows);
 
         // merge the flows with the same src and dst pair
@@ -257,10 +268,15 @@ impl AllreduceApp {
         let mut matrix: HashMap<(String, String), usize> = Default::default();
         for flow in flows {
             let size = flow.bytes;
-            *matrix.entry((flow.src.clone(), flow.dst.clone())).or_default() += size;
+            *matrix
+                .entry((flow.src.clone(), flow.dst.clone()))
+                .or_default() += size;
         }
 
-        let niters = self.setting.auto_tune.unwrap_or(self.job_spec.num_iterations);
+        let niters = self
+            .setting
+            .auto_tune
+            .unwrap_or(self.job_spec.num_iterations);
         for (k, size) in matrix {
             // let size = flow.bytes;
             // let src_hostname = &self.vname_to_hostname[&flow.src];
@@ -270,7 +286,10 @@ impl AllreduceApp {
             let src_node = &self.hostname_to_node[src_hostname];
             let dst_node = &self.hostname_to_node[dst_hostname];
 
-            let e = self.flow_iters.entry((src_node.clone(), dst_node.clone())).or_insert(niters);
+            let e = self
+                .flow_iters
+                .entry((src_node.clone(), dst_node.clone()))
+                .or_insert(niters);
             *e = niters;
             let flow = Flow::new(size, src_node.clone(), dst_node.clone(), None);
             let cmd = message::Command::EmitFlow(flow);
@@ -290,16 +309,27 @@ impl AllreduceApp {
         // unimplemented!("the problem is how to estimate nethint v2 from link traffic information. save to self.cluster");
 
         let mut vc = hintv2.hintv1.vc.clone();
+        log::debug!(
+            "estimating, hintv2: vc: {}, vname_to_hostname: {:?}, interval_ms: {}, traffic: {:?}",
+            vc.to_dot(),
+            hintv2.hintv1.vname_to_hostname,
+            hintv2.interval_ms,
+            hintv2.traffic
+        );
 
         for vlink_ix in vc.all_links() {
             // decide the direction
-            let n1 = &vc[vc.get_target(vlink_ix)];
-            let n2 = &vc[vc.get_source(vlink_ix)];
+            let n1 = &vc[vc.get_source(vlink_ix)];
+            let n2 = &vc[vc.get_target(vlink_ix)];
             assert_ne!(n1.depth, n2.depth);
             let empty_traffic = &Vec::new();
             let (traffic, link_ix, direction) = if n1.depth > n2.depth {
                 // tx
-                (hintv2.traffic.get(&vlink_ix).unwrap_or(empty_traffic), vlink_ix, CounterType::Tx)
+                (
+                    hintv2.traffic.get(&vlink_ix).unwrap_or(empty_traffic),
+                    vlink_ix,
+                    CounterType::Tx,
+                )
             } else {
                 // rx
                 let link_ix = vc.get_reverse_link(vlink_ix);
@@ -360,8 +390,12 @@ impl AllreduceApp {
             let b = vc.get_downlinks(vc.get_node_index(&high_node.name)).count();
             a + n + n * (b - 1) / b
         };
+        let mut demand_sum_bw = (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
+        if demand_sum_bw > plink_capacity {
+            demand_sum_bw = plink_capacity;
+        }
         std::cmp::max(
-            plink_capacity - (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps(),
+            plink_capacity - demand_sum_bw,
             plink_capacity / (num_flows + num_new_flows) * num_new_flows,
         )
     }
