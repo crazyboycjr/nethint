@@ -48,10 +48,25 @@ impl CounterUnit {
         }
     }
 
+    pub fn clear(&mut self) {
+        for i in 0..4 {
+            self.data[i].bytes = 0;
+            self.data[i].num_competitors = 0;
+        }
+    }
+
     pub fn merge(&mut self, other: &CounterUnit) {
         assert_eq!(self.vnodename, other.vnodename);
         for i in 0..4 {
             self.data[i] = self.data[i] + other.data[i];
+        }
+    }
+
+    pub fn subtract(&mut self, other: &CounterUnit) {
+        assert_eq!(self.vnodename, other.vnodename);
+        for i in 0..4 {
+            assert!(self.data[i].bytes >= other.data[i].bytes, "{:?} vs {:?}", self.data, other.data);
+            self.data[i] = self.data[i] - other.data[i];
         }
     }
 }

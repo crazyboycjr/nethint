@@ -203,6 +203,10 @@ fn main_loop(
 // service handler
 struct Handler {
     traffic: HashMap<LinkIx, Vec<CounterUnit>>,
+    // traffic that has been sent to other nodes
+    committed_traffic: HashMap<LinkIx, Vec<CounterUnit>>,
+    // traffic buffer for query use
+    traffic_buf: HashMap<LinkIx, Vec<CounterUnit>>,
     rank_hostname: HashMap<usize, String>,
     brain: Rc<RefCell<Brain>>,
     interval_ms: u64,
@@ -230,6 +234,8 @@ impl Handler {
         let brain = Brain::build_cloud(brain_setting);
         Handler {
             traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
+            committed_traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
+            traffic_buf: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
             rank_hostname: std::iter::once((comm.my_rank(), nhagent::cluster::hostname().clone()))
                 .collect(),
             brain,
@@ -238,8 +244,68 @@ impl Handler {
         }
     }
 
+    fn merge_chunk(chunk1: &Vec<CounterUnit>, chunk2: &Vec<CounterUnit>) -> Vec<CounterUnit> {
+        // should we really add num_competitors together here?
+        use std::collections::BTreeMap;
+        let mut ret: BTreeMap<String, CounterUnit> = BTreeMap::new();
+        for c in chunk1.iter().chain(chunk2.iter()) {
+            if ret.contains_key(&c.vnodename) {
+                ret.get_mut(&c.vnodename).unwrap().merge(c);
+            } else {
+                ret.insert(c.vnodename.clone(), c.clone());
+            }
+        }
+        ret.into_values().collect()
+    }
+
+    fn commit_chunk(chunk1: &mut Vec<CounterUnit>, chunk2: &mut Vec<CounterUnit>) {
+        use std::collections::BTreeMap;
+        let mut chunk2_map: BTreeMap<String, CounterUnit> = chunk2.into_iter().map(|x| (x.vnodename.clone(), x.clone())).collect();
+        for c in chunk1 {
+            chunk2_map.entry(c.vnodename.clone()).and_modify(|e| {
+                c.subtract(e);
+                e.clear();
+            });
+        }
+        *chunk2 = chunk2_map.into_values().collect();
+    }
+
+
     fn reset_traffic(&mut self) {
-        self.traffic = Default::default();
+        // self.traffic = Default::default();
+        // flush to traffic buf
+        let links: Vec<LinkIx> = self.traffic.keys().copied().collect();
+        self.update_traffic_buf_iter(links.iter());
+        for (&k, v) in &mut self.committed_traffic {
+            self.traffic.entry(k).and_modify(|e| Self::commit_chunk(e, v));
+        }
+    }
+
+    fn merge_traffic(traffic: &mut HashMap<LinkIx, Vec<CounterUnit>>, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
+        // 1. parse chunk, aggregate
+        for (l, c) in chunks {
+            Self::merge_traffic_on_link(traffic, l, c);
+        }
+    }
+
+    fn merge_traffic_on_link(traffic: &mut HashMap<LinkIx, Vec<CounterUnit>>, link_ix: LinkIx, chunk: Vec<CounterUnit>) {
+        // insert or merge
+        if traffic.contains_key(&link_ix) {
+            *traffic.get_mut(&link_ix).unwrap() =
+                Self::merge_chunk(&traffic[&link_ix], &chunk);
+        } else {
+            traffic.insert(link_ix, chunk);
+        }
+    }
+
+    fn update_traffic_buf(&mut self, link_ix: LinkIx) {
+        self.traffic_buf.insert(link_ix, self.traffic[&link_ix].clone());
+    }
+
+    fn update_traffic_buf_iter<'a>(&mut self, iter: impl Iterator<Item = &'a LinkIx>) {
+        for &link_ix in iter {
+            self.traffic_buf.insert(link_ix, self.traffic[&link_ix].clone());
+        }
     }
 
     fn send_server_chunk(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
@@ -252,7 +318,7 @@ impl Handler {
             let mut my_rack_leader_rank = None;
             for (&i, h) in &self.rank_hostname {
                 let node_ix = pcluster.inner().get_node_index(h);
-                if pcluster.get_role(&*h) == Role::RackLeader
+                if pcluster.get_role(&*h) != Role::Worker
                     && pcluster.is_same_rack(node_ix, my_node_ix)
                 {
                     // find the rack leader
@@ -267,8 +333,12 @@ impl Handler {
                     "my rack leader not found, my_rank: {}",
                     my_rank
                 );
-                let msg = message::Message::ServerChunk(self.traffic[&uplink].clone());
+                let chunk = self.traffic[&uplink].clone();
+                let msg = message::Message::ServerChunk(chunk.clone());
                 comm.send_to(my_rack_leader_rank.unwrap(), &msg)?;
+
+                // commit the sent data by insertion or merge
+                Self::merge_traffic_on_link(&mut self.committed_traffic, uplink, chunk);
             }
         }
         Ok(())
@@ -289,46 +359,25 @@ impl Handler {
             dataunit[0].data[Tx] += c.data[Tx] - c.data[TxIn];
             dataunit[0].data[Rx] += c.data[Rx] - c.data[RxIn];
         }
+        // reflect the updated result in traffic_buf
+        // self.update_traffic_buf(rack_uplink);
         // 2. save chunk
         let sender_hostname = &self.rank_hostname[&sender_rank];
         let uplink = pcluster
             .inner()
             .get_uplink(pcluster.inner().get_node_index(sender_hostname));
-        // insert or merge
-        if self.traffic.contains_key(&uplink) {
-            *self.traffic.get_mut(&uplink).unwrap() =
-                Self::merge_chunk(&self.traffic[&uplink], &chunk);
-        } else {
-            self.traffic.insert(uplink, chunk);
-        }
-    }
-
-    fn merge_chunk(chunk1: &Vec<CounterUnit>, chunk2: &Vec<CounterUnit>) -> Vec<CounterUnit> {
-        use std::collections::BTreeMap;
-        let mut ret: BTreeMap<String, CounterUnit> = BTreeMap::new();
-        for c in chunk1.iter().chain(chunk2.iter()) {
-            if ret.contains_key(&c.vnodename) {
-                ret.get_mut(&c.vnodename).unwrap().merge(c);
-            } else {
-                ret.insert(c.vnodename.clone(), c.clone());
-            }
-        }
-        ret.into_values().collect()
+        // 3. update traffic
+        Self::merge_traffic_on_link(&mut self.traffic, uplink, chunk.clone());
+        // self.update_traffic_buf(uplink);
     }
 
     // Assume LinkIx from different agents are compatible with each other
-    fn receive_rack_chunk(&mut self, chunk: HashMap<LinkIx, Vec<CounterUnit>>) {
-        // 1. parse chunk, aggregate
-        for (l, c) in chunk {
-            if self.traffic.contains_key(&l) {
-                *self.traffic.get_mut(&l).unwrap() = Self::merge_chunk(&self.traffic[&l], &c);
-            } else {
-                self.traffic.insert(l, c);
-            }
-        }
+    fn receive_rack_chunk(&mut self, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
+        Self::merge_traffic(&mut self.traffic, chunks.clone());
+        // self.update_traffic_buf_iter(chunks.keys());
     }
 
-    fn send_rack_chunk(&self, comm: &mut Communicator) -> anyhow::Result<()> {
+    fn send_rack_chunk(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
         assert!(comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader);
         let pcluster = CLUSTER.lock().unwrap();
         // 1. get my rack chunk
@@ -367,14 +416,16 @@ impl Handler {
                 comm.send_to(i, &msg)?;
             }
         }
+        // 3. commit the sent traffic. actually, it is already committed in send_allhints
+        // Self::merge_traffic(&mut self.committed_traffic, my_rack_traffic);
         Ok(())
     }
 
-    fn send_allhints(&self, comm: &mut Communicator) -> anyhow::Result<()> {
+    fn send_allhints(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
         assert!(comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader);
         let pcluster = CLUSTER.lock().unwrap();
-        let chunk = self.traffic.iter().map(|(&k, v)| (k, v.clone())).collect();
-        let msg = message::Message::AllHints(chunk);
+        let chunk: HashMap<LinkIx, Vec<CounterUnit>> = self.traffic.iter().map(|(&k, v)| (k, v.clone())).collect();
+        let msg = message::Message::AllHints(chunk.clone());
         // send to all workers within the same rack
         let my_node_ix = pcluster.my_node_ix();
         for i in 0..comm.world_size() {
@@ -389,6 +440,8 @@ impl Handler {
                 comm.send_to(i, &msg)?;
             }
         }
+        // 3. commit the sent traffic
+        Self::merge_traffic(&mut self.committed_traffic, chunk);
         Ok(())
     }
 
@@ -399,7 +452,15 @@ impl Handler {
         let pcluster = CLUSTER.lock().unwrap();
         let my_role = pcluster.get_my_role();
         assert_eq!(my_role, Role::Worker);
-        self.receive_rack_chunk(allhints);
+        let my_node_ix = pcluster.my_node_ix();
+        let uplink = pcluster.inner().get_uplink(my_node_ix);
+        for (l, c) in allhints {
+            if l != uplink {
+                // insert or overwrite
+                self.traffic.insert(l, c);
+                self.update_traffic_buf(l);
+            }
+        }
         log::debug!("worker agent link traffic: {:?}", self.traffic);
         Ok(())
     }
@@ -496,7 +557,7 @@ impl Handler {
             }
             ServerChunk(chunk) => {
                 let my_role = comm.my_role();
-                assert_eq!(my_role, Role::RackLeader);
+                assert!(my_role == Role::RackLeader || my_role == Role::GlobalLeader);
                 self.receive_server_chunk(sender_rank, chunk);
             }
             RackChunk(chunk) => {
@@ -550,7 +611,7 @@ impl Handler {
                                 tenant_id,
                                 vlink_ix,
                             );
-                            if let Some(traffic_on_link) = self.traffic.get(&phys_link) {
+                            if let Some(traffic_on_link) = self.traffic_buf.get(&phys_link) {
                                 // TODO(cjr): we need to do some modifications to traffic_on_link
                                 // because it contains all traffic from all tenants
                                 // the traffic from the requestor itself must be subtracted
