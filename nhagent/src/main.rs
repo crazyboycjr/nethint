@@ -304,7 +304,7 @@ impl Handler {
 
     fn update_traffic_buf_iter<'a>(&mut self, iter: impl Iterator<Item = &'a LinkIx>) {
         for &link_ix in iter {
-            self.traffic_buf.insert(link_ix, self.traffic[&link_ix].clone());
+            self.update_traffic_buf(link_ix);
         }
     }
 
@@ -359,22 +359,18 @@ impl Handler {
             dataunit[0].data[Tx] += c.data[Tx] - c.data[TxIn];
             dataunit[0].data[Rx] += c.data[Rx] - c.data[RxIn];
         }
-        // reflect the updated result in traffic_buf
-        // self.update_traffic_buf(rack_uplink);
         // 2. save chunk
         let sender_hostname = &self.rank_hostname[&sender_rank];
         let uplink = pcluster
             .inner()
             .get_uplink(pcluster.inner().get_node_index(sender_hostname));
         // 3. update traffic
-        Self::merge_traffic_on_link(&mut self.traffic, uplink, chunk.clone());
-        // self.update_traffic_buf(uplink);
+        Self::merge_traffic_on_link(&mut self.traffic, uplink, chunk);
     }
 
     // Assume LinkIx from different agents are compatible with each other
     fn receive_rack_chunk(&mut self, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
-        Self::merge_traffic(&mut self.traffic, chunks.clone());
-        // self.update_traffic_buf_iter(chunks.keys());
+        Self::merge_traffic(&mut self.traffic, chunks);
     }
 
     fn send_rack_chunk(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
@@ -458,7 +454,6 @@ impl Handler {
             if l != uplink {
                 // insert or overwrite
                 self.traffic.insert(l, c);
-                self.update_traffic_buf(l);
             }
         }
         log::debug!("worker agent link traffic: {:?}", self.traffic);
@@ -612,14 +607,43 @@ impl Handler {
                                 vlink_ix,
                             );
                             if let Some(traffic_on_link) = self.traffic_buf.get(&phys_link) {
-                                // TODO(cjr): we need to do some modifications to traffic_on_link
-                                // because it contains all traffic from all tenants
-                                // the traffic from the requestor itself must be subtracted
                                 traffic.insert(vlink_ix, traffic_on_link.clone());
                             }
                             // set vc.bandwidth to the value of physical links
                             vc[vlink_ix].bandwidth =
                                 self.brain.borrow().cluster()[phys_link].bandwidth;
+                        }
+                        // we need to do some modifications to traffic_on_link
+                        // because it contains all traffic from all tenants
+                        // the traffic from the requestor itself must be subtracted
+                        for vlink_ix in vc.all_links() {
+                            if !traffic.contains_key(&vlink_ix) {
+                                continue;
+                            }
+                            let n1 = &vc[vc.get_source(vlink_ix)];
+                            if n1.depth == 3 {
+                                let vm_local_id = vc.virt_to_vmno()[&n1.name];
+                                let vm_local_id = vm_local_id.to_string();
+                                let traffic_on_link = traffic.get_mut(&vlink_ix).unwrap();
+                                if let Some(pos) = traffic_on_link.iter().position(|c| c.vnodename == vm_local_id) {
+                                    let c = traffic_on_link.remove(pos);
+                                    // also update rack uplink
+                                    let rack_uplink = vc.get_uplink(vc.get_target(vlink_ix));
+                                    traffic
+                                        .entry(rack_uplink)
+                                        .and_modify(|dataunit| {
+                                            use nethint::counterunit::CounterType::*;
+                                            let tx_out = c.data[Tx] - c.data[TxIn];
+                                            let rx_out = c.data[Rx] - c.data[RxIn];
+                                            log::debug!("node: {}, dataunit[0].data[Tx]: {:?}, tx_out: {:?}", n1.name, dataunit[0].data[Tx], tx_out);
+                                            log::debug!("node: {}, dataunit[0].data[Rx]: {:?}, rx_out: {:?}", n1.name, dataunit[0].data[Rx], rx_out);
+                                            assert!(dataunit[0].data[Tx].bytes >= tx_out.bytes, "{:?} vs {:?}, node: {}", dataunit[0].data[Tx], tx_out, n1.name);
+                                            assert!(dataunit[0].data[Rx].num_competitors >= rx_out.num_competitors, "{:?} vs {:?}, node: {}", dataunit[0].data[Rx], rx_out, n1.name);
+                                            dataunit[0].data[Tx] -= tx_out;
+                                            dataunit[0].data[Rx] -= rx_out;
+                                        });
+                                }
+                            }
                         }
                         let vname_to_hostname = Self::get_vname_to_hostname(&vc);
                         let hintv1 = NetHintV1Real {
