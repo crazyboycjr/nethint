@@ -164,7 +164,6 @@ impl<'c> Application for AllReduceApp<'c> {
                     return self.request_nethint();
                 }
                 self.allreduce(self.jct.unwrap());
-                println!("self.jct.unwrap()-self.network_time.unwrap(): {:?}", self.jct.unwrap()-self.network_time.unwrap());
                 return self
                     .replayer
                     .on_event(AppEvent::new(event.ts+self.jct.unwrap()-self.fct.unwrap(), AppEventKind::AppStart));

@@ -649,7 +649,7 @@ impl<'a> Executor<'a> for Simulator {
                 AppEvent::new(self.ts, kind)
             }};
         }
-        // println!("app {:?}", app);
+        println!("app {:?}", app);
         // set background flow hard at the very beginning
         if self.setting.background_flow_hard.enable {
             // ask brain to update background flow

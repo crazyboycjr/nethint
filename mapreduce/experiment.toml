@@ -4,7 +4,7 @@
 trace = "mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
-ncases = 200
+ncases = 50
 
 # Number of map tasks and reduce tasks
 # When running from trace, these parameters become scale factors
