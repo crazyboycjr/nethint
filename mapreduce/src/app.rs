@@ -156,26 +156,21 @@ impl<'c> MapReduceApp<'c> {
             self.reducer_meta.reducers_remaining_flows = vec![0; self.job_spec.num_reduce];
             self.reducer_meta.reducers_placement = vec!["".to_string(); self.job_spec.num_reduce];
             self.reducer_meta.reducers_size = vec![0; self.job_spec.num_reduce];
-            println!("self.reducer_meta.reducers_remaining_flows{:?}", (self.reducer_meta.reducers_remaining_flows.len() ));
             
-            // compute the job complete time
+            // compute the entire job size
             let mut job_size = 0;
             for i in 0..self.job_spec.num_map {
                 for j in 0..self.job_spec.num_reduce {
                     job_size += shuffle.0[i][j];
                 }
             }
-
-    println!("shuffle badwidth {:?}", (self.host_bandwidth ));
-    println!("job size {:?}", (job_size ));
-            // total time(mapper, reducer, shuffle) and consider mapper_complete_time=reducer time
+            // total time(mapper, reducer, shuffle)
             let shuffle_estimate_time = job_size as f64 *8.0 / ((self.host_bandwidth*1e9) * cmp::min(self.job_spec.num_map, self.job_spec.num_reduce) as f64);
             let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur() as f64 /100.0);
-            let max_mapper_estimate_time = (job_estimate_time - shuffle_estimate_time)/2.0;
             let mut mappers_size = vec![0; self.job_spec.num_map];
             let mut reducers_size = vec![0; self.job_spec.num_reduce];
 
-            println!("shuffle time {:?}", (shuffle_estimate_time ));
+            
             for i in 0..self.job_spec.num_map {
                 for j in 0..self.job_spec.num_reduce {
                     mappers_size[i] += shuffle.0[i][j];
@@ -193,13 +188,11 @@ impl<'c> MapReduceApp<'c> {
                 Some(&max) => {max_reducer_size = max;}
                 None => println!( "Vector is empty" ),
             }
-            
 
-            // k1
-            let unit_mapper_estimation_time = max_mapper_estimate_time/(max_mapper_size as f64);
-            // k2
-            let unit_reducer_estimation_time = max_mapper_estimate_time/(max_reducer_size as f64);
-            
+            // calculate k1
+            let unit_mapper_estimation_time = (job_estimate_time-shuffle_estimate_time)/(max_mapper_size+max_reducer_size) as f64;
+            // assume k1 = k2
+            let unit_reducer_estimation_time = unit_mapper_estimation_time;
             
             
             for i in 0..self.job_spec.num_map {
@@ -215,7 +208,6 @@ impl<'c> MapReduceApp<'c> {
             self.reducer_meta.reducers_size = reducers_size;
             self.reducer_meta.unit_reducer_estimation_time = unit_reducer_estimation_time;
             self.reducer_meta.reducers_placement = reducers.0;
-
 
         }else{
 
@@ -297,7 +289,6 @@ impl<'c> Application for MapReduceApp<'c> {
         assert!(self.cluster.is_some());
 
         let now = event.ts;
-        
 
         if self.enable_computation_time{
             if let AppEventKind::FlowComplete(ref flows) = &event.event {
@@ -308,10 +299,9 @@ impl<'c> Application for MapReduceApp<'c> {
                     // println!("reduccer: {:?}", &reducers.0[0]);
                     let index = self.reducer_meta.reducers_placement.iter().position(|r| r == dst).unwrap();
                     self.reducer_meta.reducers_remaining_flows[index] -= 1;
-
                 }
 
-                //find any completed reducer
+                //find any completed reducer and update max_reducer_timestamp
                 for i in 0..self.job_spec.num_reduce{
                     if self.reducer_meta.reducers_remaining_flows[i]==0{
                         let single_reducer_complete_timestamp = now + (self.reducer_meta.reducers_size[i] as u64 * self.reducer_meta.unit_reducer_estimation_time as u64);
@@ -319,11 +309,9 @@ impl<'c> Application for MapReduceApp<'c> {
                     }
                 }
             }
-            
-
 
         }else{
-            self.reducer_meta.max_reducer_timestamp = 0;
+            self.reducer_meta.max_reducer_timestamp = now;
         }
 
 
@@ -332,7 +320,7 @@ impl<'c> Application for MapReduceApp<'c> {
 
         if let Some(sim_ev) = events.last() {
             if matches!(sim_ev, Event::AppFinish) { 
-                self.jct = Some(now+self.reducer_meta.max_reducer_timestamp as u64);
+                self.jct = Some(self.reducer_meta.max_reducer_timestamp as u64);
                 // self.jct = Some(now);
             }
         }

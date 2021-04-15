@@ -174,21 +174,6 @@ fn main() {
 
 fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain: Rc<RefCell<Brain>>) {
 
-println!("topology {:?}", (config.brain.topology ));
-let mut host_bandwidth = 0.0;
-match config.brain.topology {
-    TopoArgs::Arbitrary {
-        nracks,
-        rack_size,
-        host_bw,
-        rack_bw,
-    } => {
-        host_bandwidth = host_bw;
-    },
-    _ => (),
-}
-println!("badwidth {:?}", (host_bandwidth ));
-
     let job_trace = config
         .trace
         .as_ref()
@@ -225,6 +210,20 @@ println!("badwidth {:?}", (host_bandwidth ));
         };
 
         job.push((start_ts, job_spec));
+    }
+
+    //store host bandwidth
+    let mut host_bandwidth = 0.0;
+    match config.brain.topology {
+        TopoArgs::Arbitrary {
+            nracks,
+            rack_size,
+            host_bw,
+            rack_bw,
+        } => {
+            host_bandwidth = host_bw;
+        },
+        _ => (),
     }
 
     // Build the application by combination
