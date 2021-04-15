@@ -669,7 +669,6 @@ impl<'a> Executor<'a> for Simulator {
         loop {
             let mut finished = false;
             events.reverse();//get last event
-            println!("events {:?}", events);
             trace!("simulator: events.len: {:?}", events.len());
             while let Some(event) = events.pop() {
                 trace!("simulator: on event {:?}", event);

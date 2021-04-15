@@ -9,15 +9,25 @@ use crate::{
     PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
     ShufflePattern,
 };
+use std::cmp;
 use log::info;
-use nethint::{
-    app::{AppEvent, AppEventKind, Application, Replayer},
-    cluster::{Cluster, Topology},
-    hint::NetHintVersion,
-    simulator::{Event, Events, Executor, Simulator},
-    Duration, Flow, Trace, TraceRecord,
-};
+use nethint::{Duration, Flow, Trace, TraceRecord, app::{AppEvent, AppEventKind, Application, Replayer}, brain, cluster::{Cluster, Topology}, hint::NetHintVersion, simulator::{Event, Events, Executor, Simulator}};
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, prelude::*};
+
+pub struct ReducerMeta {
+    pub unit_reducer_estimation_time: f64,
+    pub reducers_remaining_flows: Vec<usize>,
+    pub max_reducer_timestamp: u64,
+    pub reducers_placement: Vec<String>,
+    pub reducers_size: Vec<usize>,
+}
+
+impl Default for ReducerMeta {
+    fn default() -> ReducerMeta{
+        ReducerMeta{unit_reducer_estimation_time:0.0, reducers_remaining_flows: Vec::new(), 
+                    max_reducer_timestamp:0, reducers_placement:  Vec::new(), reducers_size:  Vec::new(),}
+    }
+}
 
 pub struct MapReduceApp<'c> {
     seed: u64,
@@ -29,8 +39,11 @@ pub struct MapReduceApp<'c> {
     collocate: bool,
     replayer: Replayer,
     jct: Option<Duration>,
-    computation_time: u64,
+    host_bandwidth: f64,
+    enable_computation_time: bool,
+    reducer_meta: ReducerMeta,
 }
+
 
 impl<'c> std::fmt::Debug for MapReduceApp<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,7 +69,9 @@ impl<'c> MapReduceApp<'c> {
         reducer_place_policy: ReducerPlacementPolicy,
         nethint_level: usize,
         collocate: bool,
-        computation_time: u64,
+        host_bandwidth: f64,
+        enable_computation_time: bool,
+        reducer_meta: ReducerMeta,
     ) -> Self {
         assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
@@ -69,7 +84,9 @@ impl<'c> MapReduceApp<'c> {
             collocate,
             replayer: Replayer::new(Trace::new()),
             jct: None,
-            computation_time,
+            host_bandwidth,
+            enable_computation_time,
+            reducer_meta: reducer_meta,
         }
     }
 
@@ -131,19 +148,86 @@ impl<'c> MapReduceApp<'c> {
     fn shuffle(&mut self, shuffle: Shuffle, mappers: Placement, reducers: Placement) {
         // reinitialize replayer with new trace
         let mut trace = Trace::new();
-        for i in 0..self.job_spec.num_map {
-            for j in 0..self.job_spec.num_reduce {
-                // let shuffle_percentage = get_percentage(); //25%
-                // no translation
-                // shuffle matrix - > shuffle time -> total time(mapper, reducer, shuffle)
-                // k1 == k2 -> 
 
-                let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
-                let rec = TraceRecord::new(self.computation_time, flow, None);
-                trace.add_record(rec);
+        if self.enable_computation_time {
+            //init reducer_meta
+            self.reducer_meta.unit_reducer_estimation_time = 0.0;
+            self.reducer_meta.max_reducer_timestamp = 0;
+            self.reducer_meta.reducers_remaining_flows = vec![0; self.job_spec.num_reduce];
+            self.reducer_meta.reducers_placement = vec!["".to_string(); self.job_spec.num_reduce];
+            self.reducer_meta.reducers_size = vec![0; self.job_spec.num_reduce];
+            println!("self.reducer_meta.reducers_remaining_flows{:?}", (self.reducer_meta.reducers_remaining_flows.len() ));
+            
+            // compute the job complete time
+            let mut job_size = 0;
+            for i in 0..self.job_spec.num_map {
+                for j in 0..self.job_spec.num_reduce {
+                    job_size += shuffle.0[i][j];
+                }
             }
-        }
 
+    println!("shuffle badwidth {:?}", (self.host_bandwidth ));
+    println!("job size {:?}", (job_size ));
+            // total time(mapper, reducer, shuffle) and consider mapper_complete_time=reducer time
+            let shuffle_estimate_time = job_size as f64 *8.0 / ((self.host_bandwidth*1e9) * cmp::min(self.job_spec.num_map, self.job_spec.num_reduce) as f64);
+            let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur() as f64 /100.0);
+            let max_mapper_estimate_time = (job_estimate_time - shuffle_estimate_time)/2.0;
+            let mut mappers_size = vec![0; self.job_spec.num_map];
+            let mut reducers_size = vec![0; self.job_spec.num_reduce];
+
+            println!("shuffle time {:?}", (shuffle_estimate_time ));
+            for i in 0..self.job_spec.num_map {
+                for j in 0..self.job_spec.num_reduce {
+                    mappers_size[i] += shuffle.0[i][j];
+                    reducers_size[j] += shuffle.0[i][j];
+                }
+            }
+            
+            let mut max_mapper_size = 0;
+            match mappers_size.iter().max() {
+                Some(&max) => {max_mapper_size = max;}
+                None => println!( "Vector is empty" ),
+            }
+            let mut max_reducer_size = 0;
+            match reducers_size.iter().max() {
+                Some(&max) => {max_reducer_size = max;}
+                None => println!( "Vector is empty" ),
+            }
+            
+
+            // k1
+            let unit_mapper_estimation_time = max_mapper_estimate_time/(max_mapper_size as f64);
+            // k2
+            let unit_reducer_estimation_time = max_mapper_estimate_time/(max_reducer_size as f64);
+            
+            
+            
+            for i in 0..self.job_spec.num_map {
+                for j in 0..self.job_spec.num_reduce {
+                    self.reducer_meta.reducers_remaining_flows[j]+=1;
+                    let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
+                    // let rec = TraceRecord::new(0, flow, None);
+                    let rec = TraceRecord::new((unit_mapper_estimation_time * shuffle.0[i][j] as f64) as u64, flow, None);
+                    trace.add_record(rec);
+                }
+            }
+
+            self.reducer_meta.reducers_size = reducers_size;
+            self.reducer_meta.unit_reducer_estimation_time = unit_reducer_estimation_time;
+            self.reducer_meta.reducers_placement = reducers.0;
+
+
+        }else{
+
+            for i in 0..self.job_spec.num_map {
+                for j in 0..self.job_spec.num_reduce {
+                    let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
+                    let rec = TraceRecord::new(0, flow, None);
+                    trace.add_record(rec);
+                }
+            }
+
+        }
         self.replayer = Replayer::new(trace);
     }
 
@@ -213,14 +297,43 @@ impl<'c> Application for MapReduceApp<'c> {
         assert!(self.cluster.is_some());
 
         let now = event.ts;
-        let events = self.replayer.on_event(event);
+        
 
-        //cal reducer time * k2
-        //max(reducer[i]*k2 + flow.ts)
+        if self.enable_computation_time{
+            if let AppEventKind::FlowComplete(ref flows) = &event.event {
+
+                //update remaining flows on each reducer
+                for trace in flows.iter(){
+                    let dst = &trace.flow.dst;
+                    // println!("reduccer: {:?}", &reducers.0[0]);
+                    let index = self.reducer_meta.reducers_placement.iter().position(|r| r == dst).unwrap();
+                    self.reducer_meta.reducers_remaining_flows[index] -= 1;
+
+                }
+
+                //find any completed reducer
+                for i in 0..self.job_spec.num_reduce{
+                    if self.reducer_meta.reducers_remaining_flows[i]==0{
+                        let single_reducer_complete_timestamp = now + (self.reducer_meta.reducers_size[i] as u64 * self.reducer_meta.unit_reducer_estimation_time as u64);
+                        self.reducer_meta.max_reducer_timestamp = cmp::max(self.reducer_meta.max_reducer_timestamp, single_reducer_complete_timestamp)
+                    }
+                }
+            }
+            
+
+
+        }else{
+            self.reducer_meta.max_reducer_timestamp = 0;
+        }
+
+
+        let events = self.replayer.on_event(event);
+        
+
         if let Some(sim_ev) = events.last() {
-            if matches!(sim_ev, Event::AppFinish) {
-                self.jct = Some(now);
-                println!("jct: {:?}", self.jct);
+            if matches!(sim_ev, Event::AppFinish) { 
+                self.jct = Some(now+self.reducer_meta.max_reducer_timestamp as u64);
+                // self.jct = Some(now);
             }
         }
         
@@ -252,7 +365,9 @@ pub fn run_map_reduce(
         reduce_place_policy,
         2,
         false,
-        1,
+        0.0,
+        false,
+        ReducerMeta::default(),
     ));
     app.start();
 

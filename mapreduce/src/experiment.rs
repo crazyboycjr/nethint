@@ -10,11 +10,12 @@ use nethint::{
     cluster::Topology,
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder, SimulatorSetting},
+    architecture::TopoArgs,
 };
 
 use mapreduce::{
     app::MapReduceApp, mapper::MapperPlacementPolicy, plink::PlinkApp, trace::JobTrace, JobSpec,
-    ReducerPlacementPolicy, ShufflePattern,
+    ReducerPlacementPolicy, ShufflePattern, app::ReducerMeta,
 };
 
 #[derive(Debug, Clone, StructOpt)]
@@ -66,10 +67,7 @@ struct ExperimentConfig {
     traffic_scale: f64,
 
     /// Computation time switch
-    computation_time_switch: bool,
-
-    /// Computation time
-    computation_time: u64,
+    enable_computation_time: bool,
 
     /// Mapper placement policy
     mapper_policy: MapperPlacementPolicy,
@@ -139,7 +137,7 @@ fn main() {
     rayon::ThreadPoolBuilder::new().num_threads(opt.parallel).build_global().unwrap();
 
     let brain = Brain::build_cloud(config.brain.clone());
-
+    
     log::info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     // create the output directory if it does not exist
@@ -175,6 +173,22 @@ fn main() {
 }
 
 fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain: Rc<RefCell<Brain>>) {
+
+println!("topology {:?}", (config.brain.topology ));
+let mut host_bandwidth = 0.0;
+match config.brain.topology {
+    TopoArgs::Arbitrary {
+        nracks,
+        rack_size,
+        host_bw,
+        rack_bw,
+    } => {
+        host_bandwidth = host_bw;
+    },
+    _ => (),
+}
+println!("badwidth {:?}", (host_bandwidth ));
+
     let job_trace = config
         .trace
         .as_ref()
@@ -238,7 +252,9 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
             batch.reducer_policy,
             batch.nethint_level,
             config.collocate,
-            config.computation_time,
+            host_bandwidth,
+            config.enable_computation_time,
+            ReducerMeta::default(),
         ));
 
         let nhosts_to_acquire = if config.collocate {
@@ -267,6 +283,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
 
         app_group.add(*start_ts, virtualized_app);
     }
+    
     
     log::debug!("app_group: {:?}", app_group);
 
