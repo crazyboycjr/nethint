@@ -303,7 +303,8 @@ impl OvsSampler {
                     Entry::Occupied(mut o) => {
                         let stats = o.get_mut();
                         let now = std::time::Instant::now();
-                        if stats.create_time + used < now {
+                        // if stats.create_time + used < now {
+                        if bytes_read < stats.bytes as u64 {
                             // this is a new record in the output
                             stats.create_time = now - used;
                             stats.create_time = now;

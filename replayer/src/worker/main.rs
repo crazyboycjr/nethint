@@ -69,7 +69,8 @@ fn main() -> anyhow::Result<()> {
         .collect();
 
     // start IO threads, another half for kthreads running network stack
-    let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
+    // let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
+    let io_threads = 1;
 
     // completion queue of io worker thread
     // let (comp_tx, comp_rx) = mpsc::channel();
