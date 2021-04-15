@@ -664,9 +664,8 @@ impl<'a> Executor<'a> for Simulator {
         let start = std::time::Instant::now();
         let mut events = app.on_event(app_event!(AppEventKind::AppStart));
         let mut new_events = Events::new();
-        
-        // this was called 12 time and 3 times as a group
         loop {
+            
             let mut finished = false;
             events.reverse();//get last event
             trace!("simulator: events.len: {:?}", events.len());

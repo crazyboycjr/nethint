@@ -15,10 +15,11 @@ use crate::{
 
 pub struct AllReduceApp<'c> {
     job_spec: &'c JobSpec,
+    computation_speed: f64,
     cluster: Option<Rc<dyn Topology>>,
     replayer: Replayer,
     jct: Option<Duration>,
-    network_time: Option<Duration>,
+    fct: Option<Duration>,
     seed: u64,
     allreduce_policy: AllReducePolicy,
     remaining_iterations: usize,
@@ -37,6 +38,7 @@ impl<'c> std::fmt::Debug for AllReduceApp<'c> {
 impl<'c> AllReduceApp<'c> {
     pub fn new(
         job_spec: &'c JobSpec,
+        computation_speed: f64,
         cluster: Option<Rc<dyn Topology>>,
         seed: u64,
         allreduce_policy: AllReducePolicy,
@@ -46,10 +48,11 @@ impl<'c> AllReduceApp<'c> {
         let trace = Trace::new();
         AllReduceApp {
             job_spec,
+            computation_speed,
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
-            network_time: None,
+            fct: None,
             seed,
             allreduce_policy,
             remaining_iterations: job_spec.num_iterations,
@@ -109,9 +112,11 @@ impl<'c> AllReduceApp<'c> {
     }
 }
 //computation time for allreuce job
-//para: job_size and constant of k 
-fn calc_job_computation_time(buffer_size: u64, k: u64) -> u64{
-    return k*buffer_size;
+//para: job_size and constant: k 
+fn calc_job_computation_time(buffer_size: usize, k: f64) -> u64{
+    let buffer_size_f64 = buffer_size as f64;
+    let res = ((k)*(buffer_size_f64))  as u64;
+    res
 }
 
 impl<'c> Application for AllReduceApp<'c> {
@@ -142,15 +147,12 @@ impl<'c> Application for AllReduceApp<'c> {
 
         if let AppEventKind::FlowComplete(ref flows) = &event.event {
             let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
-            self.network_time = self.network_time.iter().cloned().chain(fct_cur).max();
+            self.fct = self.fct.iter().cloned().chain(fct_cur).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();
             // get max jct and coputation time
-            let buffer_size = 500_000_00;
-            let comp_time: Option<u64> = Some(calc_job_computation_time(buffer_size, 1));
-            println!("comp_time: {:?}", comp_time);
-            self.jct = cmp::max(self.jct, comp_time);
-            // println!("self jct: {:?}", self.jct);
-
+            let computation_time: u64 = calc_job_computation_time(self.job_spec.buffer_size, self.computation_speed);
+            self.jct = Some(cmp::max(self.jct.unwrap(), self.fct.unwrap() + computation_time));
+            
             self.remaining_flows -= flows.len();
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
@@ -165,7 +167,7 @@ impl<'c> Application for AllReduceApp<'c> {
                 println!("self.jct.unwrap()-self.network_time.unwrap(): {:?}", self.jct.unwrap()-self.network_time.unwrap());
                 return self
                     .replayer
-                    .on_event(AppEvent::new(event.ts+self.jct.unwrap()-self.network_time.unwrap(), AppEventKind::AppStart));
+                    .on_event(AppEvent::new(event.ts+self.jct.unwrap()-self.fct.unwrap(), AppEventKind::AppStart));
             }
         }
         self.replayer.on_event(event)
@@ -174,21 +176,3 @@ impl<'c> Application for AllReduceApp<'c> {
         self.jct
     }
 }
-//comment out later
-
-//  parameter:data size,  operator
-// return computation time
-
-// def computation_time(data_size, opertor=allreduce):
-//     comp_time = 0
-//     k = get_k_from distribution()
-//     return comp_time*k
-
-// def computation_time(data_size, operator):
-//     if operator==mapper:
-//         return k1*data_size
-//     elif operator==reduceer:
-//         return k2*data_size
-//     else:
-//         return Constant
-
