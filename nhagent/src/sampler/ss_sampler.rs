@@ -147,35 +147,93 @@ impl SsSampler {
         let local_ip_table = get_local_ip_table().expect("get local_ip_table failed");
         let mut flow_table = FlowTable::default();
         let tx = self.tx.clone();
+        let interval = std::time::Duration::from_millis(self.interval_ms);
 
         let listen_addr = ("0.0.0.0", self.listen_port);
         let sock = std::net::UdpSocket::bind(&listen_addr)
             .unwrap_or_else(|_| panic!("could listen on {:?}", listen_addr));
-        sock.set_read_timeout(Some(std::time::Duration::from_millis(self.interval_ms)))
+        sock.set_read_timeout(Some(std::time::Duration::from_millis(1)))
             .expect("set timeout failed");
         let mut buf = vec![0; 65507];
+        let mut last_ts = std::time::Instant::now();
+
+        // group the flows by (src, dst) pair
+        let mut flow_group: HashMap<(IpAddr, IpAddr), u64> = Default::default();
+
         self.handle = Some(std::thread::spawn(move || loop {
+
+            let now = std::time::Instant::now();
+            if now - last_ts >= interval {
+                let mut vnode_counter: HashMap<IpAddr, CounterUnit> = local_ip_table
+                    .iter()
+                    .map(|(&ip, name)| (ip, CounterUnit::new(name)))
+                    .collect();
+                let pcluster = CLUSTER.lock().unwrap();
+
+                use CounterType::*;
+                for (f, &delta) in &flow_group {
+                    if local_ip_table.contains_key(&f.0) {
+                        // tx
+                        vnode_counter
+                            .entry(f.0)
+                            .and_modify(|e| e.add_flow(Tx, delta));
+                        if pcluster.is_ip_within_rack(&f.1) {
+                            // tx_in
+                            vnode_counter
+                                .entry(f.0)
+                                .and_modify(|e| e.add_flow(TxIn, delta));
+                        }
+                    }
+                    if local_ip_table.contains_key(&f.1) {
+                        // rx
+                        vnode_counter
+                            .entry(f.1)
+                            .and_modify(|e| e.add_flow(Rx, delta));
+                        if pcluster.is_ip_within_rack(&f.0) {
+                            // rx_in
+                            vnode_counter
+                                .entry(f.1)
+                                .and_modify(|e| e.add_flow(RxIn, delta));
+                        }
+                    }
+                }
+
+                // release the lock, do not hold it for too long
+                std::mem::drop(pcluster);
+
+                // vnode_counter hash_map to vec
+                let counter_unit: Vec<CounterUnit> = vnode_counter
+                    .values()
+                    .filter(|v| !v.is_empty())
+                    .cloned()
+                    .collect();
+                tx.send(counter_unit).unwrap();
+
+                // update the timer
+                last_ts = std::time::Instant::now();
+                // clear the accumulated state
+                flow_group.clear();
+            }
+
             match sock.recv_from(&mut buf) {
                 Ok((nbytes, _src)) => {
                     // do not check the src
+                    if nbytes >= 65507 {
+                        panic!(
+                            "read {} bytes from UDP payload, there might more data is cut off",
+                            nbytes
+                        );
+                    }
                     let buf = &buf[..nbytes];
                     let data = std::str::from_utf8(buf).expect("from_utf8");
                     let ss_flows: SsTcpFlows = data.parse().unwrap();
                     log::trace!("{:?}", ss_flows);
 
-                    let pcluster = CLUSTER.lock().unwrap();
-                    let mut vnode_counter: HashMap<IpAddr, CounterUnit> = Default::default();
-                    for (&ip, vnodename) in local_ip_table.iter() {
-                        vnode_counter
-                            .insert(ip, CounterUnit::new(vnodename))
-                            .unwrap_none();
-                    }
-
                     let now = std::time::Instant::now();
                     for ss_flow in ss_flows.0 {
                         let ap = ss_flow.addr_pair;
                         for (addr_pair, bytes) in
-                            vec![(ap, ss_flow.bytes_sent), (ap, ss_flow.bytes_received)]
+                            vec![(ap, ss_flow.bytes_sent), (ap.rev(), ss_flow.bytes_received)]
                         {
                             let delta = match flow_table.table.entry(addr_pair) {
                                 Entry::Vacant(v) => {
@@ -201,34 +259,25 @@ impl SsSampler {
                                 }
                             };
 
-                            use CounterType::*;
-                            let ip_src: IpAddr = (*addr_pair.local_addr.ip()).into();
-                            let ip_dst: IpAddr = (*addr_pair.peer_addr.ip()).into();
+                            let local_ip: IpAddr = (*addr_pair.local_addr.ip()).into();
+                            let peer_ip: IpAddr = (*addr_pair.peer_addr.ip()).into();
                             if delta > 0 {
-                                if local_ip_table.contains_key(&ip_src) {
+                                // if both IPs are local, the delta will count in both the tx and
+                                // rx traffic
+                                if local_ip_table.contains_key(&local_ip) {
                                     // tx
-                                    vnode_counter
-                                        .entry(ip_src)
-                                        .and_modify(|e| e.add_flow(Tx, delta));
-                                    if pcluster.is_ip_within_rack(&ip_dst) {
-                                        // tx_in
-                                        vnode_counter
-                                            .entry(ip_src)
-                                            .and_modify(|e| e.add_flow(TxIn, delta));
-                                    }
-                                } else if local_ip_table.contains_key(&ip_dst) {
+                                    *flow_group.entry((local_ip, peer_ip)).or_insert(0) += delta;
+                                }
+                                if local_ip_table.contains_key(&peer_ip) {
                                     // rx
-                                    vnode_counter
-                                        .entry(ip_dst)
-                                        .and_modify(|e| e.add_flow(Rx, delta));
-                                    if pcluster.is_ip_within_rack(&ip_src) {
-                                        // rx_in
-                                        vnode_counter
-                                            .entry(ip_dst)
-                                            .and_modify(|e| e.add_flow(RxIn, delta));
-                                    }
-                                } else {
-                                    log::warn!(
+                                    *flow_group.entry((local_ip, peer_ip)).or_insert(0) += delta;
+                                }
+                                if !local_ip_table.contains_key(&local_ip)
+                                    && !local_ip_table.contains_key(&peer_ip)
+                                {
+                                    // we can sliently ignore these cases such as 127.0.0.1, or
+                                    // IPs from other subnets
+                                    log::debug!(
                                         "ss_sampler: {:?} does not come from or target to this server",
                                         ss_flow,
                                     );
@@ -236,14 +285,9 @@ impl SsSampler {
                             }
                         }
                     }
-                    // release the lock, do not hold it for too long
-                    std::mem::drop(pcluster);
 
-                    // vnode_counter hash_map to vec
-                    let counter_unit: Vec<CounterUnit> = vnode_counter.values().cloned().collect();
-                    tx.send(counter_unit).unwrap();
-
-                    // TODO(cjr): remove expired entries
+                    // TODO(cjr): remove expired entries, but it should be OK not to do this, as
+                    // the number of entries are very limited.
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => {

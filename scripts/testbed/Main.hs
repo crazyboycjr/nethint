@@ -209,7 +209,6 @@ import Control.Concurrent
 
 myPkill = do
     sshAndExecuteAll cpus "pkill -f /tmp/worker"
-    sshAndExecuteAll cpus "pkill -f ssagent"
     sshAndExecuteAll cpus "pkill -f controller"
 
 myScp = do
@@ -217,7 +216,6 @@ myScp = do
     forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/rplaunch"   "/tmp/"
     forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/controller" "/tmp/"
     forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/worker"     "/tmp/"
-    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/ssagent"    "/tmp/"
 :}
 
 :m -Control.Concurrent

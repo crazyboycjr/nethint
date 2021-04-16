@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CounterType {
@@ -48,6 +48,10 @@ impl CounterUnit {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.data[0].bytes + self.data[1].bytes + self.data[2].bytes + self.data[3].bytes == 0
+    }
+
     pub fn clear(&mut self) {
         for i in 0..4 {
             self.data[i].bytes = 0;
@@ -65,7 +69,12 @@ impl CounterUnit {
     pub fn subtract(&mut self, other: &CounterUnit) {
         assert_eq!(self.vnodename, other.vnodename);
         for i in 0..4 {
-            assert!(self.data[i].bytes >= other.data[i].bytes, "{:?} vs {:?}", self.data, other.data);
+            assert!(
+                self.data[i].bytes >= other.data[i].bytes,
+                "{:?} vs {:?}",
+                self.data,
+                other.data
+            );
             self.data[i] = self.data[i] - other.data[i];
         }
     }

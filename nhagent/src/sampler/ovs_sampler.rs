@@ -1,5 +1,5 @@
-use std::sync::mpsc;
 use std::process::Command;
+use std::sync::mpsc;
 use std::{collections::HashMap, convert::TryInto};
 
 use serde::{Deserialize, Serialize};
@@ -304,7 +304,7 @@ impl OvsSampler {
                         let stats = o.get_mut();
                         let now = std::time::Instant::now();
                         if stats.create_time + used < now {
-                        // if bytes_read < stats.bytes as u64 {
+                            // if bytes_read < stats.bytes as u64 {
                             // this is a new record in the output
                             stats.create_time = now - used;
                             stats.create_time = now;
@@ -347,7 +347,8 @@ impl OvsSampler {
                             .entry(eth_src)
                             .and_modify(|e| update_counter_unit(e, TxIn, delta));
                     }
-                } else if local_eth_table.contains_key(&eth_dst) {
+                }
+                if local_eth_table.contains_key(&eth_dst) {
                     // rx
                     vnode_counter
                         .entry(eth_dst)
@@ -358,7 +359,11 @@ impl OvsSampler {
                             .entry(eth_dst)
                             .and_modify(|e| update_counter_unit(e, RxIn, delta));
                     }
-                } else {
+                }
+
+                if !local_eth_table.contains_key(&eth_src)
+                    && !local_eth_table.contains_key(&eth_dst)
+                {
                     log::warn!(
                         "ovs_flow {:?} does not come from or target to this server",
                         ovs_flow
