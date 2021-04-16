@@ -40,6 +40,9 @@ struct Opts {
     /// The working interval of agent in millisecond
     #[structopt(short = "i", long = "interval", default_value = "100")]
     interval_ms: u64,
+    /// The listening port of the sampler
+    #[structopt(short = "p", long = "p", default_value = "5555")]
+    sampler_listen_port: u16,
 }
 
 fn main() -> Result<()> {
@@ -49,10 +52,11 @@ fn main() -> Result<()> {
     let opt = Opts::from_args();
     log::info!("Opts: {:#?}", opt);
 
-    // TODO(cjr): put these code in NetHintAgent struct
     let (tx, rx) = mpsc::channel();
 
-    let mut sampler = nhagent::sampler::OvsSampler::new(opt.interval_ms, tx);
+    // let mut sampler = nhagent::sampler::OvsSampler::new(opt.interval_ms, tx);
+    let mut sampler =
+        nhagent::sampler::SsSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
     sampler.run();
 
     log::info!("cluster: {}", CLUSTER.lock().unwrap().inner().to_dot());
@@ -78,6 +82,11 @@ fn main_loop(
     use message::Message;
     {
         let msg = Message::DeclareEthHostTable(CLUSTER.lock().unwrap().eth_hostname().clone());
+        log::debug!("broadcasting: {:?}", msg);
+        comm.broadcast(&msg)?;
+    }
+    {
+        let msg = Message::DeclareIpHostTable(CLUSTER.lock().unwrap().ip_hostname().clone());
         log::debug!("broadcasting: {:?}", msg);
         comm.broadcast(&msg)?;
     }
@@ -216,18 +225,19 @@ struct Handler {
 
 impl Handler {
     fn new(comm: &mut Communicator, interval_ms: u64) -> Self {
+        use nhagent::cluster::*;
         let brain_setting = BrainSetting {
             seed: 1,
             asymmetric: false,
             broken: 0.0,
-            max_slots: nhagent::cluster::MAX_SLOTS,
+            max_slots: MAX_SLOTS,
             sharing_mode: nethint::SharingMode::Guaranteed,
             guaranteed_bandwidth: Some(25),
             topology: nethint::architecture::TopoArgs::Arbitrary {
-                nracks: nhagent::cluster::NRACKS,
-                rack_size: nhagent::cluster::RACK_SIZE,
-                host_bw: nhagent::cluster::HOST_BW,
-                rack_bw: nhagent::cluster::RACK_BW,
+                nracks: NRACKS,
+                rack_size: RACK_SIZE,
+                host_bw: HOST_BW,
+                rack_bw: RACK_BW,
             },
             background_flow_high_freq: Default::default(),
         };
@@ -260,7 +270,10 @@ impl Handler {
 
     fn commit_chunk(chunk1: &mut Vec<CounterUnit>, chunk2: &mut Vec<CounterUnit>) {
         use std::collections::BTreeMap;
-        let mut chunk2_map: BTreeMap<String, CounterUnit> = chunk2.into_iter().map(|x| (x.vnodename.clone(), x.clone())).collect();
+        let mut chunk2_map: BTreeMap<String, CounterUnit> = chunk2
+            .into_iter()
+            .map(|x| (x.vnodename.clone(), x.clone()))
+            .collect();
         for c in chunk1 {
             chunk2_map.entry(c.vnodename.clone()).and_modify(|e| {
                 c.subtract(e);
@@ -270,36 +283,44 @@ impl Handler {
         *chunk2 = chunk2_map.into_values().collect();
     }
 
-
     fn reset_traffic(&mut self) {
         // self.traffic = Default::default();
         // flush to traffic buf
         let links: Vec<LinkIx> = self.traffic.keys().copied().collect();
         self.update_traffic_buf_iter(links.iter());
         for (&k, v) in &mut self.committed_traffic {
-            self.traffic.entry(k).and_modify(|e| Self::commit_chunk(e, v));
+            self.traffic
+                .entry(k)
+                .and_modify(|e| Self::commit_chunk(e, v));
         }
     }
 
-    fn merge_traffic(traffic: &mut HashMap<LinkIx, Vec<CounterUnit>>, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
+    fn merge_traffic(
+        traffic: &mut HashMap<LinkIx, Vec<CounterUnit>>,
+        chunks: HashMap<LinkIx, Vec<CounterUnit>>,
+    ) {
         // 1. parse chunk, aggregate
         for (l, c) in chunks {
             Self::merge_traffic_on_link(traffic, l, c);
         }
     }
 
-    fn merge_traffic_on_link(traffic: &mut HashMap<LinkIx, Vec<CounterUnit>>, link_ix: LinkIx, chunk: Vec<CounterUnit>) {
+    fn merge_traffic_on_link(
+        traffic: &mut HashMap<LinkIx, Vec<CounterUnit>>,
+        link_ix: LinkIx,
+        chunk: Vec<CounterUnit>,
+    ) {
         // insert or merge
         if traffic.contains_key(&link_ix) {
-            *traffic.get_mut(&link_ix).unwrap() =
-                Self::merge_chunk(&traffic[&link_ix], &chunk);
+            *traffic.get_mut(&link_ix).unwrap() = Self::merge_chunk(&traffic[&link_ix], &chunk);
         } else {
             traffic.insert(link_ix, chunk);
         }
     }
 
     fn update_traffic_buf(&mut self, link_ix: LinkIx) {
-        self.traffic_buf.insert(link_ix, self.traffic[&link_ix].clone());
+        self.traffic_buf
+            .insert(link_ix, self.traffic[&link_ix].clone());
     }
 
     fn update_traffic_buf_iter<'a>(&mut self, iter: impl Iterator<Item = &'a LinkIx>) {
@@ -420,7 +441,8 @@ impl Handler {
     fn send_allhints(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
         assert!(comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader);
         let pcluster = CLUSTER.lock().unwrap();
-        let chunk: HashMap<LinkIx, Vec<CounterUnit>> = self.traffic.iter().map(|(&k, v)| (k, v.clone())).collect();
+        let chunk: HashMap<LinkIx, Vec<CounterUnit>> =
+            self.traffic.iter().map(|(&k, v)| (k, v.clone())).collect();
         let msg = message::Message::AllHints(chunk.clone());
         // send to all workers within the same rack
         let my_node_ix = pcluster.my_node_ix();
@@ -468,7 +490,13 @@ impl Handler {
         nhosts_to_acquire: usize,
         allow_delay: bool,
     ) -> anyhow::Result<()> {
-        log::info!("handle_provision: {} {} {} {}", sender_rank, tenant_id, nhosts_to_acquire, allow_delay);
+        log::info!(
+            "handle_provision: {} {} {} {}",
+            sender_rank,
+            tenant_id,
+            nhosts_to_acquire,
+            allow_delay
+        );
         use message::Message::*;
         // connect the code to Brain, provision VMs, return the vcluster
         match self.brain.borrow_mut().provision(
@@ -546,6 +574,11 @@ impl Handler {
                 // merge table from other hosts
                 let mut pcluster = CLUSTER.lock().unwrap();
                 pcluster.update_eth_hostname(table);
+            }
+            DeclareIpHostTable(table) => {
+                // merge table from other hosts
+                let mut pcluster = CLUSTER.lock().unwrap();
+                pcluster.update_ip_hostname(table);
             }
             DeclareHostname(hostname) => {
                 self.rank_hostname.insert(sender_rank, hostname);
@@ -625,23 +658,47 @@ impl Handler {
                                 let vm_local_id = vc.virt_to_vmno()[&n1.name];
                                 let vm_local_id = vm_local_id.to_string();
                                 let traffic_on_link = traffic.get_mut(&vlink_ix).unwrap();
-                                if let Some(pos) = traffic_on_link.iter().position(|c| c.vnodename == vm_local_id) {
+                                if let Some(pos) = traffic_on_link
+                                    .iter()
+                                    .position(|c| c.vnodename == vm_local_id)
+                                {
                                     let c = traffic_on_link.remove(pos);
                                     // also update rack uplink
                                     let rack_uplink = vc.get_uplink(vc.get_target(vlink_ix));
-                                    traffic
-                                        .entry(rack_uplink)
-                                        .and_modify(|dataunit| {
-                                            use nethint::counterunit::CounterType::*;
-                                            let tx_out = c.data[Tx] - c.data[TxIn];
-                                            let rx_out = c.data[Rx] - c.data[RxIn];
-                                            log::debug!("node: {}, dataunit[0].data[Tx]: {:?}, tx_out: {:?}", n1.name, dataunit[0].data[Tx], tx_out);
-                                            log::debug!("node: {}, dataunit[0].data[Rx]: {:?}, rx_out: {:?}", n1.name, dataunit[0].data[Rx], rx_out);
-                                            assert!(dataunit[0].data[Tx].bytes >= tx_out.bytes, "{:?} vs {:?}, node: {}", dataunit[0].data[Tx], tx_out, n1.name);
-                                            assert!(dataunit[0].data[Rx].num_competitors >= rx_out.num_competitors, "{:?} vs {:?}, node: {}", dataunit[0].data[Rx], rx_out, n1.name);
-                                            dataunit[0].data[Tx] -= tx_out;
-                                            dataunit[0].data[Rx] -= rx_out;
-                                        });
+                                    traffic.entry(rack_uplink).and_modify(|dataunit| {
+                                        use nethint::counterunit::CounterType::*;
+                                        let tx_out = c.data[Tx] - c.data[TxIn];
+                                        let rx_out = c.data[Rx] - c.data[RxIn];
+                                        log::debug!(
+                                            "node: {}, dataunit[0].data[Tx]: {:?}, tx_out: {:?}",
+                                            n1.name,
+                                            dataunit[0].data[Tx],
+                                            tx_out
+                                        );
+                                        log::debug!(
+                                            "node: {}, dataunit[0].data[Rx]: {:?}, rx_out: {:?}",
+                                            n1.name,
+                                            dataunit[0].data[Rx],
+                                            rx_out
+                                        );
+                                        assert!(
+                                            dataunit[0].data[Tx].bytes >= tx_out.bytes,
+                                            "{:?} vs {:?}, node: {}",
+                                            dataunit[0].data[Tx],
+                                            tx_out,
+                                            n1.name
+                                        );
+                                        assert!(
+                                            dataunit[0].data[Rx].num_competitors
+                                                >= rx_out.num_competitors,
+                                            "{:?} vs {:?}, node: {}",
+                                            dataunit[0].data[Rx],
+                                            rx_out,
+                                            n1.name
+                                        );
+                                        dataunit[0].data[Tx] -= tx_out;
+                                        dataunit[0].data[Rx] -= rx_out;
+                                    });
                                 }
                             }
                         }

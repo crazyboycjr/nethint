@@ -5,6 +5,7 @@ use nethint::counterunit::CounterUnit;
 use nethint::cluster::LinkIx;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -25,6 +26,10 @@ pub enum Message {
     /// send by worker, procesed by worker
     /// declare the table to map ethaddr to hostname collected locally
     DeclareEthHostTable(HashMap<EthAddr, String>),
+
+    /// send by worker, procesed by worker
+    /// declare the table to map ethaddr to hostname collected locally
+    DeclareIpHostTable(HashMap<IpAddr, String>),
 
     /// send by worker, processed by worker
     DeclareHostname(String),

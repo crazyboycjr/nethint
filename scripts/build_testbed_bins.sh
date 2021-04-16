@@ -7,3 +7,4 @@ cargo build --release --bin worker
 cargo build --release --bin rplaunch
 cargo build --release --bin nhagent
 cargo build --release --bin scheduler
+cargo build --release --bin ssagent

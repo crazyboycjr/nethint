@@ -21,3 +21,11 @@ structopt = "0.3.21"
 
 [dependencies.mio]
 version = "0.6.23"
+
+[[bin]]
+name = "nhagent"
+path = "src/main.rs"
+
+[[bin]]
+name = "ssagent"
+path = "src/ssagent.rs"

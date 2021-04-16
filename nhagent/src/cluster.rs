@@ -3,6 +3,7 @@ use std::process::Command;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::net::IpAddr;
 
 use nethint::{
     architecture::build_arbitrary_cluster,
@@ -42,6 +43,7 @@ pub struct PhysCluster {
     // map eth addr to hostname
     // this table with be updated later
     eth_hostname: HashMap<EthAddr, String>,
+    ip_hostname: HashMap<IpAddr, String>,
 }
 
 impl PhysCluster {
@@ -69,10 +71,16 @@ impl PhysCluster {
             (eth_addr, my_hostname.clone())
         }).collect();
 
+        let local_ip_table = crate::sampler::get_local_ip_table().unwrap();
+        let ip_hostname = local_ip_table.into_keys().map(|ip_addr| {
+            (ip_addr, my_hostname.clone())
+        }).collect();
+
         PhysCluster {
             inner: cluster,
             my_node_ix,
             eth_hostname,
+            ip_hostname,
         }
     }
 
@@ -88,9 +96,17 @@ impl PhysCluster {
         &self.eth_hostname
     }
 
+    pub fn ip_hostname(&self) -> &HashMap<IpAddr, String> {
+        &self.ip_hostname
+    }
+
     pub fn update_eth_hostname(&mut self, table: HashMap<EthAddr, String>) {
         // COMMENT(cjr): what if there are repeat keys from remote table
         self.eth_hostname.extend(table);
+    }
+
+    pub fn update_ip_hostname(&mut self, table: HashMap<IpAddr, String>) {
+        self.ip_hostname.extend(table);
     }
 
     fn is_first_child(cluster: &Cluster, node_ix: NodeIx) -> bool {
@@ -147,6 +163,16 @@ impl PhysCluster {
     pub fn is_eth_within_rack(&self, eth_addr: &EthAddr) -> bool {
         if let Some(host) = self.eth_hostname.get(eth_addr) {
             // TODO(cjr): make this robust because the query may fail
+            let host_ix = self.inner.get_node_index(host);
+            let my_host_ix = self.inner.get_node_index(&hostname());
+            self.is_same_rack(host_ix, my_host_ix)
+        } else {
+            false
+        }
+    }
+
+    pub fn is_ip_within_rack(&self, ip_addr: &IpAddr) -> bool {
+        if let Some(host) = self.ip_hostname.get(ip_addr) {
             let host_ix = self.inner.get_node_index(host);
             let my_host_ix = self.inner.get_node_index(&hostname());
             self.is_same_rack(host_ix, my_host_ix)

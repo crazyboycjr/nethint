@@ -69,6 +69,13 @@ impl CounterUnit {
             self.data[i] = self.data[i] - other.data[i];
         }
     }
+
+    pub fn add_flow(&mut self, counter_type: CounterType, delta: u64) {
+        if delta > 0 {
+            self.data[counter_type].bytes += delta;
+            self.data[counter_type].num_competitors += 1;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
