@@ -29,6 +29,25 @@ pub enum TopoArgs {
     },
 }
 
+impl TopoArgs {
+    pub fn get_host_bw(&self) -> &f64{
+        match self {
+            TopoArgs::Arbitrary {
+                nracks,
+                rack_size,
+                host_bw,
+                rack_bw,
+            } => {
+                return host_bw;
+            },
+            _ => { panic!("can not unwrap TopoArgs to get host_bw"); return &0.0},
+        }
+    }
+}
+
+//helper function to unwrap the enum and return host_bw
+
+
 impl std::fmt::Display for TopoArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

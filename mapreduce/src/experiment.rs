@@ -15,7 +15,7 @@ use nethint::{
 
 use mapreduce::{
     app::MapReduceApp, mapper::MapperPlacementPolicy, plink::PlinkApp, trace::JobTrace, JobSpec,
-    ReducerPlacementPolicy, ShufflePattern, app::ReducerMeta,
+    ReducerPlacementPolicy, ShufflePattern,
 };
 
 #[derive(Debug, Clone, StructOpt)]
@@ -212,20 +212,6 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
         job.push((start_ts, job_spec));
     }
 
-    //store host bandwidth
-    let mut host_bandwidth = 0.0;
-    match config.brain.topology {
-        TopoArgs::Arbitrary {
-            nracks,
-            rack_size,
-            host_bw,
-            rack_bw,
-        } => {
-            host_bandwidth = host_bw;
-        },
-        _ => (),
-    }
-
     // Build the application by combination
     // AppGroup[Tenant[PlinkApp[MapReduceApp]]]
     let batch = config.batches[batch_id].clone();
@@ -251,9 +237,8 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
             batch.reducer_policy,
             batch.nethint_level,
             config.collocate,
-            host_bandwidth,
+            *config.brain.topology.get_host_bw(),
             config.enable_computation_time,
-            ReducerMeta::default(),
         ));
 
         let nhosts_to_acquire = if config.collocate {

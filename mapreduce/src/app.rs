@@ -11,23 +11,38 @@ use crate::{
 };
 use std::cmp;
 use log::info;
-use nethint::{Duration, Flow, Trace, TraceRecord, app::{AppEvent, AppEventKind, Application, Replayer}, brain, cluster::{Cluster, Topology}, hint::NetHintVersion, simulator::{Event, Events, Executor, Simulator}};
+use nethint::{
+    Duration, Flow, Trace, TraceRecord,
+    app::{AppEvent, AppEventKind, Application, Replayer}, 
+    cluster::{Cluster, Topology}, 
+    hint::NetHintVersion, 
+    simulator::{Event, Events, Executor, Simulator}
+};
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, prelude::*};
 
-pub struct ReducerMeta {
+#[derive(Debug, Clone, Default)]
+struct ReducerMeta {
     pub unit_reducer_estimation_time: f64,
     pub reducers_remaining_flows: Vec<usize>,
     pub max_reducer_timestamp: u64,
     pub reducers_placement: Vec<String>,
     pub reducers_size: Vec<usize>,
 }
+impl ReducerMeta {
+    pub fn new(
+        job_spec: &JobSpec
+    ) -> Self {
+        ReducerMeta{
+            unit_reducer_estimation_time: 0.0,
+            reducers_remaining_flows: vec![job_spec.num_map; job_spec.num_reduce],
+            max_reducer_timestamp: 0,
+            reducers_placement: vec!["".to_string(); job_spec.num_reduce],
+            reducers_size: vec![0; job_spec.num_reduce],
+        }
 
-impl Default for ReducerMeta {
-    fn default() -> ReducerMeta{
-        ReducerMeta{unit_reducer_estimation_time:0.0, reducers_remaining_flows: Vec::new(), 
-                    max_reducer_timestamp:0, reducers_placement:  Vec::new(), reducers_size:  Vec::new(),}
     }
 }
+
 
 pub struct MapReduceApp<'c> {
     seed: u64,
@@ -56,7 +71,7 @@ fn get_shuffle_dur()->usize{
     let choices = [(24, 61), (37, 13), (62, 14), (85, 12)];
     let mut rng = thread_rng();
     let val = choices.choose_weighted(&mut rng, |item| item.1).unwrap().0;
-    println!("{:?}", choices.choose_weighted(&mut rng, |item| item.1).unwrap().0);
+    log::debug!("{:?}", choices.choose_weighted(&mut rng, |item| item.1).unwrap().0);
     return val;
 }
 
@@ -71,7 +86,6 @@ impl<'c> MapReduceApp<'c> {
         collocate: bool,
         host_bandwidth: f64,
         enable_computation_time: bool,
-        reducer_meta: ReducerMeta,
     ) -> Self {
         assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
@@ -86,7 +100,7 @@ impl<'c> MapReduceApp<'c> {
             jct: None,
             host_bandwidth,
             enable_computation_time,
-            reducer_meta: reducer_meta,
+            reducer_meta: ReducerMeta::default(),
         }
     }
 
@@ -151,11 +165,7 @@ impl<'c> MapReduceApp<'c> {
 
         if self.enable_computation_time {
             //init reducer_meta
-            self.reducer_meta.unit_reducer_estimation_time = 0.0;
-            self.reducer_meta.max_reducer_timestamp = 0;
-            self.reducer_meta.reducers_remaining_flows = vec![0; self.job_spec.num_reduce];
-            self.reducer_meta.reducers_placement = vec!["".to_string(); self.job_spec.num_reduce];
-            self.reducer_meta.reducers_size = vec![0; self.job_spec.num_reduce];
+            self.reducer_meta = ReducerMeta::new(&self.job_spec);
             
             // compute the entire job size
             let mut job_size = 0;
@@ -178,35 +188,29 @@ impl<'c> MapReduceApp<'c> {
                 }
             }
             
-            let mut max_mapper_size = 0;
-            match mappers_size.iter().max() {
-                Some(&max) => {max_mapper_size = max;}
-                None => println!( "Vector is empty" ),
-            }
-            let mut max_reducer_size = 0;
-            match reducers_size.iter().max() {
-                Some(&max) => {max_reducer_size = max;}
-                None => println!( "Vector is empty" ),
-            }
+            //todo
+            let mut max_mapper_size = *mappers_size.iter().max().unwrap_or_else(|| panic!("unknow value in mapper size"));
+            
+            let mut max_reducer_size = *reducers_size.iter().max().unwrap_or_else(|| panic!("unknow value in reducer size"));
+            
 
             // calculate k1
-            let unit_mapper_estimation_time = (job_estimate_time-shuffle_estimate_time)/(max_mapper_size+max_reducer_size) as f64;
+            let k1 = (job_estimate_time-shuffle_estimate_time)/(max_mapper_size+max_reducer_size) as f64;
             // assume k1 = k2
-            let unit_reducer_estimation_time = unit_mapper_estimation_time;
+            let k2 = k1;
             
             
             for i in 0..self.job_spec.num_map {
                 for j in 0..self.job_spec.num_reduce {
-                    self.reducer_meta.reducers_remaining_flows[j]+=1;
                     let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);
                     // let rec = TraceRecord::new(0, flow, None);
-                    let rec = TraceRecord::new((unit_mapper_estimation_time * shuffle.0[i][j] as f64) as u64, flow, None);
+                    let rec = TraceRecord::new((k1 * max_mapper_size as f64) as u64, flow, None);
                     trace.add_record(rec);
                 }
             }
 
             self.reducer_meta.reducers_size = reducers_size;
-            self.reducer_meta.unit_reducer_estimation_time = unit_reducer_estimation_time;
+            self.reducer_meta.unit_reducer_estimation_time = k2;
             self.reducer_meta.reducers_placement = reducers.0;
 
         }else{
@@ -299,12 +303,9 @@ impl<'c> Application for MapReduceApp<'c> {
                     // println!("reduccer: {:?}", &reducers.0[0]);
                     let index = self.reducer_meta.reducers_placement.iter().position(|r| r == dst).unwrap();
                     self.reducer_meta.reducers_remaining_flows[index] -= 1;
-                }
-
-                //find any completed reducer and update max_reducer_timestamp
-                for i in 0..self.job_spec.num_reduce{
-                    if self.reducer_meta.reducers_remaining_flows[i]==0{
-                        let single_reducer_complete_timestamp = now + (self.reducer_meta.reducers_size[i] as u64 * self.reducer_meta.unit_reducer_estimation_time as u64);
+                    //find any completed reducer and update max_reducer_timestamp
+                    if self.reducer_meta.reducers_remaining_flows[index]==0{
+                        let single_reducer_complete_timestamp = now + (self.reducer_meta.reducers_size[index] as u64 * self.reducer_meta.unit_reducer_estimation_time as u64);
                         self.reducer_meta.max_reducer_timestamp = cmp::max(self.reducer_meta.max_reducer_timestamp, single_reducer_complete_timestamp)
                     }
                 }
@@ -355,7 +356,6 @@ pub fn run_map_reduce(
         false,
         0.0,
         false,
-        ReducerMeta::default(),
     ));
     app.start();
 
