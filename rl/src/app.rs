@@ -124,6 +124,9 @@ impl<'c> Application for RLApp<'c> {
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();
             self.remaining_flows -= flows.len();
 
+            // add computation time here
+            // self.jct += self.computation_time
+
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
                 if self.autotune.is_some() && self.autotune.unwrap() > 0 && self.remaining_iterations % self.autotune.unwrap() == 0 {
                     self.cluster = None;

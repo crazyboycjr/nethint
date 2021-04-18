@@ -10,6 +10,7 @@ use nethint::{
     cluster::Topology,
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder, SimulatorSetting},
+    architecture::TopoArgs,
 };
 
 use mapreduce::{
@@ -64,6 +65,9 @@ struct ExperimentConfig {
 
     /// Traffic scale, multiply the traffic size by a number to allow job overlaps
     traffic_scale: f64,
+
+    /// Computation time switch
+    enable_computation_time: bool,
 
     /// Mapper placement policy
     mapper_policy: MapperPlacementPolicy,
@@ -133,7 +137,7 @@ fn main() {
     rayon::ThreadPoolBuilder::new().num_threads(opt.parallel).build_global().unwrap();
 
     let brain = Brain::build_cloud(config.brain.clone());
-
+    
     log::info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     // create the output directory if it does not exist
@@ -169,6 +173,7 @@ fn main() {
 }
 
 fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain: Rc<RefCell<Brain>>) {
+
     let job_trace = config
         .trace
         .as_ref()
@@ -179,7 +184,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
         .unwrap();
 
     let ncases = std::cmp::min(config.ncases, job_trace.count);
-
+    
     // Read job information (start_ts, job_spec) from file
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
@@ -194,6 +199,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
                 .map(|(a, b)| (a, b * config.traffic_scale))
                 .collect();
             let start_ts = record.ts * 1_000_000;
+            
             log::debug!("record: {:?}", record);
             let job_spec = JobSpec::new(
                 record.num_map * config.num_map,
@@ -231,6 +237,8 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
             batch.reducer_policy,
             batch.nethint_level,
             config.collocate,
+            config.brain.topology.clone().get_host_bw(),
+            config.enable_computation_time,
         ));
 
         let nhosts_to_acquire = if config.collocate {
@@ -259,7 +267,8 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
 
         app_group.add(*start_ts, virtualized_app);
     }
-
+    
+    
     log::debug!("app_group: {:?}", app_group);
 
     // setup simulator
@@ -271,6 +280,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
 
     // run application in simulator
     let app_jct = simulator.run_with_application(Box::new(app_group));
+    
     let app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))

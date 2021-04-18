@@ -218,6 +218,7 @@ where
                 (0..self.apps.len())
                     .map(|app_id| {
                         let start_off = self.apps[app_id].0;
+                        // println!("start off {:?}", start_off);
                         let token = Token::encode(app_id, app_id);
                         Event::RegisterTimer(start_off, token)
                     })
