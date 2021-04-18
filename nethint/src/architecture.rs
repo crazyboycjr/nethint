@@ -30,17 +30,13 @@ pub enum TopoArgs {
 }
 
 impl TopoArgs {
-    pub fn get_host_bw(&self) -> &f64{
+    pub fn get_host_bw(self) -> f64{
         match self {
-            TopoArgs::Arbitrary {
-                nracks,
-                rack_size,
-                host_bw,
-                rack_bw,
-            } => {
+            Self::Arbitrary { host_bw, rack_bw, rack_size,nracks }
+                 => {
                 return host_bw;
             },
-            _ => { panic!("can not unwrap TopoArgs to get host_bw"); return &0.0},
+            _ => { panic!("can not unwrap TopoArgs to get host_bw");},
         }
     }
 }

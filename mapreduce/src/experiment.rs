@@ -237,7 +237,7 @@ fn run_batch(config: &ExperimentConfig, batch_id: usize, trial_id: usize, brain:
             batch.reducer_policy,
             batch.nethint_level,
             config.collocate,
-            *config.brain.topology.get_host_bw(),
+            config.brain.topology.clone().get_host_bw(),
             config.enable_computation_time,
         ));
 

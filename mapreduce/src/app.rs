@@ -22,11 +22,11 @@ use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, pr
 
 #[derive(Debug, Clone, Default)]
 struct ReducerMeta {
-    pub unit_reducer_estimation_time: f64,
-    pub reducers_remaining_flows: Vec<usize>,
-    pub max_reducer_timestamp: u64,
-    pub reducers_placement: Vec<String>,
-    pub reducers_size: Vec<usize>,
+    unit_reducer_estimation_time: f64,
+    reducers_remaining_flows: Vec<usize>,
+    max_reducer_timestamp: u64,
+    reducers_placement: Vec<String>,
+    sizes: Vec<usize>,
 }
 impl ReducerMeta {
     pub fn new(
@@ -37,7 +37,7 @@ impl ReducerMeta {
             reducers_remaining_flows: vec![job_spec.num_map; job_spec.num_reduce],
             max_reducer_timestamp: 0,
             reducers_placement: vec!["".to_string(); job_spec.num_reduce],
-            reducers_size: vec![0; job_spec.num_reduce],
+            sizes: vec![0; job_spec.num_reduce],
         }
 
     }
@@ -72,7 +72,8 @@ fn get_shuffle_dur()->usize{
     let mut rng = thread_rng();
     let val = choices.choose_weighted(&mut rng, |item| item.1).unwrap().0;
     log::debug!("{:?}", choices.choose_weighted(&mut rng, |item| item.1).unwrap().0);
-    return val;
+    
+    val
 }
 
 impl<'c> MapReduceApp<'c> {
@@ -189,9 +190,9 @@ impl<'c> MapReduceApp<'c> {
             }
             
             //todo
-            let mut max_mapper_size = *mappers_size.iter().max().unwrap_or_else(|| panic!("unknow value in mapper size"));
+            let max_mapper_size = *mappers_size.iter().max().unwrap_or_else(|| panic!("unknow value in mapper size"));
             
-            let mut max_reducer_size = *reducers_size.iter().max().unwrap_or_else(|| panic!("unknow value in reducer size"));
+            let max_reducer_size = *reducers_size.iter().max().unwrap_or_else(|| panic!("unknow value in reducer size"));
             
 
             // calculate k1
@@ -209,7 +210,7 @@ impl<'c> MapReduceApp<'c> {
                 }
             }
 
-            self.reducer_meta.reducers_size = reducers_size;
+            self.reducer_meta.sizes = reducers_size;
             self.reducer_meta.unit_reducer_estimation_time = k2;
             self.reducer_meta.reducers_placement = reducers.0;
 
@@ -305,7 +306,7 @@ impl<'c> Application for MapReduceApp<'c> {
                     self.reducer_meta.reducers_remaining_flows[index] -= 1;
                     //find any completed reducer and update max_reducer_timestamp
                     if self.reducer_meta.reducers_remaining_flows[index]==0{
-                        let single_reducer_complete_timestamp = now + (self.reducer_meta.reducers_size[index] as u64 * self.reducer_meta.unit_reducer_estimation_time as u64);
+                        let single_reducer_complete_timestamp = now + (self.reducer_meta.sizes[index] as u64 * self.reducer_meta.unit_reducer_estimation_time as u64);
                         self.reducer_meta.max_reducer_timestamp = cmp::max(self.reducer_meta.max_reducer_timestamp, single_reducer_complete_timestamp)
                     }
                 }
