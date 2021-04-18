@@ -655,8 +655,7 @@ impl Handler {
                             }
                             let n1 = &vc[vc.get_source(vlink_ix)];
                             if n1.depth == 3 {
-                                let vm_local_id = vc.virt_to_vmno()[&n1.name];
-                                let vm_local_id = vm_local_id.to_string();
+                                let vm_local_id = vc.virt_to_vmno()[&n1.name].to_string();
                                 let traffic_on_link = traffic.get_mut(&vlink_ix).unwrap();
                                 if let Some(pos) = traffic_on_link
                                     .iter()

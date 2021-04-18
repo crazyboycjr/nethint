@@ -161,7 +161,6 @@ impl SsSampler {
         let mut flow_group: HashMap<(IpAddr, IpAddr), u64> = Default::default();
 
         self.handle = Some(std::thread::spawn(move || loop {
-
             let now = std::time::Instant::now();
             if now - last_ts >= interval {
                 let mut vnode_counter: HashMap<IpAddr, CounterUnit> = local_ip_table
@@ -315,6 +314,12 @@ pub fn get_local_ip_table() -> anyhow::Result<HashMap<IpAddr, String>> {
         let vfid = i - 1;
         local_ip_table.insert(addr.into(), vfid.to_string());
     }
+
+    // also insert host IP to capture background traffic
+    local_ip_table.insert(
+        Ipv4Addr::new(ds[0], ds[1], ds[2], ds[3]).into(),
+        "30".to_owned(),
+    );
 
     Ok(local_ip_table)
 }
