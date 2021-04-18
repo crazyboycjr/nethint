@@ -6,6 +6,11 @@ import shlex
 import time
 import argparse
 import random
+import os
+import fcntl
+import select
+from queue import Queue
+from multiprocessing.pool import ThreadPool
 
 HOSTS_ALL = [
 '192.168.211.2',
@@ -26,10 +31,40 @@ def get_avail_by_mask(hosts, mask):
 hosts_avail = get_avail_by_mask(hosts, hosts_mask)
 
 
-def run_task(cmd):
-    #cmd_snip = shlex.split(cmd + " i am " + str(tid))
+ready_queue = Queue()
+
+def run_task_sync(cmd):
     cmd_snip = shlex.split(cmd)
     p = subprocess.Popen(cmd_snip, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out, err = p.communicate()
+    return out, err
+
+def run_task(cmd):
+    cmd_snip = shlex.split(cmd)
+    p = subprocess.Popen(cmd_snip, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    # set stdout nonblocking
+    flags = fcntl.fcntl(p.stdout, fcntl.F_GETFL)
+    fcntl.fcntl(p.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    fcntl.fcntl(p.stderr, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    poll = select.poll()
+    poll.register(p.stdout, select.POLLIN)
+    poll.register(p.stderr, select.POLLIN)
+
+    fin = False
+    while not fin:
+        for (fd, ev) in poll.poll(1):
+            if fd == p.stdout.fileno():
+                msg = p.stdout.readline()
+                assert msg == b'iperf_ready\n', 'unexpected msg: {}'.format(msg)
+                fin = True
+            else:
+                errmsg = p.stderr.read()
+                print('err:', errmsg)
+
+
+    ready_queue.put(1)
     out, err = p.communicate()
     #print 'out:', out
     #print 'err:', err
@@ -42,24 +77,47 @@ iperf -c 192.168.211.3 -t 10 -y C,D -i 1
 '''
 def parse_iperf_output(text):
 
-    ts, remote_ip, remote_port, local_ip, local_port, _, dura, bytes_sent, speed_bits = text.decode().split(',')
+    ts, remote_ip, remote_port, local_ip, local_port, _, dura, bytes_sent, speed_bits = text.decode().strip().split(',')
 
     speed_gbps = float(speed_bits) / 1e9
     # print('local_ip={}, remote_ip={}, bw={}'.format(local_ip, remote_ip, bw))
     return local_ip, remote_ip, speed_gbps
 
-def receiver_task(cmd):
-    out, err = run_task(cmd)
-    local_ip, remote_ip, bw = parse_iperf_output(out)
+def fetch_task(cmd):
+    # out, err = run_task_sync(cmd)
+    cmd_snip = shlex.split(cmd)
+    p = subprocess.Popen(cmd_snip, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    # set stdout nonblocking
+    flags = fcntl.fcntl(p.stdout, fcntl.F_GETFL)
+    fcntl.fcntl(p.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    fcntl.fcntl(p.stderr, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    poll = select.poll()
+    poll.register(p.stdout, select.POLLIN | select.POLLERR)
+    poll.register(p.stderr, select.POLLIN | select.POLLERR)
+
+    while p.poll() is None:
+        for (fd, ev) in poll.poll(1):
+            if fd == p.stdout.fileno():
+                msg = p.stdout.read()
+                if len(msg) == 0:
+                    continue
+                print(msg)
+                local_ip, remote_ip, bw = parse_iperf_output(msg)
+            else:
+                errmsg = p.stderr.read()
+                print(errmsg)
+    # TODO(cjr): return average bw
     return local_ip, remote_ip, bw
 
 
 def emit_pair(client, server, port, duration):
     server_log = '/tmp/iperf_flow_server_{}_{}_{}.txt'.format(client, server, port)
     client_log = '/tmp/iperf_flow_client_{}_{}_{}.txt'.format(client, server, port)
-    cmd_s = 'iperf -s -P 1 -p {} -y C,D > {} &'.format(port, server_log)
-    cmd_c = 'iperf -c {} -p {} -t {} -y C,D > {} &'.format(server, port, duration, client_log)
-    return [cmd_s, cmd_c, 'cat {}'.format(server_log), 'cat {}'.format(client_log)]
+    cmd_s = 'rm -f {log}.pipe && mkfifo {log}.pipe && iperf -s -P 1 -p {} -y C,D | tee {log} {log}.pipe &'.format(port, log=server_log)
+    cmd_c = 'iperf -c {} -p {} -t {} -y C,D > {log} &'.format(server, port, duration, log=client_log)
+    return [cmd_s, cmd_c, 'cat {}.pipe'.format(server_log), 'cat {}'.format(client_log)]
 
 
 def append_cmds(cmds, host, cmd):
@@ -70,18 +128,21 @@ def append_cmds(cmds, host, cmd):
 
 def ssh_submit(cmds, ths):
     for k, v in cmds.items():
-        cmd_on_host = ';'.join(v + ['wait'])
+        cmd_on_host = ';'.join(v + ['echo iperf_ready', 'wait'])
         cmd = 'ssh -p 22 -o StrictHostKeyChecking=no {} "{}"'.format(k, cmd_on_host)
         print(cmd)
         ths.append(threading.Thread(target=run_task, args=(cmd, )))
 
 def ssh_fetch(cmds):
-    flows = []
+    pool = ThreadPool(len(cmds))
+    ssh_cmds = []
     for [h, cmd] in cmds:
         ssh_cmd = 'ssh -p 22 -o StrictHostKeyChecking=no {} "{}"'.format(h, cmd)
         print(ssh_cmd)
+        ssh_cmds.append(ssh_cmd)
 
-        flows.append(receiver_task(ssh_cmd))
+    flows = pool.map(fetch_task, ssh_cmds)
+    # print('ssh_fetch done')
     return flows
 
 
@@ -117,6 +178,7 @@ def print_matrix(flows):
 
     print_bw_matrix('Bandwidth Matrix', bw_matrix)
 
+base_port = 18000
 
 def main(args):
 
@@ -129,10 +191,9 @@ def main(args):
 
     fetch_cmds_s = []
 
-    base_port = 18000
 
     def emit_flow(client, server):
-        nonlocal base_port
+        global base_port
         ret = emit_pair(client, server, base_port, args.duration)
         append_cmds(cmds_s, server, ret[0])
         append_cmds(cmds_c, client, ret[1])
@@ -157,14 +218,27 @@ def main(args):
 
     for th in ths_s:
         th.start()
-    time.sleep(2)
+
+    # wait for all servers ready
+    for _ in range(len(cmds_s)):
+        ready_queue.get()
+    # print('server started')
+
     for th in ths_c:
         th.start()
+
+    # wait for all clients ready
+    flows = ssh_fetch(fetch_cmds_s)
+
+    # join all threads
     for th in ths_s + ths_c:
         th.join()
 
+    for _ in range(len(cmds_c)):
+        ready_queue.get()
 
-    flows = ssh_fetch(fetch_cmds_s)
+    # print('join done')
+
     if args.matrix:
         print_matrix(flows)
     else:
