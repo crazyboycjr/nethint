@@ -27,11 +27,25 @@ hosts_mask = [1] * len(hosts)
 def get_avail_by_mask(hosts, mask):
     return [x[1] for x in filter(lambda x: x[0] != 0, zip(mask, hosts))]
 
-
 hosts_avail = get_avail_by_mask(hosts, hosts_mask)
 
-
 ready_queue = Queue()
+result_queue = Queue()
+
+def add_args(parser):
+    # parser.add_argument('-n', '--num-competitors', type=int, default=1, help='specify the number of competitor flows')
+    parser.add_argument('-D', '--duration', type=int, default=10, help='flow duration (in seconds)')
+    parser.add_argument('-B', '--bidirectional', type=bool, action=argparse.BooleanOptionalAction, help='flow is bidirectional or not')
+    parser.add_argument('-F', '--flows', type=int, default=1, help='the number of flows')
+    parser.add_argument('-m', '--matrix', type=bool, action=argparse.BooleanOptionalAction, help='output the bandwidth matrix')
+
+
+# parse args
+parser = argparse.ArgumentParser(description="Bandwidth allocation test.",
+                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+add_args(parser)
+args = parser.parse_args()
+
 
 def run_task_sync(cmd):
     cmd_snip = shlex.split(cmd)
@@ -100,11 +114,12 @@ def fetch_task(cmd):
     while p.poll() is None:
         for (fd, ev) in poll.poll(1):
             if fd == p.stdout.fileno():
-                msg = p.stdout.read()
+                msg = p.stdout.readline()
                 if len(msg) == 0:
                     continue
                 print(msg)
                 local_ip, remote_ip, bw = parse_iperf_output(msg)
+                result_queue.put((local_ip, remote_ip, bw))
             else:
                 errmsg = p.stderr.read()
                 print(errmsg)
@@ -115,9 +130,9 @@ def fetch_task(cmd):
 def emit_pair(client, server, port, duration):
     server_log = '/tmp/iperf_flow_server_{}_{}_{}.txt'.format(client, server, port)
     client_log = '/tmp/iperf_flow_client_{}_{}_{}.txt'.format(client, server, port)
-    cmd_s = 'rm -f {log}.pipe && mkfifo {log}.pipe && iperf -s -P 1 -p {} -y C,D | tee {log} {log}.pipe &'.format(port, log=server_log)
+    cmd_s = 'rm -f {log}.pipe && mkfifo {log}.pipe && iperf -s -P 1 -p {} -i 1 -y C,D | tee {log} {log}.pipe &'.format(port, log=server_log)
     cmd_c = 'iperf -c {} -p {} -t {} -y C,D > {log} &'.format(server, port, duration, log=client_log)
-    return [cmd_s, cmd_c, 'cat {}.pipe'.format(server_log), 'cat {}'.format(client_log)]
+    return [cmd_s, cmd_c, 'stdbuf -oL -eL cat {}.pipe'.format(server_log), 'cat {}'.format(client_log)]
 
 
 def append_cmds(cmds, host, cmd):
@@ -133,8 +148,24 @@ def ssh_submit(cmds, ths):
         print(cmd)
         ths.append(threading.Thread(target=run_task, args=(cmd, )))
 
+
+def streaming_print(batch_size):
+    while True:
+        flows = []
+        for _ in range(batch_size):
+            f = result_queue.get()
+            if f is None:
+                return
+            flows.append(f)
+        print_flows(flows)
+
+
 def ssh_fetch(cmds):
-    pool = ThreadPool(len(cmds))
+    nflows = len(cmds)
+    th = threading.Thread(target=streaming_print, args=(nflows, ))
+    th.start()
+
+    pool = ThreadPool(nflows)
     ssh_cmds = []
     for [h, cmd] in cmds:
         ssh_cmd = 'ssh -p 22 -o StrictHostKeyChecking=no {} "{}"'.format(h, cmd)
@@ -143,10 +174,13 @@ def ssh_fetch(cmds):
 
     flows = pool.map(fetch_task, ssh_cmds)
     # print('ssh_fetch done')
+    result_queue.put(None)
+    th.join()
+
     return flows
 
 
-def print_matrix(flows):
+def print_flows(flows):
 
     def get_id_from_ip(ip, hosts):
         for i, h in enumerate(hosts):
@@ -167,20 +201,31 @@ def print_matrix(flows):
         table = [fmt.format(*row) for row in s]
         print('\n'.join(table))
 
-    rg = range(len(hosts_avail))
-    bw_matrix = [[0 for _ in rg] for _ in rg]
-    for f in flows:
-        local_ip, remote_ip, bw = f
-        src_id = get_id_from_ip(remote_ip, hosts_avail)
-        dst_id = get_id_from_ip(local_ip, hosts_avail)
-        assert src_id != dst_id, '({}, {}), ({}, {})'.format(remote_ip, src_id, local_ip, dst_id)
-        bw_matrix[src_id][dst_id] = bw
+    def update_bw_mat(m, i, j, b):
+        if m[i][j] == '0':
+            m[i][j] = b
+        else:
+            m[i][j] += ',' + b
 
-    print_bw_matrix('Bandwidth Matrix', bw_matrix)
+    if args.matrix:
+        rg = range(len(hosts_avail))
+        bw_matrix = [['0' for _ in rg] for _ in rg]
+        for f in flows:
+            local_ip, remote_ip, bw = f
+            src_id = get_id_from_ip(remote_ip, hosts_avail)
+            dst_id = get_id_from_ip(local_ip, hosts_avail)
+            assert src_id != dst_id, '({}, {}), ({}, {})'.format(remote_ip, src_id, local_ip, dst_id)
+            update_bw_mat(bw_matrix, src_id, dst_id, '{:.2f}'.format(bw))
+
+        print_bw_matrix('Bandwidth Matrix', bw_matrix)
+    else:
+        print(flows)
+
 
 base_port = 18000
+port = base_port
 
-def main(args):
+def main():
 
     ths_s = []
     ths_c = []
@@ -193,12 +238,14 @@ def main(args):
 
 
     def emit_flow(client, server):
-        global base_port
-        ret = emit_pair(client, server, base_port, args.duration)
+        global port
+        ret = emit_pair(client, server, port, args.duration)
         append_cmds(cmds_s, server, ret[0])
         append_cmds(cmds_c, client, ret[1])
         fetch_cmds_s.append([server, ret[2]])
-        base_port += 1
+        port += 1
+        if port > 60000:
+            port = base_port
 
     # random pick up
 
@@ -239,25 +286,8 @@ def main(args):
 
     # print('join done')
 
-    if args.matrix:
-        print_matrix(flows)
-    else:
-        print(flows)
+    print_flows(flows)
 
-
-def add_args(parser):
-    # parser.add_argument('-n', '--num-competitors', type=int, default=1, help='specify the number of competitor flows')
-    parser.add_argument('-D', '--duration', type=int, default=10, help='flow duration (in seconds)')
-    parser.add_argument('-B', '--bidirectional', type=bool, action=argparse.BooleanOptionalAction, help='flow is bidirectional or not')
-    parser.add_argument('-F', '--flows', type=int, default=1, help='the number of flows')
-    parser.add_argument('-m', '--matrix', type=bool, action=argparse.BooleanOptionalAction, help='output the bandwidth matrix')
-
-
-# parse args
-parser = argparse.ArgumentParser(description="Bandwidth allocation test.",
-                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-add_args(parser)
-args = parser.parse_args()
 
 while True:
-    main(args)
+    main()
