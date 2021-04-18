@@ -32,7 +32,7 @@ pub enum TopoArgs {
 impl TopoArgs {
     pub fn get_host_bw(self) -> f64{
         match self {
-            Self::Arbitrary { host_bw, rack_bw, rack_size,nracks }
+            Self::Arbitrary { host_bw, .. }
                  => {
                 return host_bw;
             },

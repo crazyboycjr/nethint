@@ -15,7 +15,7 @@ num_reduce = 1
 traffic_scale = 100.0
 
 # enable computation time: false: off true: on
-enable_computation_time = true
+enable_computation_time = false
 
 # Mapper placement policy
 # mapper_policy = { type = "RandomSkew", args = [1, 0.2] }
