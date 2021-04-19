@@ -1387,6 +1387,7 @@ checksum = "ae524f056d7d770e174287294f562e95044c68e88dec909a00d2094805db9d75"
 [[package]]
 name = "spiril"
 version = "0.1.0"
+source = "git+https://github.com/Jeffail/spiril?branch=master#49ee7c9ab9f2f528c404d0ea5237654459cedd5f"
 dependencies = [
  "crossbeam 0.3.2",
  "rand 0.3.23",

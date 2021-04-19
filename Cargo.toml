@@ -1,2 +1,9 @@
 [workspace]
-members = ["nethint", "logging", "mapreduce", "allreduce", "rl", "litemsg", "replayer", "nhagent", "utils"]
+members = ["src/nethint", "src/logging", "src/mapreduce", "src/allreduce", "src/rl", "src/litemsg", "src/replayer", "src/nhagent", "src/utils"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true

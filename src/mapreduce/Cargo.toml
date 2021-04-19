@@ -13,7 +13,7 @@ rand = "0.7.3"
 gnuplot = "0.0.37"
 nethint = { path = "../nethint" }
 logging = { path = "../logging" }
-spiril = { path = "../../spiril" }
+spiril = { git = "https://github.com/Jeffail/spiril", branch = "master" }
 utils = { path = "../utils" }
 structopt = "0.3.21"
 futures = "0.3.8"
