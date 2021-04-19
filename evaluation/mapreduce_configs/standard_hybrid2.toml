@@ -1,8 +1,8 @@
-# 3:1, background: on (1000s, 0.9, 9), fairness: PerTenant, sharing: Guaranteed
+# 3:1, background: on (60s, 0.5, 5), fairness: PerTenant, sharing: Guaranteed
 # Specifiation of a MapReduce application experiment
 
 # Run the experiments from trace file
-trace = "../mapreduce/FB2010-1Hr-150-0.txt"
+trace = "../../mapreduce/FB2010-1Hr-150-0.txt"
 
 # Number of testcases to run
 ncases = 500
@@ -26,7 +26,7 @@ placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "Random", args = 0 }
 
 # Output path of for the simulation results
-directory = "/tmp/mapr_result_for_paper/background_static_strong"
+directory = "/tmp/mapr_result_for_paper/standard_hybrid2"
 
 # Whether to allow a mapper to collocate with a reduce
 collocate = true
@@ -72,7 +72,7 @@ fairness = "PerFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 8 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.5, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -89,7 +89,7 @@ max_slots = 4
 sharing_mode = "Guaranteed"
 # in Gbps
 guaranteed_bandwidth = 25
-background_flow_high_freq = { enable = false }
+background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
 
 # The topology for simulation
 [brain.topology]
@@ -107,4 +107,4 @@ host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 600       # bandwidth of a ToR switch, in Gbps
 
 [envs]
-NETHINT_PROVISION_LOG_FILE = "/tmp/mapr_result_for_paper/background_static_strong/provision.txt"
+NETHINT_PROVISION_LOG_FILE = "/tmp/mapr_result_for_paper/standard_hybrid2/provision.txt"
