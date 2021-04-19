@@ -2,8 +2,8 @@
 members = ["src/nethint", "src/logging", "src/mapreduce", "src/allreduce", "src/rl", "src/litemsg", "src/replayer", "src/nhagent", "src/utils"]
 
 [profile.dev]
-panic = "abort"
+panic = "unwind"
 
 [profile.release]
-panic = "abort"
+panic = "unwind"
 lto = true
