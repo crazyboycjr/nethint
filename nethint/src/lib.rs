@@ -40,6 +40,7 @@ pub mod hint;
 pub mod background_flow;
 
 pub mod runtime_est;
+pub mod counterunit;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FairnessModel {
@@ -134,8 +135,8 @@ impl std::fmt::Debug for TraceRecord {
 pub struct Flow {
     /// an identifier
     id: usize,
-    bytes: usize,
-    src: String,
+    pub bytes: usize,
+    pub src: String,
     pub dst: String,
     /// an optional tag for application use (e.g. identify the flow in application)
     token: Option<Token>,

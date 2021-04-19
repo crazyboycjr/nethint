@@ -34,6 +34,8 @@ pub mod plink;
 
 pub mod inspect;
 
+pub mod config;
+
 const RAND_SEED: u64 = 0;
 thread_local! {
     pub static RNG: Rc<RefCell<StdRng>> = Rc::new(RefCell::new(StdRng::seed_from_u64(RAND_SEED)));

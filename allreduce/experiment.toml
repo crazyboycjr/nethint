@@ -1,7 +1,7 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 10
+ncases = 20
 
 # Job size distributions [(percentage, number of workers)]
 job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
@@ -10,17 +10,17 @@ job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
-buffer_size = 100_000_000
+buffer_size = 1000_000_000
 
 # computation_speed is used to present the relationship between buffer_size and computation time
 # computation_time = buffer_size*computation_speed
 computation_speed = 0.5
 
 # Number of iterations for all jobs
-num_iterations = 10
+num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 24_0_000_000.0
+poisson_lambda = 240_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -34,7 +34,7 @@ seed = 1
 directory = "/tmp/allreduce_result"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 3
+batch_repeat = 1
 
 [[batch]]
 policy = "Random"
@@ -71,7 +71,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 0.5, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.1, amplitude = 1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

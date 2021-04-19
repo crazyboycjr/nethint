@@ -3,6 +3,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use crate::endpoint::MsgLength;
 
 pub fn read_be_u64(input: &[u8]) -> u64 {
     // we know the length of input passed in is 8, so just unwrap it
@@ -17,8 +18,18 @@ pub fn read_payload_len(stream: &mut TcpStream) -> anyhow::Result<u64> {
     Ok(read_be_u64(&buf))
 }
 
+pub fn read_meta(stream: &mut TcpStream) -> anyhow::Result<MsgLength> {
+    let mut meta_buf: [u8; 16] = [0u8; 16];
+    stream.read_exact(&mut meta_buf)?;
+    let meta = (&meta_buf[..]).try_into().unwrap();
+    Ok(meta)
+}
+
 pub fn recv_message_sync(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
-    let payload_len = read_payload_len(stream)? as usize;
+    let meta = read_meta(stream)?;
+    let payload_len = meta.0 as usize;
+    assert!(meta.1 == 0, "unexpected attachment length found: {}", meta.1);
+    // let payload_len = read_payload_len(stream)? as usize;
     let mut buf = Vec::with_capacity(payload_len);
     unsafe {
         buf.set_len(payload_len);
@@ -29,8 +40,11 @@ pub fn recv_message_sync(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn send_message_sync(stream: &mut TcpStream, buf: &[u8]) -> anyhow::Result<()> {
-    let len_buf = (buf.len() as u64).to_be_bytes();
-    stream.write_all(&len_buf)?;
+    let meta = MsgLength(buf.len() as u64, 0);
+    let meta_arr: [u8; 16] = meta.into();
+    // let len_buf = (buf.len() as u64).to_be_bytes();
+    // stream.write_all(&len_buf)?;
+    stream.write_all(&meta_arr)?;
     stream.write_all(&buf)?;
     Ok(())
 }

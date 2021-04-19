@@ -24,7 +24,7 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Copy, Default)]
-struct MsgLength(u64, u64);
+pub struct MsgLength(pub u64, pub u64);
 
 // the length of meta must be known and fixed
 static_assertions::assert_eq_size!(MsgLength, [u8; 16]);
@@ -111,6 +111,20 @@ pub struct Endpoint {
     tx_queue: VecDeque<SendState>,
     // receiving states
     recv_state: RecvState,
+}
+
+impl Clone for Endpoint {
+    fn clone(&self) -> Self {
+        assert!(self.tx_queue.is_empty() && self.recv_state.stage == RecvStage::RecvMeta);
+        Endpoint {
+            // this will set stream to non-blocking for us
+            stream: self.stream.try_clone().unwrap(),
+            interest: self.interest,
+            node: self.node.clone(),
+            tx_queue: Default::default(),
+            recv_state: RecvState::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +235,7 @@ impl Endpoint {
     }
 
     // how about first return the attachment, more things to return can be added later
-    pub fn on_send_ready(&mut self) -> Result<Option<Vec<u8>>> {
+    pub fn on_send_ready<T: Serialize + DeserializeOwned + std::fmt::Debug>(&mut self) -> Result<(T, Option<Vec<u8>>)> {
         use SendStage::*;
 
         if let Some(mut state) = self.tx_queue.front_mut() {
@@ -245,7 +259,8 @@ impl Endpoint {
         }
 
         if let Some(state) = self.tx_queue.pop_front() {
-            Ok(state.attachment.map(|mut b| b.take()))
+            let cmd = bincode::deserialize(state.payload.as_slice()).map_err(Error::Deserialize)?;
+            Ok((cmd, state.attachment.map(|mut b| b.take())))
         } else {
             Err(Error::NothingToSend)
         }
@@ -279,7 +294,7 @@ impl Endpoint {
 
     pub fn on_recv_ready<T: DeserializeOwned + std::fmt::Debug>(
         &mut self,
-    ) -> Result<(T, Option<&[u8]>)> {
+    ) -> Result<(T, Option<Vec<u8>>)> {
         use RecvStage::*;
         match self.recv_state.stage {
             RecvMeta => {
@@ -302,18 +317,44 @@ impl Endpoint {
         log::trace!("on_recv_ready: cmd: {:?}", cmd);
 
         if self.recv_state.meta.1 != 0 {
-            let attachment = self.recv_state.attachment.as_slice();
+            let attachment = self.recv_state.attachment.take();
             Ok((cmd, Some(attachment)))
         } else {
             Ok((cmd, None))
         }
     }
 
+    fn recv_buffer_by_chunk(stream: &mut TcpStream, buffer: &mut Buffer) -> Result<usize> {
+        let bound = buffer.get_remain_buffer().len();
+        let mut nbytes = 0;
+        while nbytes < bound {
+            let buf = buffer.get_remain_buffer_mut();
+            let chunk_len = buf.len().min(1000000);
+            let ret = match stream.read(&mut buf[..chunk_len]) {
+                Ok(0) => Err(Error::ConnectionLost),
+                Ok(n) => {
+                    buffer.mark_handled(n);
+                    nbytes += n;
+                    Ok(n)
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Err(Error::WouldBlock),
+                Err(e) => Err(Error::IoError(e)),
+            };
+            if ret.is_err() {
+                return ret;
+            }
+        }
+        Ok(nbytes)
+    }
+
     fn recv_buffer(stream: &mut TcpStream, buffer: &mut Buffer) -> Result<usize> {
+        // let start = std::time::Instant::now();
         let buf = buffer.get_remain_buffer_mut();
         match stream.read(buf) {
             Ok(0) => Err(Error::ConnectionLost),
             Ok(nbytes) => {
+                // let end = std::time::Instant::now();
+                // log::debug!("read {} bytes, time: {:?}, speed: {} Gb/s", nbytes, end - start, 8e-9 * nbytes as f64 / (end - start).as_secs_f64());
                 buffer.mark_handled(nbytes);
                 Ok(nbytes)
             }
@@ -323,9 +364,12 @@ impl Endpoint {
     }
 
     fn send_buffer(stream: &mut TcpStream, buffer: &mut Buffer) -> Result<usize> {
+        // let start = std::time::Instant::now();
         let buf = buffer.get_remain_buffer();
         match stream.write(buf) {
             Ok(nbytes) => {
+                // let end = std::time::Instant::now();
+                // log::debug!("write {} bytes, time: {:?}, speed: {} Gb/s", nbytes, end - start, 8e-9 * nbytes as f64 / (end - start).as_secs_f64());
                 buffer.mark_handled(nbytes);
                 Ok(nbytes)
             }
@@ -367,7 +411,8 @@ impl Endpoint {
 
     fn recv_attachment(&mut self) -> Result<()> {
         while self.recv_state.meta.1 > 0 {
-            Self::recv_buffer(&mut self.stream, &mut self.recv_state.attachment)?;
+            // Self::recv_buffer(&mut self.stream, &mut self.recv_state.attachment)?;
+            Self::recv_buffer_by_chunk(&mut self.stream, &mut self.recv_state.attachment)?;
 
             if self.recv_state.attachment.is_clear() {
                 break;

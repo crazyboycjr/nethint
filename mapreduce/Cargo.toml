@@ -14,6 +14,7 @@ gnuplot = "0.0.37"
 nethint = { path = "../nethint" }
 logging = { path = "../logging" }
 spiril = { path = "../../spiril" }
+utils = { path = "../utils" }
 structopt = "0.3.21"
 futures = "0.3.8"
 async-std = "1.7.0"

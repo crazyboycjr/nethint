@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, Copy)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum BandwidthUnit {
     Kbps = 1000,
     Mbps = 1_000_000,
@@ -25,7 +27,7 @@ pub trait BandwidthTrait {
     fn gbps(self) -> Bandwidth;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Bandwidth {
     val: u64,
     unit: BandwidthUnit,

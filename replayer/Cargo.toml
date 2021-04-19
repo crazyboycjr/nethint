@@ -15,10 +15,21 @@ serde = { version = "1.0.123", features = ["derive"] }
 logging = { path = "../logging" }
 nethint = { path = "../nethint" }
 litemsg = { path = "../litemsg" }
+mapreduce = { path = "../mapreduce" }
+allreduce = { path = "../allreduce" }
+nhagent = { path = "../nhagent" }
+utils = { path = "../utils" }
 structopt = "0.3.21"
 nix = "0.19.1"
 serde_bytes = "0.11.5"
 num_cpus = "1.13.0"
+rand = "0.8.3"
+rand_distr = "0.4.0"
+toml = "0.5.8"
+zipf = "7.0.0"
+lazy_static = "1.4.0"
+sha2 = "0.9.3"
+crossbeam = "0.8.0"
 
 [dependencies.mio]
 version = "0.6.23"
@@ -35,3 +46,7 @@ path = "src/worker/main.rs"
 [[bin]]
 name = "rplaunch"
 path = "src/launcher.rs"
+
+[[bin]]
+name = "scheduler"
+path = "src/scheduler.rs"

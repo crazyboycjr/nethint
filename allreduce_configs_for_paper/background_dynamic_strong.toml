@@ -68,7 +68,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.9, amplitude = 9 }
+background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.9, amplitude = 8 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

@@ -12,6 +12,8 @@ pub mod topology_aware;
 
 pub mod rat;
 
+pub mod config;
+
 use nethint:: {
   cluster::Topology,
   Flow,

@@ -72,6 +72,9 @@ struct ExperimentConfig {
     /// akin to AWS Placement Group
     placement_strategy: brain::PlacementStrategy,
 
+    /// whether to allow delay scheduling, default to false, in simulation, it must be false
+    allow_delay: Option<bool>,
+
     /// global seed
     seed: u64,
 
@@ -129,11 +132,10 @@ fn main() {
     // create the output directory if it does not exist
     if let Some(path) = &config.directory {
         std::fs::create_dir_all(path).expect("fail to create directory");
-        let mut file = path.clone();
-        file.push("result.txt");
+        let file = path.join("result.txt");
         // remove the previous result file
         if file.exists() {
-            std::fs::remove_file(file.clone()).unwrap();
+            std::fs::remove_file(&file).unwrap();
         }
 
         // then write parsed configuration to it
@@ -296,14 +298,9 @@ lazy_static::lazy_static! {
     static ref MUTEX: Mutex<()> = Mutex::new(());
 }
 
-fn save_result(mut path: std::path::PathBuf, app_stats: Vec<(usize, u64, u64)>) {
+fn save_result(path: std::path::PathBuf, app_stats: Vec<(usize, u64, u64)>) {
     let _lk = MUTEX.lock().unwrap();
     use std::io::Write;
-    path.push("result.txt");
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .expect("fail to open or create file");
+    let mut f = utils::fs::open_with_create_append(path.join("result.txt"));
     writeln!(f, "{:?}", app_stats).unwrap();
 }

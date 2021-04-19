@@ -190,3 +190,33 @@ ssh dom = do
     ipAddr <- getDomIfAddr dom
     let sshCmd = printf "ssh -oStrictHostKeyChecking=no tenant@%s" ipAddr
     callCommandDebug sshCmd
+
+oneClickSetup :: Int -> IO ()
+oneClickSetup n = do
+    cpus <- take n <$> cpuVirtualMachines
+    rdmaAddrs <- take n <$> cpuRdmaCIDR
+    startVirtualMachineAll cpus
+    runCommand "sleep 5"
+    attachVirtualFunctionAll cpus [0..]
+    deployRdmaConfigAll cpus rdmaAddrs
+    sshAndExecuteAll cpus "ip a"
+
+
+{-
+import Control.Concurrent
+
+:{
+
+myPkill = do
+    sshAndExecuteAll cpus "pkill -f /tmp/worker"
+    sshAndExecuteAll cpus "pkill -f controller"
+
+myScp = do
+    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/scheduler"  "/tmp/"
+    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/rplaunch"   "/tmp/"
+    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/controller" "/tmp/"
+    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/worker"     "/tmp/"
+:}
+
+:m -Control.Concurrent
+-}

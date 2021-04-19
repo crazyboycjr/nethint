@@ -14,14 +14,18 @@ use nethint::{
 #[derive(Debug, Default)]
 pub struct RatAllReduce {
     // cache the result, if nethint hasn't been changed, no need to run LP again
+    num_trees: usize,
     last_size: Option<u64>,
     last_hint: Option<HashMap<LinkIx, Link>>,
     last_result: Vec<Flow>,
 }
 
 impl RatAllReduce {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(num_trees: usize) -> Self {
+        RatAllReduce {
+            num_trees,
+            ..Default::default()
+        }
     }
 
     fn dump_vcluster(vcluster: &dyn Topology) -> HashMap<LinkIx, Link> {
@@ -179,15 +183,20 @@ fn get_rack_ix(vcluster: &dyn Topology, rank: usize) -> NodeIx {
     rack_ix
 }
 
-fn generate_rats(vcluster: &dyn Topology) -> Vec<Tree> {
+fn generate_rats(vcluster: &dyn Topology, num_trees_bound: usize) -> Vec<Tree> {
     let n = vcluster.num_hosts();
 
     let groups = group_by_key(0..n, |&i| get_rack_ix(vcluster, i));
 
-    let mut tree_set = Vec::with_capacity(n);
-    for i in 0..n {
-        let tree_i = construct_tree_offset(&groups, i);
+    let m = n.min(num_trees_bound);
+
+    let mut base = 0;
+    let mut tree_set = Vec::with_capacity(m);
+    for i in 0..m {
+        let off = (base + i / groups.len()) % n;
+        let tree_i = construct_tree_offset(&groups, off);
         tree_set.push(tree_i);
+        base += groups[i % groups.len()].len();
     }
     tree_set
 }
@@ -347,7 +356,7 @@ mod tests {
 
 fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
     let n = vcluster.num_hosts();
-    let mut lp = lpsolve::Problem::new(0, n as i32 + 1).unwrap();
+    let mut lp = lpsolve::Problem::new(0, tree_set.len() as i32 + 1).unwrap();
 
     // set verbosity
     unsafe {
@@ -423,7 +432,7 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
     }
 
     // minimize y
-    let mut obj_func = vec![0.; n + 1];
+    let mut obj_func = vec![0.; tree_set.len() + 1];
     obj_func.push(1.);
     lp.set_objective_function(&obj_func);
 
@@ -446,13 +455,13 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
     }
 
     // w1 + w2 + ... wn = 1.0
-    let mut constraint = vec![1.; n + 1];
+    let mut constraint = vec![1.; tree_set.len() + 1];
     constraint.push(0.);
     lp.add_constraint(&constraint, 1., lpsolve::ConstraintType::Eq);
 
     // \vec{w} >= 0
-    for i in 0..n {
-        let mut constraint = vec![0.; n + 2];
+    for i in 0..tree_set.len() {
+        let mut constraint = vec![0.; tree_set.len() + 2];
         constraint[i + 1] = 1.;
         lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Ge);
     }
@@ -466,7 +475,7 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
     assert_eq!(status, lpsolve::SolveStatus::Optimal);
     log::debug!("status: {:?}", status);
 
-    let mut w = vec![0.; n + 1];
+    let mut w = vec![0.; tree_set.len() + 1];
     lp.get_solution_variables(&mut w);
     log::debug!("weights: {:?}", w);
 
@@ -480,7 +489,7 @@ impl AllReduceAlgorithm for RatAllReduce {
             return self.last_result.clone();
         }
 
-        let tree_set = generate_rats(vcluster);
+        let tree_set = generate_rats(vcluster, self.num_trees);
         // log::info!("tree_set: {:#?}", tree_set);
         let weights = linear_programming(vcluster, &tree_set, size);
         let mut flows = Vec::new();
