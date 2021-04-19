@@ -40,8 +40,8 @@ pub struct ExperimentConfig {
     /// Buffer size of all jobs, in bytes
     pub buffer_size: usize,
 
-    /// computation_time = k * buffer_size 
-    pub computation_speed: f64,
+    /// computation_time = computation_speed * buffer_size 
+    pub computation_speed: Option<f64>,
 
     /// Number of iterations for all jobs
     pub num_iterations: usize,

@@ -118,6 +118,7 @@ fn run_experiments(
         let allreduce_app = Box::new(AllReduceApp::new(
             job_spec,
             None,
+            None,
             seed,
             all_reduce_policy,
             opt.nethint_level,

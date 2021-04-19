@@ -219,7 +219,7 @@ impl<'a> EventLoop<'a> {
         }
     }
 
-    fn on_send_complete(&mut self, cmd: message::Command, attachment: Option<Vec<u8>>) -> anyhow::Result<()> {
+    fn on_send_complete(&mut self, _cmd: message::Command, attachment: Option<Vec<u8>>) -> anyhow::Result<()> {
         // count the sending rate
         let len = attachment.as_ref().map(|a| a.len()).unwrap_or(0);
         if len > 0 {
