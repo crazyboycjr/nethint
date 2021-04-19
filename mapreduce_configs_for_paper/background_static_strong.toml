@@ -72,7 +72,7 @@ fairness = "PerFlowMaxMin"
 # note that the remaining bandwidth must not smaller than link_bw / current_tenants
 # the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
 # for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 9 }
+background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 8 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

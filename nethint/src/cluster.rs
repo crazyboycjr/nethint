@@ -7,6 +7,7 @@ use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, EdgeIndices, Graph, NodeIndex},
 };
+use serde::{Serialize, Deserialize};
 
 use crate::bandwidth::Bandwidth;
 use crate::brain::TenantId;
@@ -77,11 +78,26 @@ impl std::fmt::Debug for Box<dyn Topology> {
 /// It works just as a Cluster.
 /// Ideally, it should be able to translate the virtual node to a physical node in the physical cluster.
 /// In our implementation, we just maintain the mapping of node name for the translation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtCluster {
     pub(crate) inner: Cluster,
+    /// translate a name in the virtual topology to the corresponding name of physical server in the physical clsuter
     pub(crate) virt_to_phys: HashMap<String, String>,
+    /// translate a name in the virtual topology to the number of the VM in the corersponding physical server.
+    pub(crate) virt_to_vmno: HashMap<String, usize>,
     pub(crate) tenant_id: TenantId,
+}
+
+impl VirtCluster {
+    #[inline]
+    pub fn virt_to_phys(&self) -> &HashMap<String, String> {
+        &self.virt_to_phys
+    }
+
+    #[inline]
+    pub fn virt_to_vmno(&self) -> &HashMap<String, usize> {
+        &self.virt_to_vmno
+    }
 }
 
 impl Index<LinkIx> for VirtCluster {
@@ -180,7 +196,7 @@ impl Topology for VirtCluster {
 }
 
 /// The network topology and hardware configuration of the cluster.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Cluster {
     graph: Graph<Node, Link>,
     node_map: HashMap<String, NodeIndex>,
@@ -198,7 +214,10 @@ impl Cluster {
             let dst = self.get_target(link_ix);
             let dst_name = self.graph[dst].name.clone();
             log::debug!("dst_name: {}", dst_name);
-            node_map.entry(dst_name).and_modify(|e| *e = dst).or_insert(dst);
+            node_map
+                .entry(dst_name)
+                .and_modify(|e| *e = dst)
+                .or_insert(dst);
         }
         self.node_map = node_map;
     }
@@ -414,7 +433,7 @@ impl Topology for Cluster {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Link {
     id: usize,
     pub bandwidth: Bandwidth,
@@ -452,13 +471,13 @@ impl std::hash::Hash for Link {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NodeType {
     Host,
     Switch,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub name: String,
     pub depth: usize, // 1: core, 2: agg, 3: edge, 4: host
@@ -470,7 +489,7 @@ pub struct Node {
     pub(crate) counters: Counters,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Counters {
     pub(crate) tx_total: u64,
     pub(crate) rx_total: u64,

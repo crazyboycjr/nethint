@@ -45,6 +45,7 @@ fn main() {
         topology: opt.topo.clone(),
         sharing_mode: SharingMode::Guaranteed,
         background_flow_high_freq: Default::default(),
+        guaranteed_bandwidth: Some(25),
     });
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());
@@ -209,7 +210,8 @@ fn run_experiments_multitenant(
             policy,
             nethint_level,
             opt.collocate,
-            0, //add computation time here
+            0.0,
+            false,
         ));
 
         let nhosts_to_acquire = if opt.collocate {

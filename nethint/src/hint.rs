@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::{cell::RefCell, unimplemented};
+use std::cell::RefCell;
 
+use serde::{Serialize, Deserialize};
 // use fnv::FnvHashMap as HashMap;
 use fnv::FnvBuildHasher;
 use indexmap::IndexMap;
@@ -15,11 +16,15 @@ use crate::{
     Duration, FairnessModel, SharingMode, Timestamp,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use crate::counterunit::CounterUnit;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetHintVersion {
     V1,
     V2,
 }
+
+// TODO(cjr): Migrate NetHintV2 to NetHint_V2
 
 /// Only topology information, all bandwidth are set to 0.gbps()
 pub type NetHintV1 = VirtCluster;
@@ -27,6 +32,20 @@ pub type NetHintV1 = VirtCluster;
 /// With network metrics, either collected by measurement or telemetry.
 /// Currently, we are using bandwidth as the level 2 hint.
 pub type NetHintV2 = VirtCluster;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetHintV1Real {
+    pub vc: VirtCluster,
+    // this is a dirty hack, we need to know the mapping between virtual name host_{} to a vm hostname, cpu{}
+    pub vname_to_hostname: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetHintV2Real {  // not in simulation
+    pub hintv1: NetHintV1Real,
+    pub interval_ms: u64,
+    pub traffic: std::collections::HashMap<LinkIx, Vec<CounterUnit>>,
+}
 
 /// Sample point
 #[derive(Debug, Clone)]
@@ -189,7 +208,7 @@ impl SimpleEstimator {
     }
 }
 
-fn get_phys_link(brain: &Brain, tenant_id: TenantId, vlink_ix: LinkIx) -> LinkIx {
+pub fn get_phys_link(brain: &Brain, tenant_id: TenantId, vlink_ix: LinkIx) -> LinkIx {
     brain.vlink_to_plink[&(tenant_id, vlink_ix)]
 }
 
@@ -554,11 +573,7 @@ impl Estimator for SimpleEstimator {
 
 fn append_log_file(str: &str) {
     use std::io::{Seek, Write};
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open("/tmp/ff")
-        .unwrap();
+    let mut f = utils::fs::open_with_create_append("/tmp/ff");
     f.seek(std::io::SeekFrom::End(0)).unwrap();
     writeln!(f, "{}", str).unwrap();
 }
