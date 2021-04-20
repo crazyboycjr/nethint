@@ -36,6 +36,7 @@ pub struct MapReduceSetting {
     pub map_scale: f64,
     pub reduce_scale: f64, // scale down from the real trace to fit our testbed
     pub traffic_scale: f64,
+    pub time_scale: f64,
     pub collocate: bool,
     pub mapper_policy: MapperPlacementPolicy,
     pub reducer_policy: ReducerPlacementPolicy,
@@ -89,7 +90,7 @@ impl MapReduceAppBuilder {
             .into_iter()
             .map(|(a, b)| (a, b * setting.traffic_scale))
             .collect();
-        let start_ts = record.ts * 1_000_000;
+        let start_ts = ((record.ts * 1_000_000) as f64 * setting.time_scale) as Timestamp;
         log::debug!("record: {:?}", record);
         let job_spec = JobSpec::new(
             std::cmp::max(1, (record.num_map as f64 * setting.map_scale) as usize),
@@ -234,12 +235,10 @@ impl MapReduceApp {
                 });
             }
             ShufflePattern::FromTrace(record) => {
-                assert_eq!(m % record.num_reduce, 0);
-                let k = m / record.num_reduce;
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..n {
-                    for j in 0..m {
-                        pairs[i][j] = (record.reducers[j / k].1 / n as f64 * 1e6) as usize;
+                    for j in 0..record.num_reduce {
+                        pairs[i][j % m] += (record.reducers[j].1 / n as f64 * 1e6) as usize;
                     }
                 }
             }
@@ -300,7 +299,7 @@ impl MapReduceApp {
             for j in 0..self.job_spec.num_reduce {
                 // no translation
                 let m_vm_hostname = &self.vname_to_hostname[&mappers.0[i]];
-                let r_vm_hostname = &self.vname_to_hostname[&reducers.0[i]];
+                let r_vm_hostname = &self.vname_to_hostname[&reducers.0[j]];
                 let m = &self.hostname_to_node[m_vm_hostname];
                 let r = &self.hostname_to_node[r_vm_hostname];
                 let flow = Flow::new(shuffle.0[i][j], m.clone(), r.clone(), None);

@@ -6,4 +6,4 @@ panic = "unwind"
 
 [profile.release]
 panic = "unwind"
-lto = true
+lto = false # too slow for lto = true

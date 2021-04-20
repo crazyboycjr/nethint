@@ -143,8 +143,13 @@ fn submit(
         let mut brain = litemsg::utils::connect_retry(&brain_uri, 5).unwrap();
         let this_tenant_id = job_id;
         let nhosts_to_acquire = nhosts;
-        let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire, allow_delay).unwrap();
-        log::info!("hintv1: vname_to_hostname: {:?}, vcluster: {}", hintv1.vname_to_hostname, hintv1.vc.to_dot());
+        let hintv1 =
+            request_provision(&mut brain, this_tenant_id, nhosts_to_acquire, allow_delay).unwrap();
+        log::info!(
+            "hintv1: vname_to_hostname: {:?}, vcluster: {}",
+            hintv1.vname_to_hostname,
+            hintv1.vc.to_dot()
+        );
 
         // construct job config according to the provision result
         std::fs::create_dir_all(&job_dir).expect("fail to create directory");
@@ -295,9 +300,26 @@ mod sched_allreduce {
 
 mod sched_mapreduce {
     use super::*;
-    use mapreduce::config;
+    use mapreduce::{config, JobSpec, ShufflePattern};
     use replayer::controller::mapreduce::MapReduceAppBuilder;
     use replayer::controller::mapreduce::MapReduceSetting;
+
+    fn is_job_trivial(job_spec: &JobSpec) -> bool {
+        match job_spec.shuffle_pat {
+            ShufflePattern::FromTrace(ref record) => {
+                let mut weights: Vec<u64> = vec![0u64; job_spec.num_reduce];
+                for (i, (_x, y)) in record.reducers.iter().enumerate() {
+                    weights[i % job_spec.num_reduce] += *y as u64;
+                }
+                job_spec.num_map == 1
+                    || weights.iter().copied().max().unwrap() as f64
+                        <= 1.05 * weights.iter().copied().min().unwrap() as f64
+            }
+            _ => {
+                unimplemented!();
+            }
+        }
+    }
 
     pub fn submit_jobs(opt: &Opt) {
         let config: config::ExperimentConfig = config::read_config(&opt.configfile);
@@ -305,6 +327,7 @@ mod sched_mapreduce {
         for batch_id in 0..config.batches.len() {
             let mut handles = Vec::new();
             let now0 = std::time::Instant::now();
+            let mut is_trivial = Vec::new();
 
             let batch = config.batches[batch_id].clone();
             for i in 0..config.ncases {
@@ -312,12 +335,18 @@ mod sched_mapreduce {
                 let seed = i as _;
 
                 let setting = MapReduceSetting {
-                    trace: config.trace.clone().expect("current only support generate shuffle from trace"),
+                    trace: config
+                        .trace
+                        .clone()
+                        .expect("current only support generate shuffle from trace"),
                     job_id,
                     seed_base: seed,
                     map_scale: config.map_scale.expect("must provide a map scale factor"),
-                    reduce_scale: config.reduce_scale.expect("must provide a reduce scale factor"),
+                    reduce_scale: config
+                        .reduce_scale
+                        .expect("must provide a reduce scale factor"),
                     traffic_scale: config.traffic_scale,
+                    time_scale: config.time_scale.expect("must provide a time scale factor"),
                     collocate: config.collocate,
                     mapper_policy: config.mapper_policy.clone(),
                     reducer_policy: batch.reducer_policy,
@@ -329,7 +358,9 @@ mod sched_mapreduce {
                 let (start_ts, job_spec) = MapReduceAppBuilder::get_job_spec(&setting);
 
                 // prepare output directory
-                let job_dir = opt.output.join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
+                let job_dir = opt
+                    .output
+                    .join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
 
                 if job_dir.exists() {
                     // rm -r output_dir
@@ -360,7 +391,13 @@ mod sched_mapreduce {
                     job_dir,
                     setting_path,
                 )));
+
+                is_trivial.push((job_id, is_job_trivial(&job_spec)));
             }
+
+            use std::io::Write;
+            let mut f = utils::fs::open_with_create_append("/tmp/trivial_jobs.txt");
+            writeln!(f, "batch_id: {}, trivial jobs: {:?}", batch_id, is_trivial).unwrap();
 
             for h in handles {
                 h.join()
