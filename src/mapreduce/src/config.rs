@@ -36,6 +36,12 @@ pub struct ExperimentConfig {
     /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
     pub num_reduce: usize,
 
+    /// The map scale used only in testbed setting to support scale down.
+    pub map_scale: Option<f64>,
+
+    /// The reduce scale used only in testbed setting to support scale down.
+    pub reduce_scale: Option<f64>,
+
     /// Traffic scale, multiply the traffic size by a number to allow job overlaps
     pub traffic_scale: f64,
 
