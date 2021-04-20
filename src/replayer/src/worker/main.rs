@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
 
     // start IO threads, another half for kthreads running network stack
     // let io_threads = std::cmp::max(1, (num_cpus::get() / 2) - 1);
-    let io_threads = 1;
+    let io_threads = if peers.is_empty() { 0 } else { 1 };
 
     // completion queue of io worker thread
     // let (comp_tx, comp_rx) = mpsc::channel();
@@ -243,13 +243,30 @@ impl<'a> EventLoop<'a> {
         Ok(())
     }
 
+    fn finish_flow(&mut self, flow: replayer::Flow) -> anyhow::Result<()> {
+        let msg = message::Command::FlowComplete(flow);
+        self.controller_ep.post(msg, None)?;
+        self.poll.reregister(
+            self.controller_ep.stream(),
+            mio::Token(self.peers.len()),
+            self.controller_ep.interest(),
+            mio::PollOpt::level(),
+        )?;
+        Ok(())
+    }
+
     fn on_recv_complete(&mut self, cmd: message::Command) -> anyhow::Result<()> {
         use message::Command::*;
         match cmd {
             EmitFlow(flow) => {
                 log::info!("prepare to start a flow: {:?}", flow);
-                let rank = self.peer_index[&flow.dst];
-                self.post_buffer[rank].push_back(flow);
+                if flow.dst == flow.src {
+                    // finish the flow immediately
+                    self.finish_flow(flow)?;
+                } else {
+                    let rank = self.peer_index[&flow.dst];
+                    self.post_buffer[rank].push_back(flow);
+                }
 
                 // // reactivate
                 // poll.reregister(
@@ -265,14 +282,7 @@ impl<'a> EventLoop<'a> {
             DataChunk(_flow) => {}
             Data(flow) => {
                 // flow received, notify controller with FlowComplete
-                let msg = FlowComplete(flow);
-                self.controller_ep.post(msg, None)?;
-                self.poll.reregister(
-                    self.controller_ep.stream(),
-                    mio::Token(self.peers.len()),
-                    self.controller_ep.interest(),
-                    mio::PollOpt::level(),
-                )?;
+                self.finish_flow(flow)?;
             }
             _ => {
                 log::error!("handle_msg: unexpected cmd: {:?}", cmd);

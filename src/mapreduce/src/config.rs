@@ -45,6 +45,9 @@ pub struct ExperimentConfig {
     /// Traffic scale, multiply the traffic size by a number to allow job overlaps
     pub traffic_scale: f64,
 
+    /// Scale the time of job arrival
+    pub time_scale: Option<f64>,
+
     /// Computation time switch
     pub enable_computation_time: bool,
 
