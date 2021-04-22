@@ -3,6 +3,7 @@ use structopt::StructOpt;
 use utils::cmd_helper::get_command_output;
 use std::time::Duration;
 use std::process::Command;
+use nhagent::sampler::ss_sampler::SsTcpFlows;
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(
@@ -60,8 +61,10 @@ fn main() {
         let mut cmd = Command::new("ss");
         cmd.arg("-tuni");
         let output = get_command_output(cmd).unwrap();
-        assert!(output.len() <= 65507);
-        match sock.send(output.as_bytes()) {
+        let ss_flows: SsTcpFlows = output.parse().expect("fail to parse ss output");
+        let buf = bincode::serialize(&ss_flows).expect("fail to serialize ss_flows");
+        assert!(buf.len() <= 65507);
+        match sock.send(&buf) {
             Ok(_nbytes) => {}
             Err(_e) => {}
         }
