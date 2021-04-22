@@ -193,7 +193,11 @@ fn generate_rats(vcluster: &dyn Topology, num_trees_bound: usize) -> Vec<Tree> {
     let mut base = 0;
     let mut tree_set = Vec::with_capacity(m);
     for i in 0..m {
-        let off = (base + i / groups.len()) % n;
+        let off = if m < n {
+            (base + i / groups.len()) % n
+        } else {
+            i
+        };
         let tree_i = construct_tree_offset(&groups, off);
         tree_set.push(tree_i);
         base += groups[i % groups.len()].len();
