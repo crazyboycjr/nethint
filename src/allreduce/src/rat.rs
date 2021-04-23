@@ -102,9 +102,14 @@ impl Tree {
         self[c].parent.replace(p).unwrap_none();
     }
 
+    #[allow(dead_code)]
     fn root(&self) -> TreeIdx {
         assert!(!self.nodes.is_empty());
         TreeIdx(0)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = TreeIdx> {
+        (0..self.nodes.len()).map(|i| TreeIdx(i))
     }
 }
 
@@ -205,6 +210,7 @@ fn construct_chain_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
     tree
 }
 
+#[allow(dead_code)]
 fn construct_ps_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
     let ranks: Vec<_> = groups.iter().flatten().copied().collect();
     assert!(offset < ranks.len());
@@ -531,17 +537,31 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
         }
     }
     for (k, tree) in tree_set.iter().enumerate() {
-        let root = tree.root();
-        let root_rank = tree[root].rank;
-        let root_rack_id = rank_to_rack_id[&root_rank];
-        let mut degs = 0;
-        for &child in &tree[root].children {
-            let child_rank = tree[child].rank;
-            if rank_to_rack_id[&child_rank] != root_rack_id {
-                degs += 1;
+        // let root = tree.root();
+        // let root_rank = tree[root].rank;
+        // let root_rack_id = rank_to_rack_id[&root_rank];
+        // let mut degs = 0;
+        // for &child in &tree[root].children {
+        //     let child_rank = tree[child].rank;
+        //     if rank_to_rack_id[&child_rank] != root_rack_id {
+        //         degs += 1;
+        //     }
+        // }
+        // rack_deg[root_rack_id][k + 1] += degs as f64;
+        for n in tree.iter() {
+            let my_rack_id = rank_to_rack_id[&tree[n].rank];
+            if let Some(p) = tree[n].parent {
+                if rank_to_rack_id[&tree[p].rank] != my_rack_id {
+                    rack_deg[my_rack_id][k + 1] += 1.0;
+                }
+            }
+            for &child in &tree[n].children {
+                let child_rank = tree[child].rank;
+                if rank_to_rack_id[&child_rank] != my_rack_id {
+                    rack_deg[my_rack_id][k + 1] += 1.0;
+                }
             }
         }
-        rack_deg[root_rack_id][k + 1] += degs as f64;
     }
 
     // minimize y
