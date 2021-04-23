@@ -16,7 +16,7 @@ use nethint::{
     cluster::{LinkIx, Topology, VirtCluster},
     counterunit::{CounterType, CounterUnit},
     hint::{NetHintV2Real, NetHintVersion},
-    TenantId, Token,
+    TenantId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -127,8 +127,8 @@ pub struct AllreduceApp {
     allreduce_algorithm: Option<Box<dyn AllReduceAlgorithm>>,
     vname_to_hostname: HashMap<String, String>,
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
-    // flow_iters: HashMap<(Node, Node), usize>,
-    flow_iters: HashMap<Token, usize>,
+    flow_iters: HashMap<(Node, Node), usize>,
+    // flow_iters: HashMap<Token, usize>,
 }
 
 impl Application for AllreduceApp {
@@ -177,8 +177,8 @@ impl Application for AllreduceApp {
                 // self.num_remaining_flows -= 1;
                 let mut no_more_flow = false;
                 self.flow_iters
-                    // .entry((flow.src.clone(), flow.dst.clone()))
-                    .entry(flow.token.unwrap())
+                    .entry((flow.src.clone(), flow.dst.clone()))
+                    // .entry(flow.token.unwrap())
                     .and_modify(|e| {
                         assert!(*e > 0);
                         *e -= 1;
@@ -256,7 +256,7 @@ impl AllreduceApp {
         }
 
         log::debug!("hint: {}", self.cluster.as_ref().unwrap().to_dot());
-        let mut flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
+        let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
             self.job_spec.buffer_size as u64,
             &**self.cluster.as_ref().unwrap(),
         );
@@ -266,41 +266,41 @@ impl AllreduceApp {
         log::debug!("flows from result of allreduce algorithm: {:?}", flows);
 
         // merge the flows with the same src and dst pair
-        // log::debug!("merging the flows with the same src and dst pair");
-        // let mut matrix: HashMap<(String, String), usize> = Default::default();
-        // for flow in flows {
-        //     let size = flow.bytes;
-        //     *matrix
-        //         .entry((flow.src.clone(), flow.dst.clone()))
-        //         .or_default() += size;
-        // }
-
-        for (i, f) in &mut flows.iter_mut().enumerate() {
-            f.token = Some(Token(i));
+        log::debug!("merging the flows with the same src and dst pair");
+        let mut matrix: HashMap<(String, String), usize> = Default::default();
+        for flow in flows {
+            let size = flow.bytes;
+            *matrix
+                .entry((flow.src.clone(), flow.dst.clone()))
+                .or_default() += size;
         }
+
+        // for (i, f) in &mut flows.iter_mut().enumerate() {
+        //     f.token = Some(Token(i));
+        // }
 
         self.flow_iters.clear();
         let niters = self
             .setting
             .auto_tune
             .unwrap_or(self.job_spec.num_iterations).min(self.remaining_iterations);
-        // for (k, size) in matrix {
-        for flow in flows {
-            let size = flow.bytes;
-            let src_hostname = &self.vname_to_hostname[&flow.src];
-            let dst_hostname = &self.vname_to_hostname[&flow.dst];
-            // let src_hostname = &self.vname_to_hostname[&k.0];
-            // let dst_hostname = &self.vname_to_hostname[&k.1];
+        for (k, size) in matrix {
+        // for flow in flows {
+            // let size = flow.bytes;
+            // let src_hostname = &self.vname_to_hostname[&flow.src];
+            // let dst_hostname = &self.vname_to_hostname[&flow.dst];
+            let src_hostname = &self.vname_to_hostname[&k.0];
+            let dst_hostname = &self.vname_to_hostname[&k.1];
             let src_node = &self.hostname_to_node[src_hostname];
             let dst_node = &self.hostname_to_node[dst_hostname];
 
             let e = self
                 .flow_iters
-                .entry(flow.token.unwrap())
-                // .entry((src_node.clone(), dst_node.clone()))
+                // .entry(flow.token.unwrap())
+                .entry((src_node.clone(), dst_node.clone()))
                 .or_insert(0);
             *e += niters;
-            let flow = Flow::new(size, src_node.clone(), dst_node.clone(), flow.token);
+            let flow = Flow::new(size, src_node.clone(), dst_node.clone(), None);
             let cmd = message::Command::EmitFlow(flow);
             log::debug!("allreduce::run, cmd: {:?}", cmd);
             let endpoint = self.workers.get_mut(src_node).unwrap();
