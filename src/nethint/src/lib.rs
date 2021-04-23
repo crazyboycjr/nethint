@@ -139,7 +139,7 @@ pub struct Flow {
     pub src: String,
     pub dst: String,
     /// an optional tag for application use (e.g. identify the flow in application)
-    token: Option<Token>,
+    pub token: Option<Token>,
     /// this field is to explicitly support tenant based fairness
     tenant_id: Option<TenantId>,
     /// TODO(cjr): This is a hack to let the simulator be able to
