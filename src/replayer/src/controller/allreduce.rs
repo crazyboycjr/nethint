@@ -283,7 +283,7 @@ impl AllreduceApp {
         let niters = self
             .setting
             .auto_tune
-            .unwrap_or(self.job_spec.num_iterations);
+            .unwrap_or(self.job_spec.num_iterations).min(self.remaining_iterations);
         // for (k, size) in matrix {
         for flow in flows {
             let size = flow.bytes;
