@@ -136,13 +136,99 @@ where
     groups.into_values().collect()
 }
 
-fn construct_tree_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
+#[allow(dead_code)]
+fn construct_rat_full_set(groups: &mut Vec<Vec<usize>>, mut offset: usize) -> Tree {
+    let mut m = groups.iter().map(|x| x.len()).product::<usize>();
+    // decide root rack
+    let root_rack = offset / m;
+    offset %= m;
+    let swap_groups = |groups: &mut Vec<Vec<usize>>| {
+        let tmp = groups[0].clone();
+        groups[0] = groups[root_rack].clone();
+        groups[root_rack] = tmp.clone();
+    };
+    swap_groups(groups);
+    // decide root rank
     let mut tree = Tree::default();
+    let mut root_rank = None;
+    let mut root = None;
 
+    // decide the subroots by a modified cantor expansion
+    for group in groups.iter() {
+        assert!(!group.is_empty());
+        m /= group.len();
+        let first_rank = group[offset / m];
+
+        let sub_root = if root_rank.is_none() {
+            root_rank = Some(first_rank);
+            root = Some(tree.push(Node::new(first_rank)));
+            root.unwrap()
+        } else {
+            let sub_root = tree.push(Node::new(first_rank));
+            tree.connect(root.unwrap(), sub_root);
+            sub_root
+        };
+
+        for i in 0..group.len() {
+            if i != offset / m {
+                let r = group[i];
+                assert_ne!(r, root_rank.unwrap());
+                let tn = tree.push(Node::new(r));
+                tree.connect(sub_root, tn);
+            }
+        }
+
+        offset %= m;
+    }
+
+    swap_groups(groups);
+    tree
+}
+
+#[allow(dead_code)]
+fn construct_chain_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
     let ranks: Vec<_> = groups.iter().flatten().copied().collect();
     assert!(offset < ranks.len());
-
     let root_rank = ranks[offset];
+
+    let mut tree = Tree::default();
+    let root = tree.push(Node::new(root_rank));
+    let mut last_node_ix = root;
+    for i in 1..ranks.len() {
+        let r = ranks[(i + offset) % ranks.len()];
+        assert_ne!(r, root_rank);
+        let tn = tree.push(Node::new(r));
+        tree.connect(last_node_ix, tn);
+        last_node_ix = tn;
+    }
+
+    tree
+}
+
+fn construct_ps_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
+    let ranks: Vec<_> = groups.iter().flatten().copied().collect();
+    assert!(offset < ranks.len());
+    let root_rank = ranks[offset];
+
+    let mut tree = Tree::default();
+    let root = tree.push(Node::new(root_rank));
+    for r in ranks {
+        if r != root_rank {
+            let tn = tree.push(Node::new(r));
+            tree.connect(root, tn);
+        }
+    }
+
+    tree
+}
+
+fn construct_rat_offset(groups: &Vec<Vec<usize>>, offset: usize) -> Tree {
+    let ranks: Vec<_> = groups.iter().flatten().copied().collect();
+    assert!(offset < ranks.len());
+    let root_rank = ranks[offset];
+
+    let mut tree = Tree::default();
+
     let root = tree.push(Node::new(root_rank));
     for group in groups {
         assert!(!group.is_empty());
@@ -183,13 +269,36 @@ fn get_rack_ix(vcluster: &dyn Topology, rank: usize) -> NodeIx {
     rack_ix
 }
 
-fn generate_rats(vcluster: &dyn Topology, num_trees_bound: usize) -> Vec<Tree> {
+#[allow(dead_code)]
+fn generate_rats_full_set(vcluster: &dyn Topology, _num_trees_bound: usize) -> Vec<Tree> {
+    let n = vcluster.num_hosts();
+    let mut groups = group_by_key(0..n, |&i| get_rack_ix(vcluster, i));
+    assert_eq!(groups.len(), 2);
+    // to construct full set of rats, the number is: nracks * \PI groups[i].len()
+    // 2 * groups[0].len() * groups[1].len()
+    let m = groups.len() * groups.iter().map(|x| x.len()).product::<usize>();
+    let mut tree_set = Vec::with_capacity(m);
+    for i in 0..m {
+        let tree_i = construct_rat_full_set(&mut groups, i);
+        tree_set.push(tree_i);
+    }
+
+    tree_set
+}
+
+fn generate_embeddings<F>(
+    vcluster: &dyn Topology,
+    num_trees_bound: usize,
+    construct_embedding_offset: F,
+) -> Vec<Tree>
+where
+    F: Fn(&Vec<Vec<usize>>, usize) -> Tree,
+{
     let n = vcluster.num_hosts();
 
     let groups = group_by_key(0..n, |&i| get_rack_ix(vcluster, i));
 
     let m = n.min(num_trees_bound);
-
     let mut base = 0;
     let mut tree_set = Vec::with_capacity(m);
     for i in 0..m {
@@ -198,7 +307,7 @@ fn generate_rats(vcluster: &dyn Topology, num_trees_bound: usize) -> Vec<Tree> {
         } else {
             i
         };
-        let tree_i = construct_tree_offset(&groups, off);
+        let tree_i = construct_embedding_offset(&groups, off);
         tree_set.push(tree_i);
         base += groups[i % groups.len()].len();
     }
@@ -493,7 +602,12 @@ impl AllReduceAlgorithm for RatAllReduce {
             return self.last_result.clone();
         }
 
-        let tree_set = generate_rats(vcluster, self.num_trees);
+        // let tree_set = generate_rats(vcluster, self.num_trees);
+        let tree_set = vec![
+            generate_embeddings(vcluster, self.num_trees, construct_rat_offset),
+            generate_embeddings(vcluster, self.num_trees, construct_ps_offset),
+            // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
+        ].concat();
         // log::info!("tree_set: {:#?}", tree_set);
         let weights = linear_programming(vcluster, &tree_set, size);
         let mut flows = Vec::new();
