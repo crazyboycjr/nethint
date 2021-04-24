@@ -1,9 +1,11 @@
 use lazy_static::lazy_static;
-use std::process::Command;
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::net::IpAddr;
+
+use structopt::StructOpt;
 
 use nethint::{
     architecture::build_arbitrary_cluster,
@@ -11,13 +13,14 @@ use nethint::{
     cluster::{Cluster, NodeIx, Topology},
 };
 
+use crate::argument::Opts;
 use crate::sampler::EthAddr;
 use crate::Role;
 
-pub const NRACKS: usize = 2;
-pub const RACK_SIZE: usize = 3;
-pub const RACK_BW: f64 = 7.0;
-pub const HOST_BW: f64 = 8.5;
+// pub const NRACKS: usize = 2;
+// pub const RACK_SIZE: usize = 3;
+// pub const RACK_BW: f64 = 7.0;
+// pub const HOST_BW: f64 = 8.5;
 pub const MAX_SLOTS: usize = 4;
 
 lazy_static! {
@@ -48,12 +51,17 @@ pub struct PhysCluster {
 
 impl PhysCluster {
     pub fn new() -> PhysCluster {
+        let opts = Opts::from_args();
         // reuse the code
-        let mut cluster =
-            build_arbitrary_cluster(NRACKS, RACK_SIZE, HOST_BW.gbps(), RACK_BW.gbps());
+        let mut cluster = build_arbitrary_cluster(
+            opts.topo.nracks(),
+            opts.topo.rack_size(),
+            opts.topo.host_bw().gbps(),
+            opts.topo.rack_bw().gbps(),
+        );
 
         // rename the host_i to danyang-[01-06] to match our cluster settings
-        for i in 0..NRACKS * RACK_SIZE {
+        for i in 0..opts.topo.nracks() * opts.topo.rack_size() {
             let name = format!("host_{}", i);
             let node_ix = cluster.get_node_index(&name);
             cluster[node_ix].name = format!("danyang-{:02}", i + 1);
@@ -66,15 +74,20 @@ impl PhysCluster {
         let my_node_ix = cluster.get_node_index(&my_hostname);
 
         let local_eth_table = crate::sampler::get_local_eth_table().unwrap();
-        assert!(!local_eth_table.is_empty(), "in our prototype, we assume the VF and the VM are up");
-        let eth_hostname = local_eth_table.into_keys().map(|eth_addr| {
-            (eth_addr, my_hostname.clone())
-        }).collect();
+        assert!(
+            !local_eth_table.is_empty(),
+            "in our prototype, we assume the VF and the VM are up"
+        );
+        let eth_hostname = local_eth_table
+            .into_keys()
+            .map(|eth_addr| (eth_addr, my_hostname.clone()))
+            .collect();
 
         let local_ip_table = crate::sampler::get_local_ip_table().unwrap();
-        let ip_hostname = local_ip_table.into_keys().map(|ip_addr| {
-            (ip_addr, my_hostname.clone())
-        }).collect();
+        let ip_hostname = local_ip_table
+            .into_keys()
+            .map(|ip_addr| (ip_addr, my_hostname.clone()))
+            .collect();
 
         PhysCluster {
             inner: cluster,
@@ -141,7 +154,8 @@ impl PhysCluster {
     }
 
     pub fn get_my_rack_ix(&self) -> NodeIx {
-        self.inner.get_target(self.inner.get_uplink(self.my_node_ix))
+        self.inner
+            .get_target(self.inner.get_uplink(self.my_node_ix))
     }
 
     fn cluster_is_same_rack(cluster: &Cluster, x: NodeIx, y: NodeIx) -> bool {

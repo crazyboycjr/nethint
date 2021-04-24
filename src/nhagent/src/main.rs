@@ -20,9 +20,9 @@ use std::rc::Rc;
 use std::sync::mpsc;
 
 use anyhow::Result;
+use structopt::StructOpt;
 
 use litemsg::endpoint;
-use structopt::StructOpt;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -32,18 +32,9 @@ use nhagent::message;
 
 use nethint::brain::Brain;
 
-static TERMINATE: AtomicBool = AtomicBool::new(false);
+use nhagent::argument::Opts;
 
-#[derive(Debug, Clone, StructOpt)]
-#[structopt(name = "nhagent", about = "NetHint Agent")]
-struct Opts {
-    /// The working interval of agent in millisecond
-    #[structopt(short = "i", long = "interval", default_value = "100")]
-    interval_ms: u64,
-    /// The listening port of the sampler
-    #[structopt(short = "p", long = "p", default_value = "5555")]
-    sampler_listen_port: u16,
-}
+static TERMINATE: AtomicBool = AtomicBool::new(false);
 
 fn main() -> Result<()> {
     logging::init_log();
@@ -225,6 +216,7 @@ struct Handler {
 
 impl Handler {
     fn new(comm: &mut Communicator, interval_ms: u64) -> Self {
+        let opts = Opts::from_args();
         use nhagent::cluster::*;
         let brain_setting = BrainSetting {
             seed: 1,
@@ -232,13 +224,8 @@ impl Handler {
             broken: 0.0,
             max_slots: MAX_SLOTS,
             sharing_mode: nethint::SharingMode::Guaranteed,
-            guaranteed_bandwidth: Some(25),
-            topology: nethint::architecture::TopoArgs::Arbitrary {
-                nracks: NRACKS,
-                rack_size: RACK_SIZE,
-                host_bw: HOST_BW,
-                rack_bw: RACK_BW,
-            },
+            guaranteed_bandwidth: Some(opts.topo.host_bw() / MAX_SLOTS as f64),
+            topology: opts.topo,
             background_flow_high_freq: Default::default(),
         };
         let brain = Brain::build_cloud(brain_setting);

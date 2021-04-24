@@ -54,7 +54,7 @@ pub struct BrainSetting {
     /// how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
     pub sharing_mode: SharingMode,
     /// guaranteed bandwidth, in Gbps
-    pub guaranteed_bandwidth: Option<usize>,
+    pub guaranteed_bandwidth: Option<f64>,
     /// The parameters of the cluster's physical topology
     pub topology: TopoArgs,
 

@@ -171,7 +171,7 @@ fn run_batch(
             batch.reducer_policy,
             batch.nethint_level,
             config.collocate,
-            config.brain.topology.clone().get_host_bw(),
+            config.brain.topology.clone().host_bw(),
             config.enable_computation_time,
         ));
 
