@@ -59,6 +59,8 @@ pub struct BrainSetting {
     pub topology: TopoArgs,
 
     pub background_flow_high_freq: BackgroundFlowHighFreq,
+    /// GC period
+    pub gc_period: usize,
 }
 
 /// can only send by replicating (deep copy) the object, user should be very careful about this
@@ -358,8 +360,8 @@ impl Brain {
         nhosts: usize,
         strategy: PlacementStrategy,
     ) -> Result<VirtCluster, Error> {
-        if tenant_id > 0 && tenant_id % 100 == 0 {
-            self.garbage_collect(tenant_id - 100);
+        if self.setting.gc_period == 0 || tenant_id > 0 && tenant_id % self.setting.gc_period == 0 {
+            self.garbage_collect(tenant_id - self.setting.gc_period);
         }
 
         let taken = self.used.values().map(|x| x.len()).sum::<usize>();
