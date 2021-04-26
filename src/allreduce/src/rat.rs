@@ -537,17 +537,6 @@ fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> 
         }
     }
     for (k, tree) in tree_set.iter().enumerate() {
-        // let root = tree.root();
-        // let root_rank = tree[root].rank;
-        // let root_rack_id = rank_to_rack_id[&root_rank];
-        // let mut degs = 0;
-        // for &child in &tree[root].children {
-        //     let child_rank = tree[child].rank;
-        //     if rank_to_rack_id[&child_rank] != root_rack_id {
-        //         degs += 1;
-        //     }
-        // }
-        // rack_deg[root_rack_id][k + 1] += degs as f64;
         for n in tree.iter() {
             let my_rack_id = rank_to_rack_id[&tree[n].rank];
             if let Some(p) = tree[n].parent {

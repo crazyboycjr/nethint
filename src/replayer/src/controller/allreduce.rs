@@ -82,10 +82,14 @@ impl AllreduceAppBuilder {
     }
 
     pub fn build(self) -> Box<dyn Application> {
-        let setting = allreduce::config::read_config(&self.config_path);
+        let mut setting = allreduce::config::read_config(&self.config_path);
         log::info!("allreduce setting: {:?}", setting);
         let job_spec = Self::get_job_spec(&setting);
         let seed = setting.seed_base;
+        // no need to auto tune in case of n == 2
+        if job_spec.num_workers == 2 {
+            setting.auto_tune = None;
+        }
         let mut app: Box<dyn Application> = Box::new(AllreduceApp {
             workers: self.workers,
             brain: self.brain,

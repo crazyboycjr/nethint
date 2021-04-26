@@ -34,6 +34,11 @@ pub fn hostname<'h>() -> &'h String {
     &*HOSTNAME
 }
 
+pub fn vname_to_phys_hostname(vname: &str) -> String {
+    let id: usize = vname.strip_prefix("host_").unwrap().parse().unwrap();
+    format!("danyang-{:02}", id + 1)
+}
+
 lazy_static! {
     // the topology of the underlay physical cluster
     pub static ref CLUSTER: Arc<Mutex<PhysCluster>> = Arc::new(Mutex::new(PhysCluster::new()));

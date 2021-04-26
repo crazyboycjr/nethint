@@ -2,6 +2,7 @@
 #![feature(map_into_keys_values)]
 
 use nethint::{
+    background_flow_hard::BackgroundFlowHard,
     brain::{BrainSetting, PlacementStrategy},
     cluster::{LinkIx, Topology, VirtCluster},
     counterunit::CounterUnit,
@@ -10,12 +11,13 @@ use nethint::{
 };
 use nhagent::{
     self,
-    cluster::{hostname, CLUSTER},
+    cluster::{self, hostname, CLUSTER},
     communicator::Communicator,
     Role,
 };
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -126,6 +128,9 @@ fn main_loop(
             // it's not very explicit why this is is correct or not, need more thinking on this
             handler.reset_traffic();
 
+            // peroidically call the function to check if update is needed, if yes, then do it
+            handler.update_background_flow_hard(comm)?;
+
             for v in rx.try_iter() {
                 for c in &v {
                     log::trace!("counterunit: {:?}", c);
@@ -197,7 +202,28 @@ fn main_loop(
         }
     }
 
+    handler.cleanup();
     Ok(())
+}
+
+#[derive(Debug)]
+enum CommandOp {
+    Task(Command),
+    Stop,
+}
+
+fn cmd_executor(rx: mpsc::Receiver<CommandOp>) -> anyhow::Result<()> {
+    loop {
+        let op = rx.recv().expect("cmd_executor recv error");
+        match op {
+            CommandOp::Task(cmd) => {
+                utils::cmd_helper::get_command_output(cmd).unwrap();
+            }
+            CommandOp::Stop => {
+                return Ok(());
+            }
+        }
+    }
 }
 
 // service handler
@@ -210,8 +236,14 @@ struct Handler {
     rank_hostname: HashMap<usize, String>,
     brain: Rc<RefCell<Brain>>,
     interval_ms: u64,
-    /// (controller_rank, tenant_id, nhosts_to_acquire)
+    // (controller_rank, tenant_id, nhosts_to_acquire)
     provision_req_queue: VecDeque<(usize, TenantId, usize)>,
+    // background flow hard
+    background_flow_hard: BackgroundFlowHard,
+    bfh_last_ts: std::time::Instant,
+    // command executor thread to avoid blocking of main thread
+    cmd_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+    cmd_tx: mpsc::Sender<CommandOp>,
 }
 
 impl Handler {
@@ -229,6 +261,11 @@ impl Handler {
             background_flow_high_freq: Default::default(),
         };
         let brain = Brain::build_cloud(brain_setting);
+        let (tx, rx) = mpsc::channel();
+        let cmd_handle = Some(std::thread::spawn(|| cmd_executor(rx)));
+        // make sure update background flow will succeed at the first call
+        let bfh_last_ts = std::time::Instant::now()
+            - std::time::Duration::from_nanos(opts.background_flow_hard.frequency_ns);
         Handler {
             traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
             committed_traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
@@ -238,7 +275,127 @@ impl Handler {
             brain,
             interval_ms,
             provision_req_queue: VecDeque::new(),
+            background_flow_hard: opts.background_flow_hard,
+            bfh_last_ts,
+            cmd_handle,
+            cmd_tx: tx,
         }
+    }
+
+    fn cleanup(&mut self) {
+        self.cmd_tx.send(CommandOp::Stop).unwrap();
+        self.cmd_handle.take().unwrap().join().unwrap().unwrap();
+    }
+
+    fn update_background_flow_hard(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
+        if !self.background_flow_hard.enable || comm.my_role() != Role::GlobalLeader {
+            return Ok(());
+        }
+        use std::time::*;
+        let now = Instant::now();
+        if now > self.bfh_last_ts + Duration::from_nanos(self.background_flow_hard.frequency_ns) {
+            let bf = &self.background_flow_hard;
+            self.brain.borrow_mut().update_background_flow_hard(
+                bf.probability,
+                bf.amplitude,
+                bf.zipf_exp,
+            );
+            // for the egress traffic from the hosts, use mlnx_qos to limit the rates
+            // for the ingress traffic to the hosts, use interface ethernet 1/x bandwidth shape 1.2G to limit the rate
+            // ssh -oKexAlgorithms=+diffie-hellman-group14-sha1 danyang@danyang-mellanox-switch.cs.duke.edu cli -h '"enable" "config terminal" "interface ethernet 1/4 bandwidth shape 10G"'
+
+            let brain = self.brain.borrow();
+            let vc = brain.cluster();
+            let mut switch_settings = Vec::new();
+            switch_settings.push("enable".to_owned());
+            switch_settings.push("config terminal".to_owned());
+
+            let get_bw = |link_ix: LinkIx| {
+                (vc[link_ix].bandwidth.val() as f64 / 1e9)
+                    .round()
+                    .clamp(1., 100.) as usize
+            };
+
+            let mut tor_bw = [100; 2];
+
+            for link_ix in vc.all_links() {
+                let n1 = &vc[vc.get_source(link_ix)];
+                let n2 = &vc[vc.get_target(link_ix)];
+                if n1.depth > n2.depth && n1.depth == 3 {
+                    // egress traffic from the hosts
+                    // ssh danyang-02 'mlnx_qos -i rdma0 -r 3,0,0,0,0,0,0,0'
+                    // round to 1 Gbps precision
+                    let bw = get_bw(link_ix);
+                    let msg = nhagent::message::Message::UpdateRateLimit(bw);
+                    let phys_hostname = cluster::vname_to_phys_hostname(&n1.name);
+                    let dst_rank = self
+                        .rank_hostname
+                        .iter()
+                        .find_map(|(k, v)| if *v == phys_hostname { Some(*k) } else { None })
+                        .unwrap();
+                    if dst_rank == comm.my_rank() {
+                        let mut cmd = Command::new("mlnx_qos");
+                        cmd.args(&["-i", "rdma0", "-r", &format!("{},0,0,0,0,0,0,0", bw)]);
+                        self.cmd_tx.send(CommandOp::Task(cmd)).unwrap();
+                    } else {
+                        comm.send_to(dst_rank, &msg)?;
+                    }
+                } else if n1.depth > n2.depth && n1.depth == 2 {
+                    // egress traffic from the ToR switch
+                    let tor_id: usize = n1.name.strip_prefix("tor_").unwrap().parse().unwrap();
+                    assert!(tor_id <= 1, "unexpected tor_id: {} in testbed", tor_id);
+                    let bw = get_bw(link_ix);
+                    tor_bw[tor_id] = tor_bw[tor_id].min(bw);
+                } else if n1.depth < n2.depth && n1.depth == 2 {
+                    // ingress traffic to the hosts
+                    let host_id: usize = n2.name.strip_prefix("host_").unwrap().parse().unwrap();
+                    let bw = get_bw(link_ix);
+                    // 0,1,2 => 4,6,8; 3,4,5 => 12,14,16
+                    let table: [usize; 6] = [4, 6, 8, 12, 14, 16];
+                    let eth_port = if host_id < 6 {
+                        table[host_id]
+                    } else {
+                        panic!("unexpected tor_id: {} in testbed", host_id);
+                    };
+                    let cmd = format!("interface ethernet 1/{} bandwidth shape {}G", eth_port, bw);
+                    switch_settings.push(cmd);
+                } else if n1.depth == 1 && n2.depth == 2 {
+                    // because we only have 2 racks in the testbed, the receiving rate limitation can be translate to the sending rate limitation
+                    let tor_id: usize = n2.name.strip_prefix("tor_").unwrap().parse().unwrap();
+                    assert!(tor_id <= 1, "unexpected tor_id: {} in testbed", tor_id);
+                    let bw = get_bw(link_ix);
+                    tor_bw[tor_id ^ 1] = tor_bw[tor_id ^ 1].min(bw);
+                } else {
+                    // we may omit other cases for now, as there is no direct support for this case
+                }
+            }
+
+            for (&bw, &eth_port) in tor_bw.iter().zip(&["1/2", "1/10"]) {
+                let cmd = format!("interface ethernet {} bandwidth shape {}G", eth_port, bw);
+                switch_settings.push(cmd);
+            }
+
+            // update switch settings once for all
+            let enclose_with = |s: &mut String, ch: char| {
+                s.insert(0, ch);
+                s.push(ch);
+            };
+            let mut cmd = Command::new("ssh");
+            switch_settings.iter_mut().for_each(|s| enclose_with(s, '"'));
+            let switch_setting_str = switch_settings.join(" ");
+            // enclose_with(&mut switch_setting_str, '\'');
+            cmd.args(&[
+                "-oKexAlgorithms=+diffie-hellman-group14-sha1",
+                "danyang@danyang-mellanox-switch.cs.duke.edu",
+                "cli",
+                "-h",
+                &switch_setting_str,
+            ]);
+            self.cmd_tx.send(CommandOp::Task(cmd)).unwrap();
+
+            self.bfh_last_ts = Instant::now();
+        }
+        Ok(())
     }
 
     fn merge_chunk(chunk1: &Vec<CounterUnit>, chunk2: &Vec<CounterUnit>) -> Vec<CounterUnit> {
@@ -702,6 +859,12 @@ impl Handler {
                         comm.send_to(sender_rank, &msg)?;
                     }
                 }
+            }
+            UpdateRateLimit(bw) => {
+                let mut cmd = Command::new("mlnx_qos");
+                cmd.args(&["-i", "rdma0", "-r", &format!("{},0,0,0,0,0,0,0", bw)]);
+                self.cmd_tx.send(CommandOp::Task(cmd)).unwrap();
+                // let output = utils::cmd_helper::get_command_output(cmd);
             }
             SyncRequest(_)
             | SyncResponse(_)

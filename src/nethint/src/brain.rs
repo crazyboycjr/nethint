@@ -283,7 +283,7 @@ impl Brain {
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
 
-        log::info!("zipf_exp: {}", zipf_exp);
+        log::debug!("zipf_exp: {}", zipf_exp);
         let zipf = zipf::ZipfDistribution::new(amplitude * 10, zipf_exp).unwrap();
 
         for link_ix in cluster.all_links() {

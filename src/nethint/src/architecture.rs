@@ -38,6 +38,11 @@ impl TopoArgs {
                 bandwidth,
                 oversub_ratio,
             } => {
+                assert!(
+                    nports % 2 == 0,
+                    "the number of ports of a switch is required to be even for FatTree"
+                );
+
                 let k = nports;
                 let num_pods = k;
                 let _num_cores = k * k / 4;
@@ -81,8 +86,6 @@ impl TopoArgs {
         }
     }
 }
-
-//helper function to unwrap the enum and return host_bw
 
 impl std::fmt::Display for TopoArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
