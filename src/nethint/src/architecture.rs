@@ -30,19 +30,62 @@ pub enum TopoArgs {
 }
 
 impl TopoArgs {
-    pub fn get_host_bw(self) -> f64{
+    pub fn by_arbitrary_topo(&self) -> TopoArgs {
         match self {
-            Self::Arbitrary { host_bw, .. }
-                 => {
-                return host_bw;
-            },
-            _ => { panic!("can not unwrap TopoArgs to get host_bw");},
+            a @ Self::Arbitrary { .. } => a.clone(),
+            &Self::FatTree {
+                nports,
+                bandwidth,
+                oversub_ratio,
+            } => {
+                assert!(
+                    nports % 2 == 0,
+                    "the number of ports of a switch is required to be even for FatTree"
+                );
+
+                let k = nports;
+                let num_pods = k;
+                let _num_cores = k * k / 4;
+                let num_aggs_in_pod = k / 2;
+                let _num_aggs = num_pods * num_aggs_in_pod;
+                let num_edges_in_pod = k / 2;
+                let num_edges = num_pods * num_edges_in_pod;
+                let num_hosts_under_edge = k / 2;
+                let _num_hosts = num_edges * num_hosts_under_edge;
+                Self::Arbitrary {
+                    nracks: num_edges,
+                    rack_size: num_hosts_under_edge,
+                    host_bw: bandwidth,
+                    rack_bw: bandwidth * num_hosts_under_edge as f64 / oversub_ratio,
+                }
+            }
+        }
+    }
+    pub fn nracks(&self) -> usize {
+        match self {
+            &Self::Arbitrary { nracks, .. } => nracks,
+            &Self::FatTree { .. } => self.by_arbitrary_topo().nracks(),
+        }
+    }
+    pub fn rack_size(&self) -> usize {
+        match self {
+            &Self::Arbitrary { rack_size, .. } => rack_size,
+            &Self::FatTree { .. } => self.by_arbitrary_topo().rack_size(),
+        }
+    }
+    pub fn host_bw(&self) -> f64 {
+        match self {
+            &Self::Arbitrary { host_bw, .. } => host_bw,
+            &Self::FatTree { .. } => self.by_arbitrary_topo().host_bw(),
+        }
+    }
+    pub fn rack_bw(&self) -> f64 {
+        match self {
+            &Self::Arbitrary { rack_bw, .. } => rack_bw,
+            &Self::FatTree { bandwidth, .. } => bandwidth,
         }
     }
 }
-
-//helper function to unwrap the enum and return host_bw
-
 
 impl std::fmt::Display for TopoArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

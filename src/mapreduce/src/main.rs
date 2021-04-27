@@ -45,7 +45,7 @@ fn main() {
         topology: opt.topo.clone(),
         sharing_mode: SharingMode::Guaranteed,
         background_flow_high_freq: Default::default(),
-        guaranteed_bandwidth: Some(25),
+        guaranteed_bandwidth: Some(25.0),
     });
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());

@@ -10,18 +10,18 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::{smallvec, SmallVec};
 use thiserror::Error;
 
-use crate::brain::{Brain, TenantId};
-use crate::cluster::{Cluster, Link, LinkIx, Route, RouteHint, Topology};
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
+    background_flow_hard::{BackgroundFlowHard, search_zipf_exp},
+    bandwidth::{self, Bandwidth, BandwidthTrait},
+    brain::{Brain, TenantId},
+    cluster::{Cluster, Link, LinkIx, Route, RouteHint, Topology},
     hint::{Estimator, NetHintVersion, SimpleEstimator},
     timer::{OnceTimer, PoissonTimer, RepeatTimer, Timer, TimerKind},
 };
 use crate::{
-    bandwidth::{self, Bandwidth, BandwidthTrait},
-    FairnessModel,
+    Duration, FairnessModel, Flow, SharingMode, Timestamp, ToStdDuration, Token, Trace, TraceRecord,
 };
-use crate::{Duration, Flow, SharingMode, Timestamp, ToStdDuration, Token, Trace, TraceRecord};
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 type HashMapValues<'a, K, V> = indexmap::map::Values<'a, K, V>;
@@ -34,74 +34,6 @@ pub const SAMPLE_INTERVAL_NS: u64 = 100_000_000; // 100ms
 pub trait Executor<'a> {
     fn run_with_trace(&mut self, trace: Trace) -> Trace;
     fn run_with_application<T>(&mut self, app: Box<dyn Application<Output = T> + 'a>) -> T;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackgroundFlowHard {
-    enable: bool,
-    // the lambda of poisson distribution
-    #[serde(default)]
-    frequency_ns: Duration,
-    // how bad is the influence, should be an other distribution
-    // currently we use uniform distribution, the minimum unit is link_bw / max_slots
-    // weight: Bandwidth,
-    // each link will have a probability to be influenced
-    #[serde(default)]
-    probability: f64,
-    // the amplitude range in [1, 9], it cut down the original bandwidth of a link by up to amplitude/10.
-    // for example, if amplitude = 9, it means that up to 90Gbps (90%) can be taken from a 100Gbps link.
-    #[serde(default)]
-    amplitude: usize,
-    #[serde(default = "default_average_load")]
-    average_load: f64,
-    #[serde(skip)]
-    zipf_exp: f64,
-}
-
-fn default_average_load() -> f64 {
-    // data center 10% average load on link
-    0.1
-}
-
-fn search_zipf_exp(amp: usize, average_load: f64) -> f64 {
-    use rand::distributions::Distribution;
-    use rand::{rngs::StdRng, SeedableRng};
-    let mut rng = StdRng::seed_from_u64(1);
-    let mut eval = |m| -> f64 {
-        let zipf = zipf::ZipfDistribution::new(amp * 10, m).unwrap();
-        let repeat = 10000;
-        let mut s = 0;
-        for _ in 0..repeat {
-            s += zipf.sample(&mut rng);
-        }
-        s as f64 / repeat as f64
-    };
-
-    let mut l = 0.1;
-    let mut r = 10.0;
-    while l + 1e-5 < r {
-        let m = (l + r) / 2.;
-        if eval(m) > average_load * 100.0 {
-            l = m;
-        } else {
-            r = m;
-        }
-    }
-    l
-}
-
-impl Default for BackgroundFlowHard {
-    fn default() -> Self {
-        Self {
-            enable: false,
-            frequency_ns: 0,
-            probability: 0.0,
-            amplitude: 0,
-            average_load: default_average_load(),
-            zipf_exp: 0.,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -664,7 +596,6 @@ impl<'a> Executor<'a> for Simulator {
         let mut events = app.on_event(app_event!(AppEventKind::AppStart));
         let mut new_events = Events::new();
         loop {
-            
             let mut finished = false;
             events.reverse();
             trace!("simulator: events.len: {:?}", events.len());

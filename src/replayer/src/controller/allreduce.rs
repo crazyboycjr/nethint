@@ -82,10 +82,14 @@ impl AllreduceAppBuilder {
     }
 
     pub fn build(self) -> Box<dyn Application> {
-        let setting = allreduce::config::read_config(&self.config_path);
+        let mut setting = allreduce::config::read_config(&self.config_path);
         log::info!("allreduce setting: {:?}", setting);
         let job_spec = Self::get_job_spec(&setting);
         let seed = setting.seed_base;
+        // no need to auto tune in case of n == 2
+        if job_spec.num_workers == 2 {
+            setting.auto_tune = None;
+        }
         let mut app: Box<dyn Application> = Box::new(AllreduceApp {
             workers: self.workers,
             brain: self.brain,
@@ -128,6 +132,7 @@ pub struct AllreduceApp {
     vname_to_hostname: HashMap<String, String>,
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
     flow_iters: HashMap<(Node, Node), usize>,
+    // flow_iters: HashMap<Token, usize>,
 }
 
 impl Application for AllreduceApp {
@@ -177,6 +182,7 @@ impl Application for AllreduceApp {
                 let mut no_more_flow = false;
                 self.flow_iters
                     .entry((flow.src.clone(), flow.dst.clone()))
+                    // .entry(flow.token.unwrap())
                     .and_modify(|e| {
                         assert!(*e > 0);
                         *e -= 1;
@@ -273,11 +279,17 @@ impl AllreduceApp {
                 .or_default() += size;
         }
 
+        // for (i, f) in &mut flows.iter_mut().enumerate() {
+        //     f.token = Some(Token(i));
+        // }
+
+        self.flow_iters.clear();
         let niters = self
             .setting
             .auto_tune
-            .unwrap_or(self.job_spec.num_iterations);
+            .unwrap_or(self.job_spec.num_iterations).min(self.remaining_iterations);
         for (k, size) in matrix {
+        // for flow in flows {
             // let size = flow.bytes;
             // let src_hostname = &self.vname_to_hostname[&flow.src];
             // let dst_hostname = &self.vname_to_hostname[&flow.dst];
@@ -288,9 +300,10 @@ impl AllreduceApp {
 
             let e = self
                 .flow_iters
+                // .entry(flow.token.unwrap())
                 .entry((src_node.clone(), dst_node.clone()))
-                .or_insert(niters);
-            *e = niters;
+                .or_insert(0);
+            *e += niters;
             let flow = Flow::new(size, src_node.clone(), dst_node.clone(), None);
             let cmd = message::Command::EmitFlow(flow);
             log::debug!("allreduce::run, cmd: {:?}", cmd);

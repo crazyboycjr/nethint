@@ -90,6 +90,7 @@ sharing_mode = "Guaranteed"
 # in Gbps
 guaranteed_bandwidth = 25
 background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
+gc_period = 100
 
 # The topology for simulation
 [brain.topology]

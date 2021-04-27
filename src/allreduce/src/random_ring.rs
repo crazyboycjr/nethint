@@ -36,6 +36,7 @@ impl AllReduceAlgorithm for RandomRingAllReduce {
                 for i in 0..n {
                     let pred = format!("host_{}", alloced_hosts[i]);
                     let succ = format!("host_{}", alloced_hosts[(i + 1) % n]);
+                    log::debug!("pred: {}, succ: {}", pred, succ);
                     let flow = Flow::new(size as usize * (n - 1) / n / self.num_rings, &pred, &succ, None);
                     flows.push(flow);
                 }

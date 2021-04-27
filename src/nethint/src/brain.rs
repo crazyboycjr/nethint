@@ -54,11 +54,13 @@ pub struct BrainSetting {
     /// how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
     pub sharing_mode: SharingMode,
     /// guaranteed bandwidth, in Gbps
-    pub guaranteed_bandwidth: Option<usize>,
+    pub guaranteed_bandwidth: Option<f64>,
     /// The parameters of the cluster's physical topology
     pub topology: TopoArgs,
 
     pub background_flow_high_freq: BackgroundFlowHighFreq,
+    /// GC period
+    pub gc_period: usize,
 }
 
 /// can only send by replicating (deep copy) the object, user should be very careful about this
@@ -283,7 +285,7 @@ impl Brain {
         let cluster = Arc::get_mut(&mut self.cluster)
             .expect("there should be no other reference to physical cluster");
 
-        log::info!("zipf_exp: {}", zipf_exp);
+        log::debug!("zipf_exp: {}", zipf_exp);
         let zipf = zipf::ZipfDistribution::new(amplitude * 10, zipf_exp).unwrap();
 
         for link_ix in cluster.all_links() {
@@ -358,8 +360,8 @@ impl Brain {
         nhosts: usize,
         strategy: PlacementStrategy,
     ) -> Result<VirtCluster, Error> {
-        if tenant_id > 0 && tenant_id % 100 == 0 {
-            self.garbage_collect(tenant_id - 100);
+        if self.setting.gc_period == 0 || tenant_id > 0 && tenant_id % self.setting.gc_period == 0 {
+            self.garbage_collect(tenant_id - self.setting.gc_period);
         }
 
         let taken = self.used.values().map(|x| x.len()).sum::<usize>();

@@ -7,6 +7,7 @@ pub mod cluster;
 pub mod sampler;
 pub mod message;
 pub mod communicator;
+pub mod argument;
 
 pub use litemsg::Node;
 
