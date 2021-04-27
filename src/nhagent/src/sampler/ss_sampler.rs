@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::mpsc;
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
 use nethint::counterunit::{CounterType, CounterUnit};
 
@@ -15,10 +16,10 @@ pub struct SsSampler {
     tx: mpsc::Sender<Vec<CounterUnit>>,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-struct SockAddrPair {
-    local_addr: SocketAddrV4,
-    peer_addr: SocketAddrV4,
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SockAddrPair {
+    pub local_addr: SocketAddrV4,
+    pub peer_addr: SocketAddrV4,
 }
 
 impl SockAddrPair {
@@ -34,19 +35,19 @@ impl SockAddrPair {
 // tcp   ESTAB      0      0                 127.0.0.1:58096      127.0.0.1:8000
 // 	 cubic wscale:7,7 rto:203.333 rtt:0.023/0.008 ato:40 mss:32768 pmtu:65535 rcvmss:32768 advmss:65483 cwnd:10 bytes_sent:97299 bytes_acked:97300 bytes_received:1990443 segs_out:12056 segs_in:23811 data_segs_out:11801 data_segs_in:12011 send 113975652174bps lastsnd:24297 lastrcv:24297 lastack:24297 pacing_rate 226719135128bps delivery_rate 32768000000bps delivered:11802 app_limited busy:506ms rcv_rtt:75.075 rcv_space:65495 rcv_ssthresh:65495 minrtt:0.008
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SsTcpFlow {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SsTcpFlow {
     addr_pair: SockAddrPair,
     bytes_sent: u64,
     bytes_received: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SsTcpFlows(Vec<SsTcpFlow>);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SsTcpFlows(Vec<SsTcpFlow>);
 
 #[derive(Debug, Error)]
 #[error("Parse SsTcpFlows error: stage: {0}")]
-struct ParseError(usize);
+pub struct ParseError(usize);
 
 impl std::str::FromStr for SsTcpFlows {
     type Err = ParseError;
@@ -224,8 +225,7 @@ impl SsSampler {
                         );
                     }
                     let buf = &buf[..nbytes];
-                    let data = std::str::from_utf8(buf).expect("from_utf8");
-                    let ss_flows: SsTcpFlows = data.parse().unwrap();
+                    let ss_flows: SsTcpFlows = bincode::deserialize(&buf).expect("deserialize ss_flows failed");
                     log::trace!("{:?}", ss_flows);
 
                     let now = std::time::Instant::now();
