@@ -44,7 +44,7 @@ struct HostnameIpTable {
 lazy_static::lazy_static! {
     static ref HOSTNAME_IP_TABLE: HostnameIpTable = {
         let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("cpu{}", x)).collect();
-        let ipaddrs: Vec<&str> = vec![ "192.168.211.3" , "192.168.211.4" , "192.168.211.5" , "192.168.211.6" , "192.168.211.35" , "192.168.211.36" , "192.168.211.37" , "192.168.211.38" , "192.168.211.67" , "192.168.211.68" , "192.168.211.69" , "192.168.211.70" , "192.168.211.131" , "192.168.211.132" , "192.168.211.133" , "192.168.211.134" , "192.168.211.163" , "192.168.211.164" , "192.168.211.165" , "192.168.211.166" , "192.168.211.195" , "192.168.211.196" , "192.168.211.197" , "192.168.211.198"];
+        let ipaddrs: Vec<&str> = include!("./vm_ip_addrs.in");
         HostnameIpTable {
             table: hostnames.into_iter().zip(ipaddrs).map(|(k, v)| (k, v.to_string())).collect()
         }
@@ -143,8 +143,13 @@ fn submit(
         let mut brain = litemsg::utils::connect_retry(&brain_uri, 5).unwrap();
         let this_tenant_id = job_id;
         let nhosts_to_acquire = nhosts;
-        let hintv1 = request_provision(&mut brain, this_tenant_id, nhosts_to_acquire, allow_delay).unwrap();
-        log::info!("hintv1: vname_to_hostname: {:?}, vcluster: {}", hintv1.vname_to_hostname, hintv1.vc.to_dot());
+        let hintv1 =
+            request_provision(&mut brain, this_tenant_id, nhosts_to_acquire, allow_delay).unwrap();
+        log::info!(
+            "hintv1: vname_to_hostname: {:?}, vcluster: {}",
+            hintv1.vname_to_hostname,
+            hintv1.vc.to_dot()
+        );
 
         // construct job config according to the provision result
         std::fs::create_dir_all(&job_dir).expect("fail to create directory");
@@ -293,18 +298,125 @@ mod sched_allreduce {
     }
 }
 
+mod sched_mapreduce {
+    use super::*;
+    use mapreduce::{config, JobSpec, ShufflePattern};
+    use replayer::controller::mapreduce::MapReduceAppBuilder;
+    use replayer::controller::mapreduce::MapReduceSetting;
+
+    fn is_job_trivial(job_spec: &JobSpec) -> bool {
+        match job_spec.shuffle_pat {
+            ShufflePattern::FromTrace(ref record) => {
+                let mut weights: Vec<u64> = vec![0u64; job_spec.num_reduce];
+                for (i, (_x, y)) in record.reducers.iter().enumerate() {
+                    weights[i % job_spec.num_reduce] += *y as u64;
+                }
+                job_spec.num_map == 1
+                    || weights.iter().copied().max().unwrap() as f64
+                        <= 1.05 * weights.iter().copied().min().unwrap() as f64
+            }
+            _ => {
+                unimplemented!();
+            }
+        }
+    }
+
+    pub fn submit_jobs(opt: &Opt) {
+        let config: config::ExperimentConfig = config::read_config(&opt.configfile);
+
+        for batch_id in 0..config.batches.len() {
+            let mut handles = Vec::new();
+            let now0 = std::time::Instant::now();
+            let mut is_trivial = Vec::new();
+
+            let batch = config.batches[batch_id].clone();
+            for i in 0..config.ncases {
+                let job_id = i;
+                let seed = i as _;
+
+                let setting = MapReduceSetting {
+                    trace: config
+                        .trace
+                        .clone()
+                        .expect("current only support generate shuffle from trace"),
+                    job_id,
+                    seed_base: seed,
+                    map_scale: config.map_scale.expect("must provide a map scale factor"),
+                    reduce_scale: config
+                        .reduce_scale
+                        .expect("must provide a reduce scale factor"),
+                    traffic_scale: config.traffic_scale,
+                    time_scale: config.time_scale.expect("must provide a time scale factor"),
+                    collocate: config.collocate,
+                    mapper_policy: config.mapper_policy.clone(),
+                    reducer_policy: batch.reducer_policy,
+                    probe: batch.probe,
+                    nethint_level: batch.nethint_level,
+                };
+
+                // get job specification
+                let (start_ts, job_spec) = MapReduceAppBuilder::get_job_spec(&setting);
+
+                // prepare output directory
+                let job_dir = opt
+                    .output
+                    .join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
+
+                if job_dir.exists() {
+                    // rm -r output_dir
+                    std::fs::remove_dir_all(&job_dir).unwrap();
+                }
+
+                // mkdir -p output_dir
+                std::fs::create_dir_all(&job_dir).expect("fail to create directory");
+
+                let setting_path = job_dir.join("setting.toml");
+
+                write_setting(&setting, &setting_path);
+
+                let now = std::time::Instant::now();
+                if now0 + std::time::Duration::from_nanos(start_ts) > now {
+                    std::thread::sleep(now0 + std::time::Duration::from_nanos(start_ts) - now);
+                }
+                let nhosts_to_acquire = if config.collocate {
+                    job_spec.num_map.max(job_spec.num_reduce)
+                } else {
+                    job_spec.num_map + job_spec.num_reduce
+                };
+                handles.push(std::thread::spawn(submit(
+                    opt,
+                    job_id,
+                    nhosts_to_acquire,
+                    config.allow_delay.unwrap_or(false),
+                    job_dir,
+                    setting_path,
+                )));
+
+                is_trivial.push((job_id, is_job_trivial(&job_spec)));
+            }
+
+            use std::io::Write;
+            let mut f = utils::fs::open_with_create_append("/tmp/trivial_jobs.txt");
+            writeln!(f, "batch_id: {}, trivial jobs: {:?}", batch_id, is_trivial).unwrap();
+
+            for h in handles {
+                h.join()
+                    .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
+            }
+        }
+    }
+}
+
 fn schedule_jobs(opt: Opt) -> anyhow::Result<()> {
     match opt.jobname.as_str() {
         "allreduce" => {
             sched_allreduce::submit_jobs(&opt);
         }
+        "mapreduce" => {
+            sched_mapreduce::submit_jobs(&opt);
+        }
         _ => panic!("unknown job {}", opt.jobname),
     };
-
-    // for h in handles {
-    //     h.join()
-    //         .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
-    // }
 
     Ok(())
 }

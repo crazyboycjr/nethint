@@ -308,6 +308,7 @@ impl AllreduceApp {
     fn estimate_hintv2(&mut self, hintv2: NetHintV2Real) {
         // unimplemented!("the problem is how to estimate nethint v2 from link traffic information. save to self.cluster");
 
+        // the estimation refers to nethint/src/hint.rs:estimate_v2
         let mut vc = hintv2.hintv1.vc.clone();
         log::debug!(
             "estimating, hintv2: vc: {}, vname_to_hostname: {:?}, interval_ms: {}, traffic: {:?}",
@@ -317,12 +318,12 @@ impl AllreduceApp {
             hintv2.traffic
         );
 
+        let empty_traffic = &Vec::new();
         for vlink_ix in vc.all_links() {
             // decide the direction
             let n1 = &vc[vc.get_source(vlink_ix)];
             let n2 = &vc[vc.get_target(vlink_ix)];
             assert_ne!(n1.depth, n2.depth);
-            let empty_traffic = &Vec::new();
             let (traffic, link_ix, direction) = if n1.depth > n2.depth {
                 // tx
                 (

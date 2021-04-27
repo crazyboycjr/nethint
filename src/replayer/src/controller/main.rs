@@ -2,9 +2,9 @@
 use std::collections::HashMap;
 
 use litemsg::endpoint;
-use replayer::controller::mapreduce::MapReduceAppBuilder;
 use replayer::controller::allreduce::AllreduceAppBuilder;
 use replayer::controller::app::Application;
+use replayer::controller::mapreduce::MapReduceAppBuilder;
 use replayer::message;
 use replayer::Node;
 
@@ -88,8 +88,12 @@ fn io_loop(
 
     // initialize application
     let mut app: Box<dyn Application> = match opts.app.as_str() {
-        "mapreduce" => Box::new(MapReduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()),
-        "allreduce" => AllreduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build(),
+        "mapreduce" => {
+            MapReduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()
+        }
+        "allreduce" => {
+            AllreduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()
+        }
         "rl" => {
             unimplemented!();
         }

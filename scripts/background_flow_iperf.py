@@ -33,7 +33,7 @@ ready_queue = Queue()
 result_queue = Queue()
 
 def add_args(parser):
-    # parser.add_argument('-n', '--num-competitors', type=int, default=1, help='specify the number of competitor flows')
+    parser.add_argument('-n', '--num-competitors', type=int, default=1, help='specify the number of competitor flows')
     parser.add_argument('-D', '--duration', type=int, default=10, help='flow duration (in seconds)')
     parser.add_argument('-B', '--bidirectional', type=bool, action=argparse.BooleanOptionalAction, help='flow is bidirectional or not')
     parser.add_argument('-F', '--flows', type=int, default=1, help='the number of flows')
@@ -256,9 +256,10 @@ def main():
         random.shuffle(ranks)
         x = ranks[0]
         y = ranks[1]
-        emit_flow(workers[x], workers[y])
-        if args.bidirectional:
-            emit_flow(workers[y], workers[x])
+        for _ in range(args.num_competitors):
+            emit_flow(workers[x], workers[y])
+            if args.bidirectional:
+                emit_flow(workers[y], workers[x])
 
     ssh_submit(cmds_s, ths_s)
     ssh_submit(cmds_c, ths_c)

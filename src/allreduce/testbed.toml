@@ -3,17 +3,19 @@
 # Number of jobs
 ncases = 20
 
+allow_delay = true
+
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[40, 4], [80, 8], [90, 16]]
+job_size_distribution = [[40, 2], [80, 4], [90, 6]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
-buffer_size = 1000_000_000
+buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 10
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 240_000_000_000.0
+poisson_lambda = 4_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 
