@@ -10,7 +10,7 @@ pub struct Communicator {
     nodes: Vec<Node>,
     peers: Vec<endpoint::Endpoint>,
 
-    listener: TcpListener,
+    _listener: TcpListener,
     controller: TcpStream,
     // only rack leader has these fields set to Some
     workers: Option<HashMap<Node, TcpStream>>,
@@ -64,7 +64,7 @@ impl Communicator {
             my_role,
             nodes,
             peers,
-            listener,
+            _listener: listener,
             controller,
             workers,
             controller_listener,
