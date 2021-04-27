@@ -259,6 +259,7 @@ impl Handler {
             guaranteed_bandwidth: Some(opts.topo.host_bw() / MAX_SLOTS as f64),
             topology: opts.topo,
             background_flow_high_freq: Default::default(),
+            gc_period: 100,
         };
         let brain = Brain::build_cloud(brain_setting);
         let (tx, rx) = mpsc::channel();
