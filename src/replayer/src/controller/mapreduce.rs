@@ -235,10 +235,23 @@ impl MapReduceApp {
                 });
             }
             ShufflePattern::FromTrace(record) => {
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..n {
-                    for j in 0..record.num_reduce {
-                        pairs[i][j % m] += (record.reducers[j].1 / n as f64 * 1e6) as usize;
+                if m >= record.num_reduce {
+                    // scale up
+                    assert_eq!(m % record.num_reduce, 0);
+                    let k = m / record.num_reduce;
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..n {
+                        for j in 0..m {
+                            pairs[i][j] = (record.reducers[j / k].1 / n as f64 * 1e6) as usize;
+                        }
+                    }
+                } else {
+                    // scale down
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..n {
+                        for j in 0..record.num_reduce {
+                            pairs[i][j % m] += (record.reducers[j].1 / n as f64 * 1e6) as usize;
+                        }
                     }
                 }
             }

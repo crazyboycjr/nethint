@@ -357,6 +357,12 @@ mod sched_mapreduce {
                 // get job specification
                 let (start_ts, job_spec) = MapReduceAppBuilder::get_job_spec(&setting);
 
+                is_trivial.push((job_id, is_job_trivial(&job_spec)));
+                // skip trivial jobs
+                if config.skip_trivial.unwrap_or(false) && is_trivial.last().unwrap().1 {
+                    continue;
+                }
+
                 // prepare output directory
                 let job_dir = opt
                     .output
@@ -383,6 +389,7 @@ mod sched_mapreduce {
                 } else {
                     job_spec.num_map + job_spec.num_reduce
                 };
+
                 handles.push(std::thread::spawn(submit(
                     opt,
                     job_id,
@@ -391,8 +398,6 @@ mod sched_mapreduce {
                     job_dir,
                     setting_path,
                 )));
-
-                is_trivial.push((job_id, is_job_trivial(&job_spec)));
             }
 
             use std::io::Write;

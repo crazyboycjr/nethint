@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use fnv::FnvHashMap as HashMap;
 use lazy_static::lazy_static;
-use log::debug;
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, EdgeIndices, Graph, NodeIndex},
@@ -358,8 +357,8 @@ impl Topology for Cluster {
         let src_id = self.node_map[src];
         let dst_id = self.node_map[dst];
 
-        debug!("searching route from {} to {}", src, dst);
-        debug!("src_node: {:?}, dst_node: {:?}", g[src_id], g[dst_id]);
+        log::debug!("searching route from {} to {}", src, dst);
+        log::trace!("src_node: {:?}, dst_node: {:?}", g[src_id], g[dst_id]);
         assert_eq!(g[src_id].depth, g[dst_id].depth);
         let mut depth = g[src_id].depth;
 
@@ -372,7 +371,7 @@ impl Topology for Cluster {
                     let parx = g[x].parent.unwrap();
                     path.push(parx);
                     path.push(self.get_reverse_link(parx));
-                    debug!("find a route from {}[{}] to {}[{}]", src, vsrc, dst, vdst);
+                    log::trace!("find a route from {}[{}] to {}[{}]", src, vsrc, dst, vdst);
                     return Route {
                         from: src_id,
                         to: dst_id,
@@ -407,7 +406,7 @@ impl Topology for Cluster {
             path: path1,
         };
 
-        debug!("find a route from {} to {}, route; {:#?}", src, dst, route);
+        log::trace!("find a route from {} to {}, route; {:#?}", src, dst, route);
 
         assert!(load_balancer.is_none(), "unimplemented");
         route

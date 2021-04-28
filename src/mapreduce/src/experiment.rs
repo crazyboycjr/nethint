@@ -132,17 +132,30 @@ fn run_batch(
                 .into_iter()
                 .map(|(a, b)| (a, b * config.traffic_scale))
                 .collect();
-            let start_ts = record.ts * 1_000_000;
+            // let start_ts = record.ts * 1_000_000;
+            let time_scale = config.time_scale.unwrap_or(1.0);
+            let start_ts = ((record.ts * 1_000_000) as f64 * time_scale) as _;
             
             log::debug!("record: {:?}", record);
+            // let job_spec = JobSpec::new(
+            //     record.num_map * config.num_map,
+            //     record.num_reduce * config.num_reduce,
+            //     ShufflePattern::FromTrace(Box::new(record)),
+            // );
+            let map_scale = config.map_scale.unwrap_or(1.0);
+            let reduce_scale = config.reduce_scale.unwrap_or(1.0);
             let job_spec = JobSpec::new(
-                record.num_map * config.num_map,
-                record.num_reduce * config.num_reduce,
+                std::cmp::max(1, (record.num_map as f64 * map_scale) as usize),
+                std::cmp::max(
+                    1,
+                    (record.num_reduce as f64 * reduce_scale) as usize,
+                ),
                 ShufflePattern::FromTrace(Box::new(record)),
             );
             (start_ts, job_spec)
         };
 
+        log::info!("is_trivial: {} {}", i, is_job_trivial(&job_spec));
         job.push((start_ts, job_spec));
     }
 
@@ -153,6 +166,11 @@ fn run_batch(
         let seed = (ncases * trial_id + i) as _;
         let tenant_id = i;
         let (start_ts, job_spec) = job.get(i).unwrap();
+
+        if config.skip_trivial.unwrap_or(false) && is_job_trivial(&job_spec) {
+            continue;
+        }
+
         let mapper_policy = {
             use MapperPlacementPolicy::*;
             match &config.mapper_policy {
@@ -215,20 +233,22 @@ fn run_batch(
     // run application in simulator
     let app_jct = simulator.run_with_application(Box::new(app_group));
     
-    let app_stats: Vec<_> = app_jct
+    let mut app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
         .collect();
 
     // filter out all trival jobs
-    let app_stats: Vec<_> = app_stats
-        .into_iter()
-        .filter(|&(id, _start, _dura)| {
-            let record = &job_trace.records[id];
-            let weights: Vec<_> = record.reducers.iter().map(|(_x, y)| *y as u64).collect();
-            !(record.num_map == 1 || weights.iter().copied().max() == weights.iter().copied().min())
-        })
-        .collect();
+    if !config.skip_trivial.unwrap_or(false) {
+        app_stats = app_stats
+            .into_iter()
+            .filter(|&(id, _start, _dura)| {
+                let record = &job_trace.records[id];
+                let weights: Vec<_> = record.reducers.iter().map(|(_x, y)| *y as u64).collect();
+                !(record.num_map == 1 || weights.iter().copied().max() == weights.iter().copied().min())
+            })
+            .collect();
+    }
 
     // remember to garbage collect remaining jobs
     brain.borrow_mut().reset();
@@ -253,4 +273,23 @@ fn save_result(path: std::path::PathBuf, app_stats: Vec<(usize, u64, u64)>) {
     use std::io::Write;
     let mut f = utils::fs::open_with_create_append(path.join("result.txt"));
     writeln!(f, "{:?}", app_stats).unwrap();
+}
+
+
+// this code snippet is copied from scheduler.rs
+fn is_job_trivial(job_spec: &JobSpec) -> bool {
+    match job_spec.shuffle_pat {
+        ShufflePattern::FromTrace(ref record) => {
+            let mut weights: Vec<u64> = vec![0u64; job_spec.num_reduce];
+            for (i, (_x, y)) in record.reducers.iter().enumerate() {
+                weights[i % job_spec.num_reduce] += *y as u64;
+            }
+            job_spec.num_map == 1
+                || weights.iter().copied().max().unwrap() as f64
+                    <= 1.05 * weights.iter().copied().min().unwrap() as f64
+        }
+        _ => {
+            unimplemented!();
+        }
+    }
 }

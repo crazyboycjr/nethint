@@ -180,21 +180,16 @@ pub struct AppGroup<'a, T> {
 }
 
 pub trait AppGroupTokenCoding {
-    fn encode(tenant_id: TenantId, app_id: usize) -> Token;
-    fn decode(&self) -> (TenantId, usize);
+    fn encode(app_id: usize) -> Token;
+    fn decode(&self) -> usize;
 }
 
 impl AppGroupTokenCoding for Token {
-    fn encode(tenant_id: TenantId, app_id: usize) -> Token {
-        assert_eq!(
-            tenant_id, app_id,
-            "currently, AppGroupTokenCoding assumes tenant_id and app_id are the same"
-        );
-        assert!(tenant_id < 0x1 << 32, "invalid tenant_id {}", tenant_id);
-        Token(tenant_id << 32 | app_id)
+    fn encode(app_id: usize) -> Token {
+        Token(app_id)
     }
-    fn decode(&self) -> (TenantId, usize) {
-        (self.0 >> 32, self.0 & 0xffffffff)
+    fn decode(&self) -> usize {
+        self.0
     }
 }
 
@@ -219,7 +214,7 @@ where
                     .map(|app_id| {
                         let start_off = self.apps[app_id].0;
                         // println!("start off {:?}", start_off);
-                        let token = Token::encode(app_id, app_id);
+                        let token = Token::encode(app_id);
                         Event::RegisterTimer(start_off, token)
                     })
                     .collect()
@@ -228,7 +223,7 @@ where
                 // dispatch flows to different apps by looking at the token
                 let mut flows = vec![vec![]; self.apps.len()];
                 for r in recs {
-                    let (_, app_id) = r.flow.token.unwrap().decode();
+                    let app_id = r.flow.token.unwrap().decode();
                     assert!(app_id < self.apps.len());
                     let mut f = r.clone();
                     f.ts -= self.apps[app_id].0; // f.ts -= start_off;
@@ -256,7 +251,7 @@ where
             }
             AppEventKind::Notification(token) => {
                 // now the timestamp is at self.apps[app_id].start_off
-                let (_, app_id) = token.decode();
+                let app_id = token.decode();
                 self.forward(app_id, event.ts, AppEventKind::AppStart)
             }
         };
@@ -312,7 +307,7 @@ where
                             self.stored_flow_token
                                 .insert(r.flow.id, r.flow.token)
                                 .unwrap_none(); // store the token
-                            r.flow.token = Some(Token::encode(app_id, app_id));
+                            r.flow.token = Some(Token::encode(app_id));
                         });
                         Event::FlowArrive(recs).into()
                     }

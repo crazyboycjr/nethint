@@ -36,16 +36,16 @@ pub struct ExperimentConfig {
     /// Number of reduce tasks. When using trace, this parameter means reduce scale factor
     pub num_reduce: usize,
 
-    /// The map scale used only in testbed setting to support scale down.
+    /// The map scale used only in testbed setting to support scale down; default 1.0
     pub map_scale: Option<f64>,
 
-    /// The reduce scale used only in testbed setting to support scale down.
+    /// The reduce scale used only in testbed setting to support scale down; default 1.0
     pub reduce_scale: Option<f64>,
 
     /// Traffic scale, multiply the traffic size by a number to allow job overlaps
     pub traffic_scale: f64,
 
-    /// Scale the time of job arrival
+    /// Scale the time of job arrival; default 1.0
     pub time_scale: Option<f64>,
 
     /// Computation time switch
@@ -57,8 +57,11 @@ pub struct ExperimentConfig {
     /// akin to AWS Placement Group
     pub placement_strategy: brain::PlacementStrategy,
 
-    /// whether to allow delay scheduling, default to false, in simulation, it must be false
+    /// Whether to allow delay scheduling, default to false, in simulation, it must be false
     pub allow_delay: Option<bool>,
+
+    /// Whether to skip trivial jobs; default false
+    pub skip_trivial: Option<bool>,
 
     /// Collocate or De-collocate
     pub collocate: bool,
