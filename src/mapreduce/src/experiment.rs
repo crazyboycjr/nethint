@@ -161,6 +161,7 @@ fn run_batch(
 
     // Build the application by combination
     // AppGroup[Tenant[PlinkApp[MapReduceApp]]]
+    let mut start_ts_vec = Vec::new();
     let batch = config.batches[batch_id].clone();
     for i in 0..ncases {
         let seed = (ncases * trial_id + i) as _;
@@ -170,6 +171,8 @@ fn run_batch(
         if config.skip_trivial.unwrap_or(false) && is_job_trivial(&job_spec) {
             continue;
         }
+
+        start_ts_vec.push(*start_ts);
 
         let mapper_policy = {
             use MapperPlacementPolicy::*;
@@ -235,7 +238,7 @@ fn run_batch(
     
     let mut app_stats: Vec<_> = app_jct
         .iter()
-        .map(|(i, jct)| (*i, job[*i].0, jct.unwrap()))
+        .map(|(i, jct)| (*i, start_ts_vec[*i], jct.unwrap()))
         .collect();
 
     // filter out all trival jobs
