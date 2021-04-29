@@ -980,10 +980,7 @@ impl NetState {
         // in Brain.
         // The sampler is to copy all nodes's latest data in all virt clusters.
         if let Some(ref brain) = self.brain {
-            use crate::app::AppGroupTokenCoding;
-            let token = f.flow.token.unwrap_or_else(|| 0.into());
-            let (tenant_id, _) = token.decode();
-            assert!(tenant_id == f.flow.tenant_id.unwrap());
+            let tenant_id = f.flow.tenant_id.unwrap();
             if let Some(vcluster) = brain.borrow().vclusters.get(&tenant_id) {
                 assert!(f.flow.vsrc.is_some() && f.flow.vdst.is_some());
                 let vsrc_ix = vcluster
