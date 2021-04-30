@@ -6,7 +6,6 @@ use nethint::{
     Duration, Timestamp, Trace, TraceRecord,
 };
 use std::rc::Rc;
-use std::cmp;
 
 use crate::{
     random_ring::RandomRingAllReduce, rat::RatAllReduce,
@@ -15,11 +14,11 @@ use crate::{
 
 pub struct AllReduceApp<'c> {
     job_spec: &'c JobSpec,
-    computation_speed: Option<f64>,
     cluster: Option<Rc<dyn Topology>>,
     replayer: Replayer,
+    computation_time: Duration,
+    iteration_start: Timestamp,
     jct: Option<Duration>,
-    fct: Option<Duration>,
     seed: u64,
     allreduce_policy: AllReducePolicy,
     remaining_iterations: usize,
@@ -46,13 +45,15 @@ impl<'c> AllReduceApp<'c> {
         autotune: Option<usize>,
     ) -> Self {
         let trace = Trace::new();
+        let computation_time =
+            calc_job_computation_time(job_spec.buffer_size, computation_speed.unwrap_or(0.));
         AllReduceApp {
             job_spec,
-            computation_speed,
             cluster,
             replayer: Replayer::new(trace),
+            computation_time,
+            iteration_start: 0,
             jct: None,
-            fct: None,
             seed,
             allreduce_policy,
             remaining_iterations: job_spec.num_iterations,
@@ -74,12 +75,16 @@ impl<'c> AllReduceApp<'c> {
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         match self.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, 1)),
-            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(self.seed, 1)),
+            AllReducePolicy::TopologyAware => {
+                Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
+            }
             AllReducePolicy::RAT => Box::new(RatAllReduce::new(self.job_spec.num_workers)),
         }
     }
 
     pub fn allreduce(&mut self, start_time: Timestamp) {
+        self.iteration_start = start_time;
+
         let mut trace = Trace::new();
 
         if self.allreduce_algorithm.is_none() {
@@ -111,11 +116,12 @@ impl<'c> AllReduceApp<'c> {
         }
     }
 }
+
 //computation time for allreuce job
-//para: job_size and constant: k 
-fn calc_job_computation_time(buffer_size: usize, k: f64) -> u64{
+//para: job_size and constant: k
+fn calc_job_computation_time(buffer_size: usize, k: f64) -> u64 {
     let buffer_size_f64 = buffer_size as f64;
-    let res = ((k)*(buffer_size_f64))  as u64;
+    let res = ((k) * (buffer_size_f64)) as u64;
     res
 }
 
@@ -136,10 +142,12 @@ impl<'c> Application for AllReduceApp<'c> {
                         self.cluster.as_ref().unwrap().to_dot()
                     );
                     // since we have the cluster, start and schedule the app again
-                    self.allreduce(event.ts);
+                    let start_time = self.iteration_start
+                        + self.computation_time.max(event.ts - self.iteration_start);
+                    self.allreduce(start_time);
                     return self
                         .replayer
-                        .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                        .on_event(AppEvent::new(start_time, AppEventKind::AppStart));
                 }
                 _ => unreachable!(),
             }
@@ -147,12 +155,8 @@ impl<'c> Application for AllReduceApp<'c> {
 
         if let AppEventKind::FlowComplete(ref flows) = &event.event {
             let fct_cur = flows.iter().map(|f| f.ts + f.dura.unwrap()).max();
-            self.fct = self.fct.iter().cloned().chain(fct_cur).max();
             self.jct = self.jct.iter().cloned().chain(fct_cur).max();
-            // get max jct and coputation time
-            let computation_time: u64 = calc_job_computation_time(self.job_spec.buffer_size, self.computation_speed.unwrap_or(0.));
-            self.jct = Some(cmp::max(self.jct.unwrap(), self.fct.unwrap() + computation_time));
-            
+
             self.remaining_flows -= flows.len();
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
@@ -163,15 +167,22 @@ impl<'c> Application for AllReduceApp<'c> {
                     self.cluster = None;
                     return self.request_nethint();
                 }
-                self.allreduce(self.jct.unwrap());
+                self.allreduce(
+                    self.iteration_start
+                        + self
+                            .computation_time
+                            .max(self.jct.unwrap_or(0) - self.iteration_start),
+                );
                 return self
                     .replayer
-                    .on_event(AppEvent::new(event.ts+self.jct.unwrap()-self.fct.unwrap(), AppEventKind::AppStart));
+                    .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
             }
         }
         self.replayer.on_event(event)
     }
+
     fn answer(&mut self) -> Self::Output {
         self.jct
+            .map(|x| self.iteration_start + self.computation_time.max(x - self.iteration_start))
     }
 }

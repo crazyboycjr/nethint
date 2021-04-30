@@ -4,25 +4,23 @@
 ncases = 20
 
 # Job size distributions [(percentage, number of workers)]
-# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # job_size_distribution = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]]
 # job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
-job_size_distribution = [[40, 2], [80, 4], [90, 6]]
-# job_size_distribution = [[90, 6]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
 buffer_size = 100_000_000
 
 # computation_speed is used to present the relationship between buffer_size and computation time
 # computation_time = buffer_size*computation_speed
-# computation_speed = 0.5
+computation_speed = 0.1
 
 # Number of iterations for all jobs
 num_iterations = 10
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 10_000_000_000.0
+poisson_lambda = 24_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -89,10 +87,10 @@ max_slots = 1
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
 sharing_mode = "Guaranteed"
 # in Gbps
-guaranteed_bandwidth = 2.5
+guaranteed_bandwidth = 25
 background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
 # background_flow_high_freq = { enable = false }
-gc_period = 0
+gc_period = 100
 
 # The topology for simulation
 [brain.topology]
@@ -104,10 +102,10 @@ type = "Arbitrary"  # another possible value is "FatTree"
 # oversub_ratio = 4.0   # oversubscription ratio
 
 [brain.topology.args]         # When type = "Arbitrary"
-nracks = 2        # the number of racks
-rack_size = 3       # the number of hosts under a rack
-host_bw = 10       # bandwidth of a host, in Gbps
-rack_bw = 10       # bandwidth of a ToR switch, in Gbps
+nracks = 300        # the number of racks
+rack_size = 6       # the number of hosts under a rack
+host_bw = 100       # bandwidth of a host, in Gbps
+rack_bw = 200       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # KEY = "value"
