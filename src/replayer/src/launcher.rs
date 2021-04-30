@@ -42,6 +42,10 @@ struct Opt {
     /// Brain/nethint agent global leader URI, corresponding to NH_CONTROLLER_URI env
     #[structopt(long)]
     brain_uri: String,
+
+    /// Output path of the timing result, passed to controller
+    #[structopt(short, long = "timing")]
+    timing: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -100,6 +104,7 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
     let output_dir = opt.output.clone();
     let mut env_str = envs.join(" ");
     let configfile = opt.configfile.clone();
+    let timing = opt.timing.clone();
     if role == Role::Controller {
         env_str.push_str(&format!(" NH_CONTROLLER_URI={} ", opt.brain_uri));
     }
@@ -136,6 +141,10 @@ fn start_ssh(opt: &Opt, host: String, role: Role, envs: &[String]) -> impl FnOnc
             let _output = utils::cmd_helper::get_command_output(scp_cmd);
 
             controller_args = format!("--app {} --config {}", jobname, dst);
+            if let Some(path) = timing {
+                controller_args.push_str(" --timing ");
+                controller_args.push_str(path.to_str().unwrap());
+            }
         }
 
         // TODO(cjr): also to distribute binary program to workers

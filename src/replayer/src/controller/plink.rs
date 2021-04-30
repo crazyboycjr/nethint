@@ -58,7 +58,7 @@ impl PlinkApp {
                 self.background_flow.vname_to_hostname = hintv1.vname_to_hostname;
                 self.background_flow.start()?;
             }
-            NetHintResponseV2(_tenant_id, _hintv2) => {
+            NetHintResponseV2(_tenant_id, _hintv2, _) => {
                 panic!("impossible");
             }
             _ => {

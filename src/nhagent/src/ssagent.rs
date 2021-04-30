@@ -62,7 +62,8 @@ fn main() {
         cmd.arg("-tuni");
         let output = get_command_output(cmd).unwrap();
         let ss_flows: SsTcpFlows = output.parse().expect("fail to parse ss output");
-        let buf = bincode::serialize(&ss_flows).expect("fail to serialize ss_flows");
+        let ts = std::time::SystemTime::now();
+        let buf = bincode::serialize(&(ts, ss_flows)).expect("fail to serialize ss_flows");
         assert!(buf.len() <= 65507);
         match sock.send(&buf) {
             Ok(_nbytes) => {}

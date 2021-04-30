@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use crate::communicator::BcastId;
+use crate::timing::TimeList;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -65,7 +66,7 @@ pub enum Message {
     /// send by rack/global leader, processed by app
     NetHintResponseV1(TenantId, NetHintV1Real),
     /// send by rack/global leader, processed by app
-    NetHintResponseV2(TenantId, NetHintV2Real),
+    NetHintResponseV2(TenantId, NetHintV2Real, TimeList),
     /// send by global leader, processed by all
     UpdateRateLimit(usize),
 }

@@ -11,8 +11,11 @@ use nethint::{
 };
 use nhagent::{
     self,
+    argument::Opts,
     cluster::{self, hostname, CLUSTER},
     communicator::Communicator,
+    message,
+    timing::{self, TimeList},
     Role,
 };
 use std::cell::RefCell;
@@ -30,11 +33,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
 
-use nhagent::message;
-
 use nethint::brain::Brain;
-
-use nhagent::argument::Opts;
 
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 
@@ -68,7 +67,7 @@ fn main() -> Result<()> {
 }
 
 fn main_loop(
-    rx: mpsc::Receiver<Vec<CounterUnit>>,
+    rx: mpsc::Receiver<(TimeList, Vec<CounterUnit>)>,
     interval_ms: u64,
     comm: &mut Communicator,
     opt: &Opts,
@@ -140,12 +139,13 @@ fn main_loop(
             // peroidically call the function to check if update is needed, if yes, then do it
             handler.update_background_flow_hard(comm)?;
 
-            for v in rx.try_iter() {
+            for (tl, v) in rx.try_iter() {
                 for c in &v {
                     log::trace!("counterunit: {:?}", c);
                 }
                 // receive from local sampler module
                 handler.receive_server_chunk(comm.my_rank(), v);
+                handler.update_time_list(tl);
             }
 
             if comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader {
@@ -261,6 +261,10 @@ struct Handler {
     // command executor thread to avoid blocking of main thread
     cmd_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     cmd_tx: mpsc::Sender<CommandOp>,
+    // current time list
+    time_list: TimeList,
+    // time list for traffic buf
+    time_list_buf: TimeList,
 }
 
 impl Handler {
@@ -297,7 +301,13 @@ impl Handler {
             bfh_last_ts,
             cmd_handle,
             cmd_tx: tx,
+            time_list: TimeList::new(),
+            time_list_buf: TimeList::new(),
         }
+    }
+
+    fn update_time_list(&mut self, time_list: TimeList) {
+        self.time_list.update(&time_list);
     }
 
     fn cleanup(&mut self) {
@@ -460,6 +470,8 @@ impl Handler {
                 .entry(k)
                 .and_modify(|e| Self::commit_chunk(e, v));
         }
+        self.time_list_buf = self.time_list.clone();
+        self.time_list.clear();
     }
 
     fn merge_traffic(
@@ -494,6 +506,7 @@ impl Handler {
         for &link_ix in iter {
             self.update_traffic_buf(link_ix);
         }
+        // also update time_list_buf
     }
 
     fn send_server_chunk(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
@@ -527,8 +540,10 @@ impl Handler {
 
                 // commit the sent data by insertion or merge
                 Self::merge_traffic_on_link(&mut self.committed_traffic, uplink, chunk);
+                self.time_list.push_now(timing::ON_CHUNK_SENT);
             }
         }
+
         Ok(())
     }
 
@@ -554,6 +569,12 @@ impl Handler {
             .get_uplink(pcluster.inner().get_node_index(sender_hostname));
         // 3. update traffic
         Self::merge_traffic_on_link(&mut self.traffic, uplink, chunk);
+
+        // update time list, for GlobalLeader or RackLeader
+        let my_role = pcluster.get_my_role();
+        if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
+            self.time_list.push_now(timing::ON_CHUNK_SENT);
+        }
     }
 
     // Assume LinkIx from different agents are compatible with each other
@@ -628,6 +649,13 @@ impl Handler {
         }
         // 3. commit the sent traffic
         Self::merge_traffic(&mut self.committed_traffic, chunk);
+
+        // update time list, for GlobalLeader or RackLeader
+        let my_role = pcluster.get_my_role();
+        if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
+            self.time_list.push_now(timing::ON_ALL_RECEIVED);
+        }
+
         Ok(())
     }
 
@@ -646,6 +674,7 @@ impl Handler {
                 self.traffic.insert(l, c);
             }
         }
+        self.time_list.push_now(timing::ON_ALL_RECEIVED);
         log::debug!("worker agent link traffic: {:?}", self.traffic);
         Ok(())
     }
@@ -807,6 +836,9 @@ impl Handler {
                         comm.send_to(sender_rank, &msg)?;
                     }
                     NetHintVersion::V2 => {
+                        // handle time list
+                        let mut time_list = self.time_list_buf.clone();
+                        time_list.push_now(timing::ON_TENANT_REQ);
                         // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
                         let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();
                         let mut vc =
@@ -889,7 +921,7 @@ impl Handler {
                             interval_ms: self.interval_ms,
                             traffic,
                         };
-                        let msg = NetHintResponseV2(tenant_id, hintv2);
+                        let msg = NetHintResponseV2(tenant_id, hintv2, time_list);
                         comm.send_to(sender_rank, &msg)?;
                     }
                 }

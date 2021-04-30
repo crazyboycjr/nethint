@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::mpsc;
 use thiserror::Error;
+use std::time::SystemTime;
+use crate::timing::{self, TimeList};
 
 use nethint::counterunit::{CounterType, CounterUnit};
 
@@ -13,7 +15,7 @@ pub struct SsSampler {
     interval_ms: u64,
     listen_port: u16,
     handle: Option<std::thread::JoinHandle<()>>,
-    tx: mpsc::Sender<Vec<CounterUnit>>,
+    tx: mpsc::Sender<(TimeList, Vec<CounterUnit>)>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,7 +140,7 @@ struct FlowTable {
 }
 
 impl SsSampler {
-    pub fn new(interval_ms: u64, listen_port: u16, tx: mpsc::Sender<Vec<CounterUnit>>) -> Self {
+    pub fn new(interval_ms: u64, listen_port: u16, tx: mpsc::Sender<(TimeList, Vec<CounterUnit>)>) -> Self {
         SsSampler {
             interval_ms,
             listen_port,
@@ -162,6 +164,7 @@ impl SsSampler {
             .expect("set timeout failed");
         let mut buf = vec![0; 65507];
         let mut last_ts = std::time::Instant::now();
+        let mut time_list = TimeList::new();
 
         // group the flows by (src, dst) pair
         let mut flow_group: HashMap<(IpAddr, IpAddr), u64> = Default::default();
@@ -207,12 +210,13 @@ impl SsSampler {
                 std::mem::drop(pcluster);
 
                 // vnode_counter hash_map to vec
+                time_list.push(timing::ON_SAMPLED, SystemTime::now());
                 let counter_unit: Vec<CounterUnit> = vnode_counter
                     .values()
                     .filter(|v| !v.is_empty())
                     .cloned()
                     .collect();
-                tx.send(counter_unit).unwrap();
+                tx.send((time_list.clone(), counter_unit)).unwrap();
 
                 // update the timer
                 last_ts = std::time::Instant::now();
@@ -230,9 +234,11 @@ impl SsSampler {
                         );
                     }
                     let buf = &buf[..nbytes];
-                    let ss_flows: SsTcpFlows =
+                    let (ts, ss_flows): (SystemTime, SsTcpFlows) =
                         bincode::deserialize(&buf).expect("deserialize ss_flows failed");
-                    log::trace!("{:?}", ss_flows);
+                    log::trace!("ts: {:?}, {:?}", ts, ss_flows);
+                    time_list.clear();
+                    time_list.push(timing::ON_COLLECTED, ts);
 
                     let now = std::time::Instant::now();
                     for ss_flow in ss_flows.0 {
