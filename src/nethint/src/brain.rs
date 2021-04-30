@@ -139,6 +139,10 @@ impl Brain {
         }
     }
 
+    pub fn set_seed(&mut self, seed: u64) {
+        self.setting.seed = seed;
+    }
+
     pub fn build_cloud(setting: BrainSetting) -> Rc<RefCell<Self>> {
         let cluster = match setting.topology {
             TopoArgs::FatTree {
