@@ -69,7 +69,10 @@ fn main() {
             Err(_e) => {}
         }
         let n = now();
-        std::thread::sleep(last_ts + sleep_ms - n);
+        if last_ts + sleep_ms > n {
+            // avoid duration < 0, which will cause a panic.
+            std::thread::sleep(last_ts + sleep_ms - n);
+        }
         last_ts = now();
     }
 }

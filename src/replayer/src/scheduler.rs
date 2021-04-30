@@ -277,8 +277,9 @@ mod sched_allreduce {
                 write_setting(&setting, &setting_path);
 
                 let now = std::time::Instant::now();
-                if now0 + std::time::Duration::from_nanos(start_ts) > now {
-                    std::thread::sleep(now0 + std::time::Duration::from_nanos(start_ts) - now);
+                let start_ts_dura = std::time::Duration::from_nanos(start_ts);
+                if now0 + start_ts_dura > now {
+                    std::thread::sleep(now0 + start_ts_dura - now);
                 }
                 handles.push(std::thread::spawn(submit(
                     opt,
