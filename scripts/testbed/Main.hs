@@ -201,6 +201,18 @@ oneClickSetup n = do
     deployRdmaConfigAll cpus rdmaAddrs
     sshAndExecuteAll cpus "ip a"
 
+psrecord :: String -> Double -> Double -> IO ()
+psrecord name interval duration = do
+    let
+        cmd = printf
+            "psrecord $(pgrep %s) --interval %.f --duration %.f --plot /tmp/%s.png --include-children --log /tmp/%s.txt"
+            name
+            interval
+            duration
+            name
+            name
+    callCommand cmd
+
 
 {-
 import Control.Concurrent

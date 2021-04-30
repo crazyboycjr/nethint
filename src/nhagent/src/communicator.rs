@@ -3,6 +3,7 @@ use crate::{Node, Role};
 use litemsg::endpoint;
 use std::collections::HashMap;
 use std::net::{TcpStream, TcpListener};
+use std::rc::Rc;
 
 pub struct Communicator {
     my_rank: usize,
@@ -18,6 +19,8 @@ pub struct Communicator {
 
     // only for controller/global leader
     apps: Vec<endpoint::Endpoint>,
+
+    poll: Option<Rc<mio::Poll>>,
 }
 
 impl Communicator {
@@ -69,7 +72,12 @@ impl Communicator {
             workers,
             controller_listener,
             apps: Vec::new(),
+            poll: None,
         })
+    }
+
+    pub fn set_poll(&mut self, poll: Rc<mio::Poll>) {
+        self.poll= Some(poll);
     }
 
     pub fn world_size(&self) -> usize {
@@ -121,12 +129,28 @@ impl Communicator {
 
     pub fn send_to(&mut self, rank: usize, msg: &message::Message) -> anyhow::Result<()> {
         assert!(rank != self.world_size());
-        let ep = if rank < self.world_size() {
-            self.peer_mut(rank)
-        } else {
-            self.app_ep_mut(rank)
+        let ep = {
+            let ep = if rank < self.world_size() {
+                self.peer_mut(rank)
+            } else {
+                self.app_ep_mut(rank)
+            };
+            ep.post(msg, None)?;
+
+            &*ep
         };
-        ep.post(msg, None)
+
+        // reactivate
+        let s = unsafe { &*(ep.stream() as *const mio::net::TcpStream) };
+        let interest = ep.interest();
+        self.poll.as_ref().unwrap().reregister(
+            s,
+            mio::Token(rank),
+            interest,
+            mio::PollOpt::level(),
+        )?;
+
+        Ok(())
     }
 
     pub fn broadcast(&mut self, msg: &message::Message) -> anyhow::Result<()> {
@@ -178,7 +202,7 @@ impl Communicator {
         Ok(())
     }
 
-    pub fn accept_app_connection(&mut self, poll: &mio::Poll) -> anyhow::Result<()> {
+    pub fn accept_app_connection(&mut self) -> anyhow::Result<()> {
         assert_eq!(self.my_role, Role::GlobalLeader);
         let (client, addr) = self.controller_listener().unwrap().accept_std()?;
 
@@ -190,9 +214,10 @@ impl Communicator {
             .writable(true)
             .node(addr.to_string().parse().unwrap());
         let ep = builder.build().unwrap();
-        poll.register(
+        let token = mio::Token(self.world_size() + self.apps.len() + 1);
+        self.poll.as_ref().unwrap().register(
             ep.stream(),
-            mio::Token(self.world_size() + self.apps.len() + 1),
+            token,
             ep.interest(),
             mio::PollOpt::level(),
         )?;

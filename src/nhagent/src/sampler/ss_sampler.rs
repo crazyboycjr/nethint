@@ -1,10 +1,10 @@
 use crate::cluster::CLUSTER;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::mpsc;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 use nethint::counterunit::{CounterType, CounterUnit};
 
@@ -60,6 +60,11 @@ impl std::str::FromStr for SsTcpFlows {
                 let tokens: Vec<&str> = line.split(' ').filter(|x| !x.is_empty()).collect();
                 let n = tokens.len();
                 assert_eq!(n, 6, "tokens: {:?}", tokens);
+                if tokens[n - 2].parse::<SocketAddrV6>().is_ok()
+                    || tokens[n - 1].parse::<SocketAddrV6>().is_ok()
+                {
+                    continue;
+                }
                 last_conn = Some(SockAddrPair {
                     local_addr: tokens[n - 2].parse().map_err(|_| ParseError(1))?,
                     peer_addr: tokens[n - 1].parse().map_err(|_| ParseError(2))?,
@@ -225,7 +230,8 @@ impl SsSampler {
                         );
                     }
                     let buf = &buf[..nbytes];
-                    let ss_flows: SsTcpFlows = bincode::deserialize(&buf).expect("deserialize ss_flows failed");
+                    let ss_flows: SsTcpFlows =
+                        bincode::deserialize(&buf).expect("deserialize ss_flows failed");
                     log::trace!("{:?}", ss_flows);
 
                     let now = std::time::Instant::now();
