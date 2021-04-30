@@ -91,7 +91,8 @@ fn main() {
         let config_clone = config.clone();
         let brain_clone = brain.borrow().replicate_for_multithread();
         (0..batch_repeat).into_par_iter().for_each(move |trial_id| {
-            let brain_clone = brain_clone.replicate_for_multithread();
+            let mut brain_clone = brain_clone.replicate_for_multithread();
+            brain_clone.set_seed(brain_clone.setting().seed + trial_id as u64);
             run_batch(
                 &config_clone,
                 i,
