@@ -91,7 +91,8 @@ fn main_loop(
     comm.barrier(0)?;
     log::debug!("barrier 0 passed");
 
-    let poll = mio::Poll::new()?;
+    let poll = Rc::new(mio::Poll::new()?);
+    comm.set_poll(Rc::clone(&poll));
 
     let mut events = mio::Events::with_capacity(256);
 
@@ -158,7 +159,7 @@ fn main_loop(
             if rank == comm.world_size() {
                 // it must be the controller listener wants to accept new connections
                 assert!(event.readiness().is_readable());
-                comm.accept_app_connection(&poll)?;
+                comm.accept_app_connection()?;
                 continue;
             }
 
@@ -177,7 +178,15 @@ fn main_loop(
                     Ok((_cmd, attachment)) => {
                         handler.on_send_complete(attachment)?;
                     }
-                    Err(endpoint::Error::NothingToSend) => {}
+                    Err(endpoint::Error::NothingToSend) => {
+                        // deactivate to save CPU
+                        poll.reregister(
+                            ep.stream(),
+                            event.token(),
+                            ep.interest() - mio::Ready::writable(),
+                            mio::PollOpt::level(),
+                        )?;
+                    }
                     Err(endpoint::Error::WouldBlock) => {}
                     Err(e) => {
                         return Err(e.into());
@@ -382,7 +391,9 @@ impl Handler {
                 s.push(ch);
             };
             let mut cmd = Command::new("ssh");
-            switch_settings.iter_mut().for_each(|s| enclose_with(s, '"'));
+            switch_settings
+                .iter_mut()
+                .for_each(|s| enclose_with(s, '"'));
             let switch_setting_str = switch_settings.join(" ");
             // enclose_with(&mut switch_setting_str, '\'');
             cmd.args(&[
