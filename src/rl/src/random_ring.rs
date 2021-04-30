@@ -2,7 +2,7 @@ use nethint::{
     cluster::Topology,
     Flow,
 };
-use crate::{RLAlgorithm};
+use crate::RLAlgorithm;
 
 #[derive(Debug, Default)]
 pub struct RandomTree {

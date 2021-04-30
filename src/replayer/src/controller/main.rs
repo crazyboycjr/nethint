@@ -2,9 +2,10 @@
 use std::collections::HashMap;
 
 use litemsg::endpoint;
-use replayer::controller::allreduce::AllreduceAppBuilder;
 use replayer::controller::app::Application;
+use replayer::controller::allreduce::AllreduceAppBuilder;
 use replayer::controller::mapreduce::MapReduceAppBuilder;
+use replayer::controller::rl::RLAppBuilder;
 use replayer::message;
 use replayer::Node;
 
@@ -95,7 +96,7 @@ fn io_loop(
             AllreduceAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()
         }
         "rl" => {
-            unimplemented!();
+            RLAppBuilder::new(opts.config.clone(), workers, brain, hostname_to_node).build()
         }
         a @ _ => {
             panic!("unknown app: {:?}", a);

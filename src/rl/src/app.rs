@@ -1,15 +1,15 @@
-use std::rc::Rc;
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     cluster::Topology,
+    hint::NetHintVersion,
     simulator::{Event, Events},
     Duration, Timestamp, Trace, TraceRecord,
-    hint::NetHintVersion,
 };
+use std::rc::Rc;
 
 use crate::{
-    random_ring::RandomTree, topology_aware::TopologyAwareTree, rat::RatTree,
-    RLAlgorithm, RLPolicy, JobSpec,
+    random_ring::RandomTree, rat::RatTree, topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm,
+    RLPolicy,
 };
 
 pub struct RLApp<'c> {
@@ -63,14 +63,17 @@ impl<'c> RLApp<'c> {
     pub fn rl_traffic(&mut self, start_time: Timestamp) {
         let mut trace = Trace::new();
 
-        let mut allreduce_algorithm: Box<dyn RLAlgorithm> = match self.allreduce_policy {
+        let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.allreduce_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
         };
 
-        let flows =
-            allreduce_algorithm.run_rl_traffic(self.job_spec.root_index, self.job_spec.buffer_size as u64, &**self.cluster.as_ref().unwrap());
+        let flows = rl_algorithm.run_rl_traffic(
+            self.job_spec.root_index,
+            self.job_spec.buffer_size as u64,
+            &**self.cluster.as_ref().unwrap(),
+        );
 
         for flow in flows {
             let rec = TraceRecord::new(start_time, flow, None);
@@ -128,7 +131,10 @@ impl<'c> Application for RLApp<'c> {
             // self.jct += self.computation_time
 
             if self.remaining_flows == 0 && self.remaining_iterations > 0 {
-                if self.autotune.is_some() && self.autotune.unwrap() > 0 && self.remaining_iterations % self.autotune.unwrap() == 0 {
+                if self.autotune.is_some()
+                    && self.autotune.unwrap() > 0
+                    && self.remaining_iterations % self.autotune.unwrap() == 0
+                {
                     self.cluster = None;
                     return self.request_nethint();
                 }

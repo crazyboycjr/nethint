@@ -1293,6 +1293,7 @@ dependencies = [
  "num_cpus",
  "rand 0.8.3",
  "rand_distr",
+ "rl",
  "serde",
  "serde_bytes",
  "sha2",
