@@ -3,7 +3,7 @@
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 # enable computation time
-sed -i '/^num_reduce/a enable_computation_time = true' *.toml
+# sed -i '/^num_reduce/a enable_computation_time = true' *.toml
 
 for conf in `ls *.toml`; do
 	echo $conf

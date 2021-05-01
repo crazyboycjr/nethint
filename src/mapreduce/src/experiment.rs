@@ -18,6 +18,7 @@ use mapreduce::{
 
 use mapreduce::config::{read_config, ExperimentConfig};
 
+
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce Experiment", about = "MapReduce Experiment")]
 pub struct Opt {
@@ -184,7 +185,7 @@ fn run_batch(
                 FromTrace(r) => FromTrace(r.clone()),
             }
         };
-
+        
         let mapreduce_app = Box::new(MapReduceApp::new(
             seed,
             job_spec,

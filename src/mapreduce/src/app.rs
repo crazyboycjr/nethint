@@ -46,6 +46,7 @@ impl ReducerMeta {
 
 pub struct MapReduceApp<'c> {
     seed: u64,
+    rng: StdRng,
     job_spec: &'c JobSpec,
     cluster: Option<Rc<dyn Topology>>,
     mapper_place_policy: MapperPlacementPolicy,
@@ -67,11 +68,10 @@ impl<'c> std::fmt::Debug for MapReduceApp<'c> {
 }
 
 /// get shuffle duration 
-fn get_shuffle_dur()->usize{
+fn get_shuffle_dur(rng: &mut StdRng)->usize{
     let choices = [(24, 61), (37, 13), (62, 14), (85, 12)];
-    let mut rng = thread_rng();
-    let val = choices.choose_weighted(&mut rng, |item| item.1).unwrap().0;
-    log::debug!("{:?}", choices.choose_weighted(&mut rng, |item| item.1).unwrap().0);
+    
+    let val = choices.choose_weighted( rng, |item| item.1).unwrap().0;
 
     val
 }
@@ -91,6 +91,7 @@ impl<'c> MapReduceApp<'c> {
         assert!(nethint_level == 1 || nethint_level == 2);
         MapReduceApp {
             seed,
+            rng: StdRng::seed_from_u64(seed),
             job_spec,
             cluster,
             mapper_place_policy,
@@ -176,8 +177,9 @@ impl<'c> MapReduceApp<'c> {
                 }
             }
             // total time(mapper, reducer, shuffle)
-            let shuffle_estimate_time = job_size as f64 *8.0 / ((self.host_bandwidth*1e9) * cmp::min(self.job_spec.num_map, self.job_spec.num_reduce) as f64);
-            let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur() as f64 /100.0);
+            let shuffle_estimate_time = job_size as f64 *8.0 / ((self.host_bandwidth) * cmp::min(self.job_spec.num_map, self.job_spec.num_reduce) as f64);
+            let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur(&mut self.rng) as f64 /100.0);
+            // println!("{:?}", get_shuffle_dur(&mut self.rng));
             let mut mappers_size = vec![0; self.job_spec.num_map];
             let mut reducers_size = vec![0; self.job_spec.num_reduce];
 
@@ -199,7 +201,6 @@ impl<'c> MapReduceApp<'c> {
             let k1 = (job_estimate_time-shuffle_estimate_time)/(max_mapper_size+max_reducer_size) as f64;
             // assume k1 = k2
             let k2 = k1;
-            
             
             for i in 0..self.job_spec.num_map {
                 for j in 0..self.job_spec.num_reduce {
