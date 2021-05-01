@@ -18,7 +18,6 @@ use mapreduce::{
 
 use mapreduce::config::{read_config, ExperimentConfig};
 
-use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, prelude::*};
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce Experiment", about = "MapReduce Experiment")]
