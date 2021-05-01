@@ -17,7 +17,7 @@ num_iterations = 10
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
 # poisson_lambda = 8_000_000_000.0
-poisson_lambda = 1_000_000_000.0
+poisson_lambda = 10_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -63,7 +63,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 9, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.5, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -81,7 +81,7 @@ sharing_mode = "Guaranteed"
 guaranteed_bandwidth = 2.5
 background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
 # background_flow_high_freq = { enable = false }
-gc_period = 100
+gc_period = 0
 
 # The topology for simulation
 [brain.topology]

@@ -22,7 +22,8 @@ impl RLAlgorithm for RatTree {
         size: u64,
         vcluster: &dyn Topology,
     ) -> Vec<Flow> {
-        mytest::run_rl_traffic(root_index, size, vcluster)
+        self._run_rl_traffic(root_index, size, vcluster)
+        // mytest::run_rl_traffic(root_index, size, vcluster)
     }
 }
 
@@ -117,9 +118,14 @@ fn compact_chain(
     let name = format!("host_{}", chain[0]);
     let node_ix = vcluster.get_node_index(&name);
     let first_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-    let name = format!("host_{}", chain[chain.len()-2]);
-    let node_ix = vcluster.get_node_index(&name);
-    let last_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+    let last_tx = if chain.len() >= 2 {
+        let name = format!("host_{}", chain[chain.len()-2]);
+        let node_ix = vcluster.get_node_index(&name);
+        let last_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+        last_tx
+    } else {
+        u64::MAX
+    };
     let chain_rate = std::cmp::min(std::cmp::min(first_tx, last_tx), min_rx);
 
     let mut max_tx = 0;
@@ -545,6 +551,7 @@ mod mytest {
             .unwrap()
     }
 
+    #[allow(dead_code)]
     pub fn run_rl_traffic(root_index: usize, size: u64, vc: &dyn Topology) -> Vec<Flow> {
         let root_host_name = format!("host_{}", root_index);
         let root_host_ix = vc.get_node_index(&root_host_name);
