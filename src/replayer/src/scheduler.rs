@@ -272,6 +272,7 @@ mod sched_rl {
                     probe: batch.probe.clone(),
                     nethint_level: batch.nethint_level,
                     auto_tune: batch.auto_tune,
+                    num_trees: batch.num_trees,
                 };
 
                 let setting_path = job_dir.join("setting.toml");

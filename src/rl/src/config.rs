@@ -23,6 +23,9 @@ pub struct BatchConfig {
     /// Whether to auto tune after a certain iterations
     #[serde(default)]
     pub auto_tune: Option<usize>,
+    /// Number of broadcast trees
+    #[serde(default)]
+    pub num_trees: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

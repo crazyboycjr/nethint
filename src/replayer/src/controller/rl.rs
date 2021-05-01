@@ -37,6 +37,8 @@ pub struct RLSetting {
     pub nethint_level: usize,
     #[serde(default)]
     pub auto_tune: Option<usize>,
+    #[serde(default)]
+    pub num_trees: Option<usize>,
 }
 
 pub struct RLAppBuilder {
@@ -230,9 +232,10 @@ impl Application for RLApp {
 
 impl RLApp {
     fn new_rl_algorithm(&self) -> Box<dyn RLAlgorithm> {
+        let num_trees = self.setting.num_trees.unwrap_or(1);
         match self.setting.rl_policy {
-            RLPolicy::Random => Box::new(RandomTree::new(self.seed)),
-            RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed)),
+            RLPolicy::Random => Box::new(RandomTree::new(self.seed, num_trees)),
+            RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, num_trees)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
         }
     }
