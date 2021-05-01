@@ -18,6 +18,8 @@ use mapreduce::{
 
 use mapreduce::config::{read_config, ExperimentConfig};
 
+use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, prelude::*};
+
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce Experiment", about = "MapReduce Experiment")]
 pub struct Opt {
@@ -184,9 +186,11 @@ fn run_batch(
                 FromTrace(r) => FromTrace(r.clone()),
             }
         };
+        let mut rng = StdRng::seed_from_u64(seed);
 
         let mapreduce_app = Box::new(MapReduceApp::new(
             seed,
+            rng,
             job_spec,
             None,
             mapper_policy.clone(),
