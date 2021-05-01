@@ -68,11 +68,11 @@ impl<'c> std::fmt::Debug for MapReduceApp<'c> {
 }
 
 /// get shuffle duration 
-fn get_shuffle_dur(rng: StdRng)->usize{
+fn get_shuffle_dur(rng: &mut StdRng)->usize{
     let choices = [(24, 61), (37, 13), (62, 14), (85, 12)];
     
-    let val = choices.choose_weighted(&mut rng.clone(), |item| item.1).unwrap().0;
-    log::debug!("{:?}", choices.choose_weighted(&mut rng.clone(), |item| item.1).unwrap().0);
+    let val = choices.choose_weighted( rng, |item| item.1).unwrap().0;
+    log::debug!("{:?}", choices.choose_weighted( rng, |item| item.1).unwrap().0);
 
     val
 }
@@ -180,7 +180,8 @@ impl<'c> MapReduceApp<'c> {
             }
             // total time(mapper, reducer, shuffle)
             let shuffle_estimate_time = job_size as f64 *8.0 / ((self.host_bandwidth) * cmp::min(self.job_spec.num_map, self.job_spec.num_reduce) as f64);
-            let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur(self.rng.clone()) as f64 /100.0);
+            let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur(&mut self.rng) as f64 /100.0);
+            // println!("{:?}", get_shuffle_dur(&mut self.rng));
             let mut mappers_size = vec![0; self.job_spec.num_map];
             let mut reducers_size = vec![0; self.job_spec.num_reduce];
 
