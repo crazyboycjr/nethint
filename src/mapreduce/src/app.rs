@@ -79,7 +79,6 @@ fn get_shuffle_dur(rng: &mut StdRng)->usize{
 impl<'c> MapReduceApp<'c> {
     pub fn new(
         seed: u64,
-        rng:  StdRng,
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
         mapper_place_policy: MapperPlacementPolicy,
@@ -90,6 +89,7 @@ impl<'c> MapReduceApp<'c> {
         enable_computation_time: bool,
     ) -> Self {
         assert!(nethint_level == 1 || nethint_level == 2);
+        let rng = StdRng::seed_from_u64(seed);
         MapReduceApp {
             seed,
             rng,
@@ -362,7 +362,6 @@ pub fn run_map_reduce(
     };
     let mut app = Box::new(MapReduceApp::new(
         seed,
-        StdRng::seed_from_u64(seed),
         job_spec,
         Some(Rc::new(cluster.clone())),
         map_place_policy,
