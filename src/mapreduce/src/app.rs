@@ -72,7 +72,6 @@ fn get_shuffle_dur(rng: &mut StdRng)->usize{
     let choices = [(24, 61), (37, 13), (62, 14), (85, 12)];
     
     let val = choices.choose_weighted( rng, |item| item.1).unwrap().0;
-    log::debug!("{:?}", choices.choose_weighted( rng, |item| item.1).unwrap().0);
 
     val
 }
