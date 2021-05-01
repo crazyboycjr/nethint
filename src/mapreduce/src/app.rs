@@ -179,10 +179,7 @@ impl<'c> MapReduceApp<'c> {
                 }
             }
             // total time(mapper, reducer, shuffle)
-            println!("job_size  : {:?}", (job_size));
             let shuffle_estimate_time = job_size as f64 *8.0 / ((self.host_bandwidth) * cmp::min(self.job_spec.num_map, self.job_spec.num_reduce) as f64);
-            println!("shuffle_estimate_time  : {:?}", (shuffle_estimate_time));
-            println!("percentage  : {:?}", (get_shuffle_dur(self.rng.clone()) as f64 /100.0));
             let job_estimate_time =  shuffle_estimate_time / (get_shuffle_dur(self.rng.clone()) as f64 /100.0);
             let mut mappers_size = vec![0; self.job_spec.num_map];
             let mut reducers_size = vec![0; self.job_spec.num_reduce];
@@ -206,9 +203,6 @@ impl<'c> MapReduceApp<'c> {
             // assume k1 = k2
             let k2 = k1;
             
-            println!("k1  : {:?}", k1);
-            println!("max_mapper_size  : {:?}", max_mapper_size);
-            println!("k1 * max_mapper_size : {:?}", k1 * max_mapper_size as f64);
             for i in 0..self.job_spec.num_map {
                 for j in 0..self.job_spec.num_reduce {
                     let flow = Flow::new(shuffle.0[i][j], &mappers.0[i], &reducers.0[j], None);

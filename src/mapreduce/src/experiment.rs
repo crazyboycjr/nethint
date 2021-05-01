@@ -186,7 +186,7 @@ fn run_batch(
                 FromTrace(r) => FromTrace(r.clone()),
             }
         };
-        let mut rng = StdRng::seed_from_u64(seed);
+        let rng = StdRng::seed_from_u64(seed);
 
         let mapreduce_app = Box::new(MapReduceApp::new(
             seed,
