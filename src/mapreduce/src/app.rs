@@ -89,10 +89,9 @@ impl<'c> MapReduceApp<'c> {
         enable_computation_time: bool,
     ) -> Self {
         assert!(nethint_level == 1 || nethint_level == 2);
-        let rng = StdRng::seed_from_u64(seed);
         MapReduceApp {
             seed,
-            rng,
+            rng: StdRng::seed_from_u64(seed),
             job_spec,
             cluster,
             mapper_place_policy,
