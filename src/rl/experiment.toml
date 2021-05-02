@@ -4,11 +4,8 @@
 ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
-# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 8], [5, 64]]
-# job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
-# job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
-# job_size_distribution = [[40, 6]]
+# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+job_size_distribution = [[40, 4]]
 
 # Buffer size of all jobs, in bytes
 buffer_size = 100_000_000
@@ -64,7 +61,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.9, amplitude = 9, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.5, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
