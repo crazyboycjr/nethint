@@ -87,6 +87,10 @@ impl RLAlgorithm for TopologyAwareTree {
             }
         }
 
+        for f in &mut flows {
+            f.bytes /= self.num_trees;
+        }
+
         flows
     }
 }

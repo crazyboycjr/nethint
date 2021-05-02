@@ -48,6 +48,10 @@ impl RLAlgorithm for RandomTree {
             }
         }
 
+        for f in &mut flows {
+            f.bytes /= self.num_trees;
+        }
+
         log::info!("flows: {:?}", flows);
         flows
     }
