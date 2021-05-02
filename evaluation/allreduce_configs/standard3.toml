@@ -28,7 +28,7 @@ placement_strategy = { type = "Compact" }
 seed = 1
 
 # Output path of for the simulation results
-directory = "/tmp/allreduce_result_for_paper/standard2"
+directory = "/tmp/allreduce_result_for_paper/standard3"
 
 # Number of repeats for each batch of experiments
 batch_repeat = 5

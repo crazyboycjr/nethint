@@ -27,7 +27,7 @@ placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "Random", args = 0 }
 
 # Output path of for the simulation results
-directory = "/tmp/mapr_result_for_paper/standard_hybrid2"
+directory = "/tmp/mapr_result_for_paper/standard_hybrid4"
 
 # Whether to allow a mapper to collocate with a reduce
 collocate = true
