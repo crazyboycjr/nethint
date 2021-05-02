@@ -5,10 +5,11 @@
 ncases = 100
 
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+# job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 # job_size_distribution = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]]
 # job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
+job_size_distribution = [[40, 4]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB, Bert-Large ~= 1.34GB
 buffer_size = 1000_000_000
