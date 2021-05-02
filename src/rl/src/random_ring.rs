@@ -2,17 +2,19 @@ use nethint::{
     cluster::Topology,
     Flow,
 };
-use crate::{RLAlgorithm};
+use crate::RLAlgorithm;
 
 #[derive(Debug, Default)]
 pub struct RandomTree {
     seed: u64,
+    num_trees: usize,
 }
 
 impl RandomTree {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, num_trees: usize) -> Self {
         RandomTree {
             seed,
+            num_trees,
         }
     }
 }
@@ -25,24 +27,31 @@ impl RLAlgorithm for RandomTree {
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(self.seed);
 
-        let mut alloced_hosts: Vec<usize> = (0..n).into_iter().collect();
-        alloced_hosts.remove(root_index);
-        alloced_hosts.shuffle(&mut rng);
-
         let mut flows = Vec::new();
 
-        assert!(n > 0);
-        let pred = format!("host_{}", root_index);
-        let succ = format!("host_{}", alloced_hosts[0]);
-        let flow = Flow::new(size as usize, &pred, &succ, None);
-        flows.push(flow);
+        for _ in 0..self.num_trees {
+            let mut alloced_hosts: Vec<usize> = (0..n).into_iter().collect();
+            alloced_hosts.remove(root_index);
+            alloced_hosts.shuffle(&mut rng);
 
-        for i in 1..n-1 {
-            let pred = format!("host_{}", alloced_hosts[i-1]);
-            let succ = format!("host_{}", alloced_hosts[i]);
+            assert!(n > 0);
+            let pred = format!("host_{}", root_index);
+            let succ = format!("host_{}", alloced_hosts[0]);
             let flow = Flow::new(size as usize, &pred, &succ, None);
             flows.push(flow);
+
+            for i in 1..n-1 {
+                let pred = format!("host_{}", alloced_hosts[i-1]);
+                let succ = format!("host_{}", alloced_hosts[i]);
+                let flow = Flow::new(size as usize, &pred, &succ, None);
+                flows.push(flow);
+            }
         }
+
+        for f in &mut flows {
+            f.bytes /= self.num_trees;
+        }
+
         log::info!("flows: {:?}", flows);
         flows
     }

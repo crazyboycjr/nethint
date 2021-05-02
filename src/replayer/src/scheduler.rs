@@ -208,6 +208,100 @@ pub fn write_setting<T: serde::Serialize, P: AsRef<std::path::Path>>(setting: &T
     file.write_all(content.as_bytes()).unwrap();
 }
 
+mod sched_rl {
+    use super::*;
+    use rl::config;
+    use rl::JobSpec;
+    use rand::{Rng, rngs::StdRng, SeedableRng};
+
+    fn gen_job_specs(config: &config::ExperimentConfig) -> Vec<(u64, JobSpec)> {
+        let mut jobs = Vec::new();
+        let mut rng = StdRng::seed_from_u64(config.seed as u64);
+        let mut t = 0;
+        for i in 0..config.ncases {
+            let num_workers = config::get_random_job_size(&config.job_size_distribution, &mut rng);
+            let root_index = rng.gen_range(0..num_workers);
+            let job_spec = JobSpec::new(
+                num_workers,
+                config.buffer_size,
+                config.num_iterations,
+                root_index,
+            );
+            let next = config::get_random_arrival_time(config.poisson_lambda, &mut rng);
+            t += next;
+            log::info!("job {}: {:?}", i, job_spec);
+            jobs.push((t, job_spec));
+        }
+        jobs
+    }
+
+    pub fn submit_jobs(opt: &Opt) {
+        let config: config::ExperimentConfig = config::read_config(&opt.configfile);
+
+        for batch_id in 0..config.batches.len() {
+            let mut handles = Vec::new();
+            let now0 = std::time::Instant::now();
+
+            let jobs = gen_job_specs(&config);
+            let batch = config.batches[batch_id].clone();
+            for i in 0..config.ncases {
+                let job_id = i;
+                let start_ts = jobs[i].0;
+
+                // prepare output directory
+                let job_dir = opt
+                    .output
+                    .join(format!("{}_{}_{}", opt.jobname, batch_id, job_id));
+
+                if job_dir.exists() {
+                    // rm -r output_dir
+                    std::fs::remove_dir_all(&job_dir).unwrap();
+                }
+
+                std::fs::create_dir_all(&job_dir).expect("fail to create directory");
+
+                let setting = replayer::controller::rl::RLSetting {
+                    job_id,
+                    job_size_distribution: config.job_size_distribution.clone(),
+                    buffer_size: config.buffer_size,
+                    num_iterations: config.num_iterations,
+                    poisson_lambda: config.poisson_lambda,
+                    seed_base: config.seed,
+                    traffic_scale: 1.0,
+                    rl_policy: batch.policy,
+                    probe: batch.probe.clone(),
+                    nethint_level: batch.nethint_level,
+                    auto_tune: batch.auto_tune,
+                    num_trees: batch.num_trees,
+                };
+
+                let setting_path = job_dir.join("setting.toml");
+
+                write_setting(&setting, &setting_path);
+
+                let now = std::time::Instant::now();
+                let start_ts_dura = std::time::Duration::from_nanos(start_ts);
+                if now0 + start_ts_dura > now {
+                    std::thread::sleep(now0 + start_ts_dura - now);
+                }
+                handles.push(std::thread::spawn(submit(
+                    opt,
+                    job_id,
+                    jobs[i].1.num_workers,
+                    config.allow_delay.unwrap_or(false),
+                    job_dir,
+                    setting_path,
+                )));
+            }
+
+            for h in handles {
+                h.join()
+                    .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
+            }
+        }
+    }
+}
+
 mod sched_allreduce {
     use super::*;
     use allreduce::config;
@@ -415,6 +509,9 @@ mod sched_mapreduce {
 
 fn schedule_jobs(opt: Opt) -> anyhow::Result<()> {
     match opt.jobname.as_str() {
+        "rl" => {
+            sched_rl::submit_jobs(&opt);
+        }
         "allreduce" => {
             sched_allreduce::submit_jobs(&opt);
         }

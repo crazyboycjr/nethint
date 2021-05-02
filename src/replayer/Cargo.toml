@@ -17,6 +17,7 @@ nethint = { path = "../nethint" }
 litemsg = { path = "../litemsg" }
 mapreduce = { path = "../mapreduce" }
 allreduce = { path = "../allreduce" }
+rl = { path = "../rl" }
 nhagent = { path = "../nhagent" }
 utils = { path = "../utils" }
 structopt = "0.3.21"

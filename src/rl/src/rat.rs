@@ -1,5 +1,8 @@
 use crate::RLAlgorithm;
-use nethint::{cluster::Topology, Flow};
+use nethint::{
+    cluster::Topology,
+    Flow,
+};
 
 #[derive(Debug, Default)]
 pub struct RatTree {
@@ -12,6 +15,18 @@ impl RatTree {
     }
 }
 
+impl RLAlgorithm for RatTree {
+    fn run_rl_traffic(
+        &mut self,
+        root_index: usize,
+        size: u64,
+        vcluster: &dyn Topology,
+    ) -> Vec<Flow> {
+        self.run_rl_traffic(root_index, size, vcluster)
+    }
+}
+
+#[allow(dead_code)]
 fn compact_chain(
     chain: &mut Vec<usize>,
     side_chain: &mut Vec<(usize, usize)>,
@@ -102,9 +117,14 @@ fn compact_chain(
     let name = format!("host_{}", chain[0]);
     let node_ix = vcluster.get_node_index(&name);
     let first_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-    let name = format!("host_{}", chain[chain.len()-2]);
-    let node_ix = vcluster.get_node_index(&name);
-    let last_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+    let last_tx = if chain.len() >= 2 {
+        let name = format!("host_{}", chain[chain.len()-2]);
+        let node_ix = vcluster.get_node_index(&name);
+        let last_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
+        last_tx
+    } else {
+        u64::MAX
+    };
     let chain_rate = std::cmp::min(std::cmp::min(first_tx, last_tx), min_rx);
 
     let mut max_tx = 0;
@@ -141,7 +161,7 @@ fn compact_chain(
     (max_node, max_tx, min_rx)
 }
 
-impl RLAlgorithm for RatTree {
+impl RatTree {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
