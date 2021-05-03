@@ -1,9 +1,13 @@
+use crate::cluster::CLUSTER;
 use crate::message;
 use crate::{Node, Role};
 use litemsg::endpoint;
+use nethint::cluster::Topology;
 use std::collections::HashMap;
-use std::net::{TcpStream, TcpListener};
+use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
+
+pub type BcastId = u64;
 
 pub struct Communicator {
     my_rank: usize,
@@ -21,6 +25,10 @@ pub struct Communicator {
     apps: Vec<endpoint::Endpoint>,
 
     poll: Option<Rc<mio::Poll>>,
+
+    // broadcast state, bcast_id -> (received, total)
+    bcast: HashMap<BcastId, (usize, usize)>,
+    bcast_id: BcastId,
 }
 
 impl Communicator {
@@ -44,6 +52,7 @@ impl Communicator {
         let (nodes, my_node, controller, mut listener) =
             litemsg::connect_controller(&controller_uri, 10)?;
         log::debug!("connected to controller");
+        log::info!("nodes: {:?}", nodes);
         let my_rank = nodes.iter().position(|n| n == &my_node).unwrap();
 
         let peers = litemsg::connect_peers2(&nodes, &my_node, &mut listener)?;
@@ -73,11 +82,67 @@ impl Communicator {
             controller_listener,
             apps: Vec::new(),
             poll: None,
+            bcast: HashMap::new(),
+            bcast_id: 0,
         })
     }
 
+    pub fn reset_unnecessary_connections(
+        &mut self,
+        rank_hostname: &HashMap<usize, String>,
+    ) -> anyhow::Result<()> {
+        let pcluster = CLUSTER.lock().unwrap();
+
+        let my_node_ix = pcluster.my_node_ix();
+
+        let my_role = pcluster.get_my_role();
+
+        for i in 0..self.world_size() {
+            if i == self.my_rank() {
+                continue;
+            }
+            let peer_hostname = &rank_hostname[&i];
+            let peer_ix = pcluster.inner().get_node_index(peer_hostname);
+            let peer_role = pcluster.get_role(peer_hostname);
+
+            let keep = match my_role {
+                Role::GlobalLeader => {
+                    // GlobalLeader is also the controller, to implement update_background_flow_hard,
+                    // the controller has to maintain connections to all other machines.
+                    // This configuration is only specified to our testbed.
+                    true
+                }
+                Role::RackLeader => {
+                    peer_role == Role::GlobalLeader
+                        || peer_role == Role::Worker && pcluster.is_same_rack(my_node_ix, peer_ix)
+                        || peer_role != Role::Worker && pcluster.is_cross_rack(my_node_ix, peer_ix)
+                }
+                Role::Worker => {
+                    peer_role == Role::GlobalLeader
+                        || peer_role != Role::Worker && pcluster.is_same_rack(my_node_ix, peer_ix)
+                }
+            };
+
+            if !keep {
+                use std::net::Shutdown;
+                // Calling this `shutdown` function multiple times may result in different behavior,
+                // depending on the operating system. On Linux, the second call will return
+                // Ok(()), but on macOS, it will return ErrorKind::NotConnected. This may
+                // change in the future.
+                self.peer_mut(i).stream().shutdown(Shutdown::Both)?;
+                if my_role == Role::GlobalLeader {
+                    self.workers.as_ref().unwrap()[&self.nodes[i]].shutdown(Shutdown::Both)?;
+                } else {
+                    self.controller.shutdown(Shutdown::Both)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn set_poll(&mut self, poll: Rc<mio::Poll>) {
-        self.poll= Some(poll);
+        self.poll = Some(poll);
     }
 
     pub fn world_size(&self) -> usize {
@@ -153,15 +218,37 @@ impl Communicator {
         Ok(())
     }
 
-    pub fn broadcast(&mut self, msg: &message::Message) -> anyhow::Result<()> {
+    pub fn broadcast(&mut self, msg: message::Message) -> anyhow::Result<()> {
+        let bcast_msg = message::Message::BcastMessage(self.bcast_id, Box::new(msg));
         for i in 0..self.world_size() {
             if i == self.my_rank() {
                 continue;
             }
             let ep = self.peer_mut(i);
-            ep.post(msg, None)?;
+            ep.post(&bcast_msg, None)?;
         }
+        self.bcast.insert(self.bcast_id, (0, self.world_size() - 1));
+        self.bcast_id += 1;
         Ok(())
+    }
+
+    pub fn recv_bcast_msg(&mut self, bcast_id: BcastId) {
+        use std::collections::hash_map::Entry;
+        match self.bcast.entry(bcast_id) {
+            Entry::Occupied(mut e) => {
+                e.get_mut().0 += 1;
+                if e.get().0 == e.get().1 {
+                    e.remove_entry();
+                }
+            }
+            Entry::Vacant(_) => {
+                panic!("invalid bcast_id: {}", bcast_id);
+            }
+        }
+    }
+
+    pub fn bcast_done(&self) -> bool {
+        self.bcast.is_empty()
     }
 
     pub fn barrier(&mut self, barrier_id: u64) -> anyhow::Result<()> {
@@ -206,7 +293,10 @@ impl Communicator {
         assert_eq!(self.my_role, Role::GlobalLeader);
         let (client, addr) = self.controller_listener().unwrap().accept_std()?;
 
-        log::debug!("controller accepts an incoming connection from app addr: {}", addr);
+        log::debug!(
+            "controller accepts an incoming connection from app addr: {}",
+            addr
+        );
 
         let builder = endpoint::Builder::new()
             .stream(client)

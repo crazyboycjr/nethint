@@ -6,6 +6,7 @@ use nethint::cluster::LinkIx;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use crate::communicator::BcastId;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -22,6 +23,9 @@ pub enum Message {
     /// send by global leader, processed by non global leader
     /// barrier ID
     SyncResponse(u64),
+
+    /// broadcast type wrapper
+    BcastMessage(BcastId, Box<Message>),
 
     /// send by worker, procesed by worker
     /// declare the table to map ethaddr to hostname collected locally
