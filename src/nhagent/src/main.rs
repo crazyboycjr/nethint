@@ -76,23 +76,26 @@ fn main_loop(
     {
         let msg = Message::DeclareEthHostTable(CLUSTER.lock().unwrap().eth_hostname().clone());
         log::debug!("broadcasting: {:?}", msg);
-        comm.broadcast(&msg)?;
+        comm.broadcast(msg)?;
     }
     {
         let msg = Message::DeclareIpHostTable(CLUSTER.lock().unwrap().ip_hostname().clone());
         log::debug!("broadcasting: {:?}", msg);
-        comm.broadcast(&msg)?;
+        comm.broadcast(msg)?;
     }
     {
         let msg = Message::DeclareHostname(hostname().clone());
         log::debug!("broadcasting: {:?}", msg);
-        comm.broadcast(&msg)?;
+        comm.broadcast(msg)?;
     }
     comm.barrier(0)?;
     log::debug!("barrier 0 passed");
 
     let poll = Rc::new(mio::Poll::new()?);
     comm.set_poll(Rc::clone(&poll));
+
+    // cannot do here, must wait for all broadcast done
+    // comm.reset_unnecessary_connections(&handler.rank_hostname)?;
 
     let mut events = mio::Events::with_capacity(256);
 
@@ -101,6 +104,7 @@ fn main_loop(
             continue;
         }
         let ep = comm.peer(i);
+        log::info!("register poll, i: {}, ep.node: {}", i, ep.node());
         log::trace!("registering ep[{}].interest: {:?}", i, ep.interest());
         let interest = ep.interest();
         poll.register(ep.stream(), mio::Token(i), interest, mio::PollOpt::level())?;
@@ -611,6 +615,7 @@ impl Handler {
             if pcluster.get_role(peer_hostname) == Role::Worker
                 && pcluster.is_same_rack(my_node_ix, peer_ix)
             {
+                log::trace!("send_allhints, peer_rank: {}, peer_hostname: {}", i, peer_hostname);
                 comm.send_to(i, &msg)?;
             }
         }
@@ -726,6 +731,14 @@ impl Handler {
             AppFinish => {
                 TERMINATE.store(true, SeqCst);
             }
+            BcastMessage(bcast_id, msg) => {
+                comm.recv_bcast_msg(bcast_id);
+                self.on_recv_complete(*msg, sender_rank, comm)?;
+                if comm.bcast_done() {
+                    log::trace!("rank_hostname: {:#?}", self.rank_hostname);
+                    comm.reset_unnecessary_connections(&self.rank_hostname)?;
+                }
+            }
             DeclareEthHostTable(table) => {
                 // merge table from other hosts
                 let mut pcluster = CLUSTER.lock().unwrap();
@@ -737,6 +750,7 @@ impl Handler {
                 pcluster.update_ip_hostname(table);
             }
             DeclareHostname(hostname) => {
+                log::trace!("received DeclareHostname, sender_rank: {}, hostname: {}", sender_rank, hostname);
                 self.rank_hostname.insert(sender_rank, hostname);
             }
             ServerChunk(chunk) => {
@@ -751,6 +765,7 @@ impl Handler {
                 log::trace!("rack leader agent link traffic: {:?}", self.traffic);
             }
             AllHints(allhints) => {
+                log::trace!("receive AllHints: sender_rank: {}", sender_rank);
                 self.receive_allhints(allhints)?;
             }
             // serve as cloud brain, by global leader
