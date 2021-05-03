@@ -100,7 +100,8 @@ pub fn accept_peers(
 
 // nodes, my_node, controller, listener
 pub fn connect_controller(
-    controller_uri: &str, max_retry: usize,
+    controller_uri: &str,
+    max_retry: usize,
 ) -> anyhow::Result<(Vec<Node>, Node, TcpStream, TcpListener)> {
     log::info!("finding available port to bind");
     let port = utils::find_avail_port()?;
@@ -138,33 +139,41 @@ pub fn connect_peers2(
     // then it actively connects to the rank bigger than my_rank, in an order of
     // from small to large
 
-    let mut peers: Vec<endpoint::Builder> = Vec::new();
+    let mut peers: Vec<Option<endpoint::Builder>> = Vec::new();
+    peers.resize_with(nodes.len(), || None);
 
     let my_rank = get_my_rank(my_node, nodes);
     log::debug!("number of connections to accept: {}", my_rank);
 
-    for i in 0..my_rank {
-        let (stream, addr) = listener.accept()?;
+    for _ in 0..my_rank {
+        let (mut stream, addr) = listener.accept()?;
         log::debug!("worker accepts an incoming connection from addr: {}", addr);
+
+        let peer_rank: usize = utils::recv_cmd_sync(&mut stream)?;
 
         let builder = endpoint::Builder::new()
             .stream(stream)
             .readable(true)
-            .node(nodes[i].clone());
-        peers.push(builder);
+            .node(nodes[peer_rank].clone());
+        // peers.push(builder);
+        peers[peer_rank] = Some(builder);
     }
 
     for i in my_rank + 1..nodes.len() {
         log::debug!("connnecting to node: {:?}", nodes[i]);
-        let stream = TcpStream::connect(&nodes[i])?;
+        let mut stream = TcpStream::connect(&nodes[i])?;
+
+        utils::send_cmd_sync(&mut stream, &my_rank)?;
 
         let builder = endpoint::Builder::new()
             .stream(stream)
             .writable(true)
             .node(nodes[i].clone());
-        peers.push(builder);
+        // peers.push(builder);
+        peers[i] = Some(builder);
     }
 
+    let peers = peers.into_iter().filter_map(|x| x).collect();
     Ok(peers)
 }
 
