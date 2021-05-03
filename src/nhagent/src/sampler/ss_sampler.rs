@@ -157,7 +157,7 @@ impl SsSampler {
 
         let listen_addr = ("0.0.0.0", self.listen_port);
         let sock = std::net::UdpSocket::bind(&listen_addr)
-            .unwrap_or_else(|_| panic!("could listen on {:?}", listen_addr));
+            .unwrap_or_else(|_| panic!("couldn't listen on {:?}", listen_addr));
         sock.set_read_timeout(Some(std::time::Duration::from_millis(1)))
             .expect("set timeout failed");
         let mut buf = vec![0; 65507];

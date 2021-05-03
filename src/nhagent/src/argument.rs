@@ -21,4 +21,10 @@ pub struct Opts {
     /// format is freq:prob:amp[:avg_load]
     #[structopt(short, long, default_value)]
     pub background_flow_hard: BackgroundFlowHard,
+
+    /// When specified, it represents the number of the duplicated agent.
+    /// This option is only used to measure the system overhead by running
+    /// multiple nhagents on the same servers.
+    #[structopt(short, long)]
+    pub shadow_id: Option<usize>,
 }

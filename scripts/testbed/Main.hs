@@ -205,7 +205,7 @@ psrecord :: String -> Double -> Double -> IO ()
 psrecord name interval duration = do
     let
         cmd = printf
-            "psrecord $(pgrep %s) --interval %.f --duration %.f --plot /tmp/%s.png --include-children --log /tmp/%s.txt"
+            "psrecord $(pgrep %s | head -n 1) --interval %.f --duration %.f --plot /tmp/%s.png --include-children --log /tmp/%s.txt"
             name
             interval
             duration

@@ -10,7 +10,7 @@ use structopt::StructOpt;
 use nethint::{
     architecture::build_arbitrary_cluster,
     bandwidth::BandwidthTrait,
-    cluster::{Cluster, NodeIx, Topology},
+    cluster::{Cluster, Node, NodeIx, Topology},
 };
 
 use crate::argument::Opts;
@@ -24,19 +24,45 @@ use crate::Role;
 pub const MAX_SLOTS: usize = 4;
 
 lazy_static! {
-    static ref HOSTNAME: String = utils::cmd_helper::get_command_output(Command::new("hostname"))
-        .unwrap()
-        .trim()
-        .to_owned();
+    static ref HOSTNAME: String = {
+        let opts = Opts::from_args();
+        let nhosts = opts.topo.nracks() * opts.topo.rack_size();
+        assert!(nhosts % 6 == 0, "nhosts must be multiples of 6");
+        let shadow_id = opts.shadow_id.unwrap_or(0);
+        assert!(shadow_id < nhosts / 6);
+        let orig_hostname = utils::cmd_helper::get_command_output(Command::new("hostname"))
+            .unwrap()
+            .trim()
+            .to_owned();
+        let orig_id: usize = orig_hostname.strip_prefix("danyang-").unwrap().parse().unwrap();
+        let new_id = orig_id + 6 * shadow_id;
+        format!("danyang-{:02}", new_id)
+    };
 }
 
 pub fn hostname<'h>() -> &'h String {
     &*HOSTNAME
 }
 
-pub fn vname_to_phys_hostname(vname: &str) -> String {
+pub fn vname_to_phys_hostname(vname: &str) -> Option<String> {
     let id: usize = vname.strip_prefix("host_").unwrap().parse().unwrap();
-    format!("danyang-{:02}", id + 1)
+    if id < 6 {
+        Some(format!("danyang-{:02}", id + 1))
+    } else {
+        None
+    }
+}
+
+pub fn is_physical_node(n: &Node) -> bool {
+    if n.depth == 1 {
+        true
+    } else if n.depth == 2 {
+        let tor_id: usize = n.name.strip_prefix("tor_").unwrap().parse().unwrap();
+        tor_id < 2
+    } else {
+        let host_id: usize = n.name.strip_prefix("host_").unwrap().parse().unwrap();
+        host_id < 6
+    }
 }
 
 lazy_static! {

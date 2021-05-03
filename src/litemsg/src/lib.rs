@@ -104,7 +104,7 @@ pub fn connect_controller(
     max_retry: usize,
 ) -> anyhow::Result<(Vec<Node>, Node, TcpStream, TcpListener)> {
     log::info!("finding available port to bind");
-    let port = utils::find_avail_port()?;
+    let port = utils::find_avail_port(None)?;
 
     log::info!("binding to port: {:?}", port);
     let listener = std::net::TcpListener::bind(("0.0.0.0", port))?;
