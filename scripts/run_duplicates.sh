@@ -19,14 +19,15 @@ num_racks=`expr 2 \* $scale`
 for ((i=0; i<$scale; i++)); do
 	sampler_port=`expr 5555 + $i`
 
-	RUST_LOG=warn RUST_BACKTRACE=full \
+	RUST_BACKTRACE=full \
 	NH_CONTROLLER_URI=192.168.211.2:9000 \
 	NH_NUM_WORKER=$num_workers \
-		target/debug/nhagent \
+		target/release/nhagent \
 		--shadow-id $i \
 		-p $sampler_port \
 		-i 100 \
-		-b 800000000000000:0.5:5:0.3 \
+		-b 800000000000000:1:5:0.1 \
+		# --disable-v2 \
 		arbitrary $num_racks 3 10 10 \
 		&
 done

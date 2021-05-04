@@ -50,16 +50,20 @@ fn main() -> Result<()> {
     // let mut sampler = nhagent::sampler::OvsSampler::new(opt.interval_ms, tx);
     let mut sampler =
         nhagent::sampler::SsSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
-    sampler.run();
+    if !opt.disable_v2 {
+        sampler.run();
+    }
 
     log::info!("cluster: {}", CLUSTER.lock().unwrap().inner().to_dot());
     let my_role = CLUSTER.lock().unwrap().get_my_role();
 
     let mut comm = nhagent::communicator::Communicator::new(my_role)?;
 
-    main_loop(rx, opt.interval_ms, &mut comm).unwrap();
+    main_loop(rx, opt.interval_ms, &mut comm, &opt).unwrap();
 
-    sampler.join().unwrap();
+    if !opt.disable_v2 {
+        sampler.join().unwrap();
+    }
     Ok(())
 }
 
@@ -67,6 +71,7 @@ fn main_loop(
     rx: mpsc::Receiver<Vec<CounterUnit>>,
     interval_ms: u64,
     comm: &mut Communicator,
+    opt: &Opts,
 ) -> anyhow::Result<()> {
     log::info!("entering main loop");
 
@@ -128,7 +133,7 @@ fn main_loop(
 
     while !TERMINATE.load(SeqCst) {
         let now = std::time::Instant::now();
-        if now >= last_tp + interval && comm.bcast_done() {
+        if now >= last_tp + interval && comm.bcast_done() && !opt.disable_v2 {
             // it's not very explicit why this is is correct or not, need more thinking on this
             handler.reset_traffic();
 

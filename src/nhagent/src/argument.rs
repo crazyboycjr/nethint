@@ -27,4 +27,8 @@ pub struct Opts {
     /// multiple nhagents on the same servers.
     #[structopt(short, long)]
     pub shadow_id: Option<usize>,
+
+    /// Disable HetHint v2, and only run NetHint v1.
+    #[structopt(short, long)]
+    pub disable_v2: bool,
 }
