@@ -78,8 +78,8 @@ pub fn add_node(my_node: Node, controller: &mut TcpStream) -> anyhow::Result<()>
 const BASE_PORT: u16 = 30000;
 const MAX_RETRY: u16 = 100;
 
-pub fn find_avail_port() -> anyhow::Result<u16> {
-    let mut port = BASE_PORT;
+pub fn find_avail_port(hint: Option<u16>) -> anyhow::Result<u16> {
+    let mut port = hint.unwrap_or(BASE_PORT);
     let mut max_retries = MAX_RETRY;
 
     loop {
@@ -88,7 +88,10 @@ pub fn find_avail_port() -> anyhow::Result<u16> {
                 break;
             }
             Err(e) => {
-                port += 1;
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
+                let m = rng.gen_range(0..51131);
+                port = ((port as usize + 13331 * m) % 51131 + 2000) as u16;
                 max_retries -= 1;
                 if max_retries == 0 {
                     return Err(e.into());

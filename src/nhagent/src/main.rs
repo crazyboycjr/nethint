@@ -104,7 +104,6 @@ fn main_loop(
             continue;
         }
         let ep = comm.peer(i);
-        log::info!("register poll, i: {}, ep.node: {}", i, ep.node());
         log::trace!("registering ep[{}].interest: {:?}", i, ep.interest());
         let interest = ep.interest();
         poll.register(ep.stream(), mio::Token(i), interest, mio::PollOpt::level())?;
@@ -129,7 +128,7 @@ fn main_loop(
 
     while !TERMINATE.load(SeqCst) {
         let now = std::time::Instant::now();
-        if now >= last_tp + interval {
+        if now >= last_tp + interval && comm.bcast_done() {
             // it's not very explicit why this is is correct or not, need more thinking on this
             handler.reset_traffic();
 
@@ -335,13 +334,16 @@ impl Handler {
             for link_ix in vc.all_links() {
                 let n1 = &vc[vc.get_source(link_ix)];
                 let n2 = &vc[vc.get_target(link_ix)];
+                if !cluster::is_physical_node(n1) || !cluster::is_physical_node(n2) {
+                    continue;
+                }
                 if n1.depth > n2.depth && n1.depth == 3 {
                     // egress traffic from the hosts
                     // ssh danyang-02 'mlnx_qos -i rdma0 -r 3,0,0,0,0,0,0,0'
                     // round to 1 Gbps precision
                     let bw = get_bw(link_ix);
                     let msg = nhagent::message::Message::UpdateRateLimit(bw);
-                    let phys_hostname = cluster::vname_to_phys_hostname(&n1.name);
+                    let phys_hostname = cluster::vname_to_phys_hostname(&n1.name).unwrap();
                     let dst_rank = self
                         .rank_hostname
                         .iter()

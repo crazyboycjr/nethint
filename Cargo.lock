@@ -741,6 +741,7 @@ dependencies = [
  "log",
  "logging",
  "mio",
+ "rand 0.8.3",
  "serde",
  "static_assertions",
  "thiserror",
