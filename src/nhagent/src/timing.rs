@@ -49,7 +49,9 @@ impl TimeList {
     }
 
     pub fn push_now(&mut self, stage: &str) {
-        self.recs.push(TimeRecord::with_ts(stage, SystemTime::now()))
+        let mut tl = TimeList::new();
+        tl.recs.push(TimeRecord::with_ts(stage, SystemTime::now()));
+        self.update(&tl);
     }
 
     /// sync the latest corresponding element in `self` with `other`,
@@ -64,13 +66,18 @@ impl TimeList {
             }
         }
     }
+}
 
-    // /// similar to update, but remove the element from head
-    // pub fn remove(&mut self, other: &TimeList) {
-    //     for o in &other.recs {
-    //         let pos = self.recs.iter().position(|x| x.stage == o.stage);
-    //         assert!(pos.is_some(), "self: {:?}, to remove: {:?}, other: {:?}", self, o, other);
-    //         self.recs.remove(pos.unwrap());
-    //     }
-    // }
+impl std::fmt::Display for TimeList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut rs = self.recs.clone();
+        rs.sort_by_key(|x| x.ts);
+        if !rs.is_empty() {
+            let eariest = rs[0].ts;
+            for r in rs {
+                writeln!(f, "{} {}", r.stage, r.ts.duration_since(eariest).unwrap().as_micros())?;
+            }
+        }
+        writeln!(f, "\n")
+    }
 }

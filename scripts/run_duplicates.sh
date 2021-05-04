@@ -27,9 +27,9 @@ for ((i=0; i<$scale; i++)); do
 		-p $sampler_port \
 		-i 100 \
 		-b 800000000000000:1:5:0.1 \
-		# --disable-v2 \
 		arbitrary $num_racks 3 10 10 \
 		&
+		# --disable-v2 \
 done
 
 wait

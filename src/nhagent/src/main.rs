@@ -144,8 +144,14 @@ fn main_loop(
                     log::trace!("counterunit: {:?}", c);
                 }
                 // receive from local sampler module
-                handler.receive_server_chunk(comm.my_rank(), v);
                 handler.update_time_list(tl);
+                handler.receive_server_chunk(comm.my_rank(), v);
+
+                // update time list, for GlobalLeader or RackLeader
+                let my_role = comm.my_role();
+                if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
+                    handler.time_list.push_now(timing::ON_CHUNK_SENT);
+                }
             }
 
             if comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader {
@@ -569,12 +575,6 @@ impl Handler {
             .get_uplink(pcluster.inner().get_node_index(sender_hostname));
         // 3. update traffic
         Self::merge_traffic_on_link(&mut self.traffic, uplink, chunk);
-
-        // update time list, for GlobalLeader or RackLeader
-        let my_role = pcluster.get_my_role();
-        if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
-            self.time_list.push_now(timing::ON_CHUNK_SENT);
-        }
     }
 
     // Assume LinkIx from different agents are compatible with each other

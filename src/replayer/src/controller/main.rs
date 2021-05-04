@@ -259,7 +259,7 @@ impl Handler {
                             time_list.push_now(timing::ON_TENANT_RES);
                             use std::io::Write;
                             let mut f = utils::fs::open_with_create_append(path);
-                            writeln!(f, "{:?}", time_list)?;
+                            writeln!(f, "{}", time_list)?;
                         }
                         _ => {
                             // do nothing
