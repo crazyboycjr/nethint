@@ -1,12 +1,14 @@
+use crate::argument::Opts;
 use crate::cluster::CLUSTER;
+use crate::timing::{self, TimeList};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::mpsc;
-use thiserror::Error;
 use std::time::SystemTime;
-use crate::timing::{self, TimeList};
+use structopt::StructOpt;
+use thiserror::Error;
 
 use nethint::counterunit::{CounterType, CounterUnit};
 
@@ -140,7 +142,11 @@ struct FlowTable {
 }
 
 impl SsSampler {
-    pub fn new(interval_ms: u64, listen_port: u16, tx: mpsc::Sender<(TimeList, Vec<CounterUnit>)>) -> Self {
+    pub fn new(
+        interval_ms: u64,
+        listen_port: u16,
+        tx: mpsc::Sender<(TimeList, Vec<CounterUnit>)>,
+    ) -> Self {
         SsSampler {
             interval_ms,
             listen_port,
@@ -149,9 +155,24 @@ impl SsSampler {
         }
     }
 
+    fn send_synthetic_data(tx: &mpsc::Sender<(TimeList, Vec<CounterUnit>)>) {
+        use CounterType::*;
+        let mut counter_unit = Vec::new();
+        for i in 0..crate::cluster::MAX_SLOTS {
+            let mut c = CounterUnit::new(&i.to_string());
+            c.add_flow(Tx, 1);
+            c.add_flow(TxIn, 1);
+            c.add_flow(Rx, 1);
+            c.add_flow(RxIn, 1);
+            counter_unit.push(c)
+        }
+        tx.send((TimeList::new(), counter_unit)).unwrap();
+    }
+
     pub fn run(&mut self) {
         log::info!("starting ss sampler thread...");
 
+        let opts = Opts::from_args();
         let local_ip_table = get_local_ip_table().expect("get local_ip_table failed");
         let mut flow_table = FlowTable::default();
         let tx = self.tx.clone();
@@ -172,6 +193,15 @@ impl SsSampler {
         self.handle = Some(std::thread::spawn(move || loop {
             let now = std::time::Instant::now();
             if now - last_ts >= interval || !flow_group.is_empty() {
+
+                if opts.shadow_id.unwrap_or(0) > 0 && flow_group.is_empty() {
+                    // to emulate the real memory footprint, fill in some random data
+                    Self::send_synthetic_data(&tx);
+                    // update the timer
+                    last_ts = std::time::Instant::now();
+                    continue;
+                }
+
                 let mut vnode_counter: HashMap<IpAddr, CounterUnit> = local_ip_table
                     .iter()
                     .map(|(&ip, name)| (ip, CounterUnit::new(name)))
