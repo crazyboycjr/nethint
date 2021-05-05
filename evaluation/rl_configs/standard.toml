@@ -9,7 +9,7 @@ ncases = 100
 # job_size_distribution = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]]
 # job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
-job_size_distribution = [[40, 4]]
+job_size_distribution = [[40, 4], [40, 8], [40, 12]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
 buffer_size = 100_000_000
@@ -18,7 +18,7 @@ buffer_size = 100_000_000
 num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 12_00_000_000.0
+poisson_lambda = 8_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -64,7 +64,7 @@ loopback_speed = 400
 fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.1, amplitude = 3 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 3 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

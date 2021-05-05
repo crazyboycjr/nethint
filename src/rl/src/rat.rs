@@ -276,7 +276,10 @@ impl RatTree {
                 current_rate = std::cmp::min(min_rx, upbandwidth);
                 new_rate = std::cmp::min(min_rx, ringlets[ringlets.len() - 3].2);
             }
+            log::info!("new_rate: {}", new_rate);
         }
+
+        log::info!("min_rx: {}", min_rx);
 
         let mut flows = Vec::new();
 
