@@ -5,17 +5,21 @@ ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
-job_size_distribution = [[40, 4]]
+# job_size_distribution = [[40, 4], [40, 8], [40, 12], [40, 16], [40, 32], [40, 64]]
+# job_size_distribution = [[40, 4], [40, 8], [40, 12]]
+# job_size_distribution = [[40, 4], [40, 8], [20, 12], [20, 16]]
+# job_size_distribution = [[40, 32], [40, 64]]
+job_size_distribution = [[40, 4], [40, 8], [40, 12]]
 
 # Buffer size of all jobs, in bytes
-buffer_size = 100_000_000
+buffer_size = 1000_000_000
 
 # Number of iterations for all jobs
 num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
 # poisson_lambda = 8_000_000_000.0
-poisson_lambda = 1_000_000_000.0
+poisson_lambda = 8_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -29,7 +33,7 @@ seed = 1
 directory = "/tmp/rl_result"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 2
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -51,7 +55,7 @@ policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 10
+auto_tune = 100
 
 [simulator]
 nethint = true
@@ -61,7 +65,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 0.5, amplitude = 5, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 3_000_000_000, probability = 1.0, amplitude = 9, average_load = 0.3 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -79,7 +83,7 @@ sharing_mode = "Guaranteed"
 guaranteed_bandwidth = 25
 background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
 # background_flow_high_freq = { enable = false }
-gc_period = 100
+gc_period = 10
 
 # The topology for simulation
 [brain.topology]
@@ -91,7 +95,7 @@ type = "Arbitrary"  # another possible value is "FatTree"
 # oversub_ratio = 4.0   # oversubscription ratio
 
 [brain.topology.args]         # When type = "Arbitrary"
-nracks = 150        # the number of racks
+nracks = 320        # the number of racks
 rack_size = 6      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 400       # bandwidth of a ToR switch, in Gbps
