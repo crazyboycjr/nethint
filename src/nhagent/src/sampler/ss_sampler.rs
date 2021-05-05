@@ -171,7 +171,7 @@ impl SsSampler {
 
         self.handle = Some(std::thread::spawn(move || loop {
             let now = std::time::Instant::now();
-            if now - last_ts >= interval {
+            if now - last_ts >= interval || !flow_group.is_empty() {
                 let mut vnode_counter: HashMap<IpAddr, CounterUnit> = local_ip_table
                     .iter()
                     .map(|(&ip, name)| (ip, CounterUnit::new(name)))
@@ -209,8 +209,9 @@ impl SsSampler {
                 // release the lock, do not hold it for too long
                 std::mem::drop(pcluster);
 
-                // vnode_counter hash_map to vec
                 time_list.push(timing::ON_SAMPLED, SystemTime::now());
+
+                // vnode_counter hash_map to vec
                 let counter_unit: Vec<CounterUnit> = vnode_counter
                     .values()
                     .filter(|v| !v.is_empty())

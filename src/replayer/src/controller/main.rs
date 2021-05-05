@@ -256,7 +256,7 @@ impl Handler {
                     match &msg {
                         nhagent::message::Message::NetHintResponseV2(_tenant_id, _hintv2, time_list) => {
                             let mut time_list = time_list.clone();
-                            time_list.push_now(timing::ON_TENANT_RES);
+                            time_list.push_now(timing::ON_TENANT_RECV_RES);
                             use std::io::Write;
                             let mut f = utils::fs::open_with_create_append(path);
                             writeln!(f, "{}", time_list)?;

@@ -139,21 +139,6 @@ fn main_loop(
             // peroidically call the function to check if update is needed, if yes, then do it
             handler.update_background_flow_hard(comm)?;
 
-            for (tl, v) in rx.try_iter() {
-                for c in &v {
-                    log::trace!("counterunit: {:?}", c);
-                }
-                // receive from local sampler module
-                handler.update_time_list(tl);
-                handler.receive_server_chunk(comm.my_rank(), v);
-
-                // update time list, for GlobalLeader or RackLeader
-                let my_role = comm.my_role();
-                if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
-                    handler.time_list.push_now(timing::ON_CHUNK_SENT);
-                }
-            }
-
             if comm.my_role() == Role::RackLeader || comm.my_role() == Role::GlobalLeader {
                 handler.send_allhints(comm)?;
                 handler.send_rack_chunk(comm)?;
@@ -162,6 +147,22 @@ fn main_loop(
             }
 
             last_tp = now;
+        }
+
+        // poll data from sampler thread
+        for (tl, v) in rx.try_iter() {
+            for c in &v {
+                log::trace!("counterunit: {:?}", c);
+            }
+            // receive from local sampler module
+            handler.update_time_list(tl);
+            handler.receive_server_chunk(comm.my_rank(), v);
+
+            // update time list, for GlobalLeader or RackLeader
+            let my_role = comm.my_role();
+            if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
+                handler.time_list.update_now(timing::ON_CHUNK_SENT);
+            }
         }
 
         poll.poll(&mut events, Some(timeout))?;
@@ -313,7 +314,7 @@ impl Handler {
     }
 
     fn update_time_list(&mut self, time_list: TimeList) {
-        self.time_list.update(&time_list);
+        self.time_list.update_time_list(&time_list);
     }
 
     fn cleanup(&mut self) {
@@ -476,8 +477,8 @@ impl Handler {
                 .entry(k)
                 .and_modify(|e| Self::commit_chunk(e, v));
         }
-        self.time_list_buf = self.time_list.clone();
-        self.time_list.clear();
+        // self.time_list_buf = self.time_list.clone();
+        // self.time_list.clear();
     }
 
     fn merge_traffic(
@@ -546,7 +547,7 @@ impl Handler {
 
                 // commit the sent data by insertion or merge
                 Self::merge_traffic_on_link(&mut self.committed_traffic, uplink, chunk);
-                self.time_list.push_now(timing::ON_CHUNK_SENT);
+                self.time_list.update_now(timing::ON_CHUNK_SENT);
             }
         }
 
@@ -653,7 +654,9 @@ impl Handler {
         // update time list, for GlobalLeader or RackLeader
         let my_role = pcluster.get_my_role();
         if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
-            self.time_list.push_now(timing::ON_ALL_RECEIVED);
+            self.time_list.update_now(timing::ON_ALL_RECEIVED);
+            self.time_list_buf = self.time_list.clone();
+            self.time_list.clear();
         }
 
         Ok(())
@@ -674,7 +677,9 @@ impl Handler {
                 self.traffic.insert(l, c);
             }
         }
-        self.time_list.push_now(timing::ON_ALL_RECEIVED);
+        self.time_list.update_now(timing::ON_ALL_RECEIVED);
+        self.time_list_buf = self.time_list.clone();
+        self.time_list.clear();
         log::debug!("worker agent link traffic: {:?}", self.traffic);
         Ok(())
     }
@@ -838,7 +843,7 @@ impl Handler {
                     NetHintVersion::V2 => {
                         // handle time list
                         let mut time_list = self.time_list_buf.clone();
-                        time_list.push_now(timing::ON_TENANT_REQ);
+                        time_list.update_now(timing::ON_RECV_TENANT_REQ);
                         // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
                         let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();
                         let mut vc =

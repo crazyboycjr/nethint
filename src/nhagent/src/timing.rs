@@ -5,8 +5,8 @@ pub const ON_COLLECTED: &str = "OnCollected";
 pub const ON_SAMPLED: &str = "OnSampled";
 pub const ON_CHUNK_SENT: &str = "OnChunkSent";
 pub const ON_ALL_RECEIVED: &str = "OnAllReceived";
-pub const ON_TENANT_REQ: &str = "OnTenantRequested";
-pub const ON_TENANT_RES: &str = "OnTenantResponsed";
+pub const ON_RECV_TENANT_REQ: &str = "OnRecvTenantRequest";
+pub const ON_TENANT_RECV_RES: &str = "OnTenantRecvResponse";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRecord {
@@ -49,22 +49,26 @@ impl TimeList {
     }
 
     pub fn push_now(&mut self, stage: &str) {
-        let mut tl = TimeList::new();
-        tl.recs.push(TimeRecord::with_ts(stage, SystemTime::now()));
-        self.update(&tl);
+        self.recs.push(TimeRecord::new(stage));
+    }
+
+    pub fn update(&mut self, stage: &str, ts: SystemTime) {
+        let e = self.recs.iter_mut().rfind(|x| x.stage == stage);
+        if let Some(x) = e {
+            x.ts = ts;
+        } else {
+            self.recs.push(TimeRecord::with_ts(stage, ts));
+        }
+    }
+
+    pub fn update_now(&mut self, stage: &str) {
+        self.update(stage, SystemTime::now());
     }
 
     /// sync the latest corresponding element in `self` with `other`,
     /// if not exists, append that element to `self`.
-    pub fn update(&mut self, other: &TimeList) {
-        for o in &other.recs {
-            let e = self.recs.iter_mut().rfind(|x| x.stage == o.stage);
-            if let Some(x) = e {
-                x.ts = o.ts;
-            } else {
-                self.recs.push(o.clone());
-            }
-        }
+    pub fn update_time_list(&mut self, other: &TimeList) {
+        other.recs.iter().for_each(|o| self.update(&o.stage, o.ts));
     }
 }
 
