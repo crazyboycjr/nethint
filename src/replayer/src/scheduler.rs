@@ -33,6 +33,10 @@ pub struct Opt {
     /// Brain/nethint agent global leader URI, corresponding to NH_CONTROLLER_URI env, this will be directly pass to rplaunch
     #[structopt(long)]
     brain_uri: String,
+
+    /// Output path of the timing result, passed to rplaunch and further to controller
+    #[structopt(short, long)]
+    timing: Option<std::path::PathBuf>,
 }
 
 // this is the overall table, the scheduler must know the VMs' hostnames and their corresponding Node (ipaddr)
@@ -137,6 +141,7 @@ fn submit(
     let output_dir = opt.output.clone();
     let jobname = opt.jobname.clone();
     let brain_uri = opt.brain_uri.clone();
+    let timing = opt.timing.clone();
 
     move || {
         // send provision request to brain
@@ -193,6 +198,9 @@ fn submit(
         cmd.arg("--hostfile").arg(jobconfig.hostfile_path);
         cmd.arg("--controller-ssh").arg(jobconfig.controller_ssh);
         cmd.arg("--controller-uri").arg(jobconfig.controller_uri);
+        if let Some(path) = timing {
+            cmd.arg("--timing").arg(path.to_str().unwrap());
+        }
 
         utils::poll_cmd!(cmd, TERMINATE);
 

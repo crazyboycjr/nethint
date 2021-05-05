@@ -429,7 +429,7 @@ impl MapReduceApp {
                 self.cluster = Some(Rc::new(hintv1.vc));
                 self.start()?;
             }
-            NetHintResponseV2(tenant_id, hintv2) => {
+            NetHintResponseV2(tenant_id, hintv2, _) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);

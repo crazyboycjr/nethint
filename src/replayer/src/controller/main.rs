@@ -10,6 +10,7 @@ use replayer::message;
 use replayer::Node;
 
 use structopt::StructOpt;
+use nhagent::timing;
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "Controller", about = "Controller of the distributed replayer.")]
@@ -21,6 +22,10 @@ pub struct Opt {
     /// The configure file
     #[structopt(short = "c", long = "config")]
     pub config: std::path::PathBuf,
+
+    /// Output path of the timing result. If not specified, then timing is disabled.
+    #[structopt(short, long = "timing")]
+    pub timing: Option<std::path::PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -123,7 +128,7 @@ fn io_loop(
 
     app.start()?;
 
-    let mut handler = Handler::new(app.workers().len());
+    let mut handler = Handler::new(app.workers().len(), opts.timing.clone());
 
     'outer: loop {
         poll.poll(&mut events, None)?;
@@ -186,12 +191,14 @@ fn io_loop(
 
 struct Handler {
     num_remaining: usize,
+    timing: Option<std::path::PathBuf>,
 }
 
 impl Handler {
-    fn new(num_workers: usize) -> Self {
+    fn new(num_workers: usize, timing: Option<std::path::PathBuf>) -> Self {
         Handler {
             num_remaining: num_workers,
+            timing,
         }
     }
 
@@ -245,6 +252,21 @@ impl Handler {
                 }
             }
             BrainResponse(msg) => {
+                if let Some(path) = self.timing.as_ref() {
+                    match &msg {
+                        nhagent::message::Message::NetHintResponseV2(_tenant_id, _hintv2, time_list) => {
+                            let mut time_list = time_list.clone();
+                            time_list.push_now(timing::ON_TENANT_RECV_RES);
+                            use std::io::Write;
+                            let mut f = utils::fs::open_with_create_append(path);
+                            writeln!(f, "{}", time_list)?;
+                        }
+                        _ => {
+                            // do nothing
+                        }
+                    }
+                }
+
                 let exit = self.handle_brain_response(msg, app)?;
                 if exit {
                     return Ok(exit);

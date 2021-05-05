@@ -8,6 +8,7 @@ pub mod sampler;
 pub mod message;
 pub mod communicator;
 pub mod argument;
+pub mod timing;
 
 pub use litemsg::Node;
 
