@@ -3,7 +3,10 @@
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 # enable computation time
-sed -i '/^buffer_size/a computation_speed = 0.1' *.toml
+# sed -i '/^buffer_size/a computation_speed = 0.1' *.toml
+
+# use per tenant fairness
+sed -i 's/^fairness = "PerFlowMaxMin"/fairness = "TenantFlowMaxMin"/' *.toml
 
 configs=(
 standard2.toml
