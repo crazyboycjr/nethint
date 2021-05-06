@@ -828,7 +828,7 @@ impl Handler {
 
                 self.delay_provision(comm).unwrap_or_default();
             }
-            NetHintRequest(tenant_id, version) => {
+            NetHintRequest(tenant_id, version, req_time_list) => {
                 match version {
                     NetHintVersion::V1 => {
                         let vc = (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
@@ -843,6 +843,7 @@ impl Handler {
                     NetHintVersion::V2 => {
                         // handle time list
                         let mut time_list = self.time_list_buf.clone();
+                        time_list.update_time_list(&req_time_list);
                         time_list.update_now(timing::ON_RECV_TENANT_REQ);
                         // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
                         let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();

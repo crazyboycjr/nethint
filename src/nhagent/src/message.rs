@@ -62,7 +62,7 @@ pub enum Message {
     /// send by global leader, processed by app
     DestroyResponse(TenantId),
     /// send by app, processed by rack/global leader leader
-    NetHintRequest(TenantId, NetHintVersion),
+    NetHintRequest(TenantId, NetHintVersion, TimeList),
     /// send by rack/global leader, processed by app
     NetHintResponseV1(TenantId, NetHintV1Real),
     /// send by rack/global leader, processed by app

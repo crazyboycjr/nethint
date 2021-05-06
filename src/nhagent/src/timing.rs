@@ -5,6 +5,7 @@ pub const ON_COLLECTED: &str = "OnCollected";
 pub const ON_SAMPLED: &str = "OnSampled";
 pub const ON_CHUNK_SENT: &str = "OnChunkSent";
 pub const ON_ALL_RECEIVED: &str = "OnAllReceived";
+pub const ON_TENANT_SENT_REQ: &str = "OnTenantSentRequest";
 pub const ON_RECV_TENANT_REQ: &str = "OnRecvTenantRequest";
 pub const ON_TENANT_RECV_RES: &str = "OnTenantRecvResponse";
 
@@ -55,7 +56,7 @@ impl TimeList {
     pub fn update(&mut self, stage: &str, ts: SystemTime) {
         let e = self.recs.iter_mut().rfind(|x| x.stage == stage);
         if let Some(x) = e {
-            x.ts = ts;
+            x.ts = ts.max(x.ts);
         } else {
             self.recs.push(TimeRecord::with_ts(stage, ts));
         }
