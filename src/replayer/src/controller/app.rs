@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use nethint::hint::NetHintVersion;
 use nethint::TenantId;
 use crate::message;
+use nhagent::timing::{self, TimeList};
 
 pub trait Application {
     fn workers(&self) -> &HashMap<Node, Endpoint>;
@@ -19,7 +20,9 @@ pub trait Application {
     fn hostname_to_node(&self) -> &HashMap<String, Node>;
 
     fn request_nethint(&mut self, version: NetHintVersion) -> anyhow::Result<()> {
-        let msg = nhagent::message::Message::NetHintRequest(self.tenant_id(), version);
+        let mut time_list = TimeList::new();
+        time_list.push_now(timing::ON_TENANT_SENT_REQ);
+        let msg = nhagent::message::Message::NetHintRequest(self.tenant_id(), version, time_list);
         self.brain_mut().post(msg, None)?;
         Ok(())
     }

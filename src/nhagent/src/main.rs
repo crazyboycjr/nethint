@@ -156,13 +156,7 @@ fn main_loop(
             }
             // receive from local sampler module
             handler.update_time_list(tl);
-            handler.receive_server_chunk(comm.my_rank(), v);
-
-            // update time list, for GlobalLeader or RackLeader
-            let my_role = comm.my_role();
-            if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
-                handler.time_list.update_now(timing::ON_CHUNK_SENT);
-            }
+            handler.receive_server_chunk(comm, comm.my_rank(), v, None);
         }
 
         poll.poll(&mut events, Some(timeout))?;
@@ -270,6 +264,7 @@ struct Handler {
     cmd_tx: mpsc::Sender<CommandOp>,
     // current time list
     time_list: TimeList,
+    time_list_for_remote: TimeList,
     // time list for traffic buf
     time_list_buf: TimeList,
 }
@@ -309,12 +304,14 @@ impl Handler {
             cmd_handle,
             cmd_tx: tx,
             time_list: TimeList::new(),
+            time_list_for_remote: TimeList::new(),
             time_list_buf: TimeList::new(),
         }
     }
 
     fn update_time_list(&mut self, time_list: TimeList) {
         self.time_list.update_time_list(&time_list);
+        self.time_list_for_remote.update_time_list(&time_list);
     }
 
     fn cleanup(&mut self) {
@@ -541,8 +538,15 @@ impl Handler {
                     "my rack leader not found, my_rank: {}",
                     my_rank
                 );
+                let mut time_list = TimeList::new();
+                if let Some(tr) = self.time_list_for_remote.get(timing::ON_COLLECTED) {
+                    time_list.push(&tr.stage, tr.ts);
+                }
+                if let Some(tr) = self.time_list_for_remote.get(timing::ON_SAMPLED) {
+                    time_list.push(&tr.stage, tr.ts);
+                };
                 let chunk = self.traffic[&uplink].clone();
-                let msg = message::Message::ServerChunk(chunk.clone());
+                let msg = message::Message::ServerChunk(chunk.clone(), time_list);
                 comm.send_to(my_rack_leader_rank.unwrap(), &msg)?;
 
                 // commit the sent data by insertion or merge
@@ -554,7 +558,7 @@ impl Handler {
         Ok(())
     }
 
-    fn receive_server_chunk(&mut self, sender_rank: usize, chunk: Vec<CounterUnit>) {
+    fn receive_server_chunk(&mut self, comm: &mut Communicator, sender_rank: usize, chunk: Vec<CounterUnit>, remote_time_list: Option<TimeList>) {
         // 1. parse chunk, aggregate, and send aggregated information to other racks
         let pcluster = CLUSTER.lock().unwrap();
         let rack_ix = pcluster.get_my_rack_ix();
@@ -576,11 +580,24 @@ impl Handler {
             .get_uplink(pcluster.inner().get_node_index(sender_hostname));
         // 3. update traffic
         Self::merge_traffic_on_link(&mut self.traffic, uplink, chunk);
+
+        // update time list, for GlobalLeader or RackLeader
+        let my_role = comm.my_role();
+        if my_role == Role::GlobalLeader || my_role == Role::RackLeader {
+            self.time_list.update_now(timing::ON_CHUNK_SENT);
+        } else {
+            if let Some(remote_time_list) = remote_time_list {
+                self.time_list.update_min(timing::ON_COLLECTED, &remote_time_list);
+                self.time_list.update_min(timing::ON_SAMPLED, &remote_time_list);
+            }
+        }
     }
 
     // Assume LinkIx from different agents are compatible with each other
-    fn receive_rack_chunk(&mut self, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
+    fn receive_rack_chunk(&mut self, chunks: HashMap<LinkIx, Vec<CounterUnit>>, remote_time_list: TimeList) {
         Self::merge_traffic(&mut self.traffic, chunks);
+        self.time_list.update_min(timing::ON_COLLECTED, &remote_time_list);
+        self.time_list.update_min(timing::ON_SAMPLED, &remote_time_list);
     }
 
     fn send_rack_chunk(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
@@ -609,7 +626,14 @@ impl Handler {
             )
             .unwrap_none();
         // 2. send to all other rack leaders
-        let msg = message::Message::RackChunk(my_rack_traffic);
+        let mut time_list = TimeList::new();
+        if let Some(tr) = self.time_list_for_remote.get(timing::ON_COLLECTED) {
+            time_list.push(&tr.stage, tr.ts);
+        };
+        if let Some(tr) = self.time_list_for_remote.get(timing::ON_SAMPLED) {
+            time_list.push(&tr.stage, tr.ts);
+        };
+        let msg = message::Message::RackChunk(my_rack_traffic, time_list);
         for i in 0..comm.world_size() {
             if i == comm.my_rank() {
                 continue;
@@ -794,15 +818,15 @@ impl Handler {
                 log::trace!("received DeclareHostname, sender_rank: {}, hostname: {}", sender_rank, hostname);
                 self.rank_hostname.insert(sender_rank, hostname);
             }
-            ServerChunk(chunk) => {
+            ServerChunk(chunk, remote_time_list) => {
                 let my_role = comm.my_role();
                 assert!(my_role == Role::RackLeader || my_role == Role::GlobalLeader);
-                self.receive_server_chunk(sender_rank, chunk);
+                self.receive_server_chunk(comm, sender_rank, chunk, Some(remote_time_list));
             }
-            RackChunk(chunk) => {
+            RackChunk(chunk, remote_time_list) => {
                 let my_role = comm.my_role();
                 assert_ne!(my_role, Role::Worker);
-                self.receive_rack_chunk(chunk);
+                self.receive_rack_chunk(chunk, remote_time_list);
                 log::trace!("rack leader agent link traffic: {:?}", self.traffic);
             }
             AllHints(allhints) => {
@@ -828,7 +852,7 @@ impl Handler {
 
                 self.delay_provision(comm).unwrap_or_default();
             }
-            NetHintRequest(tenant_id, version) => {
+            NetHintRequest(tenant_id, version, req_time_list) => {
                 match version {
                     NetHintVersion::V1 => {
                         let vc = (*self.brain.borrow().vclusters()[&tenant_id].borrow()).clone();
@@ -843,6 +867,7 @@ impl Handler {
                     NetHintVersion::V2 => {
                         // handle time list
                         let mut time_list = self.time_list_buf.clone();
+                        time_list.update_time_list(&req_time_list);
                         time_list.update_now(timing::ON_RECV_TENANT_REQ);
                         // just extract the traffic information from physical cluster: for each virtual link, find the physical link, and grab the traffic from it
                         let mut traffic: HashMap<LinkIx, Vec<CounterUnit>> = Default::default();

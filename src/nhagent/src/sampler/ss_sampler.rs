@@ -239,7 +239,7 @@ impl SsSampler {
                 // release the lock, do not hold it for too long
                 std::mem::drop(pcluster);
 
-                time_list.push(timing::ON_SAMPLED, SystemTime::now());
+                time_list.push_now(timing::ON_SAMPLED);
 
                 // vnode_counter hash_map to vec
                 let counter_unit: Vec<CounterUnit> = vnode_counter

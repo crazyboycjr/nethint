@@ -115,8 +115,13 @@ fn io_loop(
         let new_token = mio::Token(token_table.len());
         token_table.push(node.clone());
 
+        // set nodelay
+        ep.stream().set_nodelay(true)?;
         poll.register(ep.stream(), new_token, ep.interest(), mio::PollOpt::level())?;
     }
+
+    // set nodelay
+    app.brain().stream().set_nodelay(true)?;
 
     // add brain to poll
     poll.register(

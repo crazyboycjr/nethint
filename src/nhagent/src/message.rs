@@ -40,10 +40,10 @@ pub enum Message {
     DeclareHostname(String),
 
     /// send by worker, processed by rack leader
-    ServerChunk(Vec<CounterUnit>),
+    ServerChunk(Vec<CounterUnit>, TimeList),
     /// A potential problem here is that LinkIx from different machines may not be compatible
     /// send by rack leader, processed by rack leader
-    RackChunk(HashMap<LinkIx, Vec<CounterUnit>>),
+    RackChunk(HashMap<LinkIx, Vec<CounterUnit>>, TimeList),
     /// send by rack leader, processed by worker
     AllHints(HashMap<LinkIx, Vec<CounterUnit>>),
 
@@ -62,7 +62,7 @@ pub enum Message {
     /// send by global leader, processed by app
     DestroyResponse(TenantId),
     /// send by app, processed by rack/global leader leader
-    NetHintRequest(TenantId, NetHintVersion),
+    NetHintRequest(TenantId, NetHintVersion, TimeList),
     /// send by rack/global leader, processed by app
     NetHintResponseV1(TenantId, NetHintV1Real),
     /// send by rack/global leader, processed by app
