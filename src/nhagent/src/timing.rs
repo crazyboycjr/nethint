@@ -11,8 +11,8 @@ pub const ON_TENANT_RECV_RES: &str = "OnTenantRecvResponse";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRecord {
-    stage: String,
-    ts: SystemTime,
+    pub stage: String,
+    pub ts: SystemTime,
 }
 
 impl TimeRecord {
@@ -45,6 +45,10 @@ impl TimeList {
         self.recs.clear()
     }
 
+    pub fn get(&self, stage: &str) -> Option<TimeRecord> {
+        self.recs.iter().find(|x| x.stage == stage).cloned()
+    }
+
     pub fn push(&mut self, stage: &str, ts: SystemTime) {
         self.recs.push(TimeRecord::with_ts(stage, ts))
     }
@@ -70,6 +74,16 @@ impl TimeList {
     /// if not exists, append that element to `self`.
     pub fn update_time_list(&mut self, other: &TimeList) {
         other.recs.iter().for_each(|o| self.update(&o.stage, o.ts));
+    }
+
+    pub fn update_min(&mut self, stage: &str, other: &TimeList) {
+        if let Some(o) = other.get(stage) {
+            if let Some(e) = self.recs.iter_mut().rfind(|x| x.stage == stage) {
+                e.ts = o.ts.min(e.ts);
+            } else {
+                self.recs.push(TimeRecord::with_ts(&o.stage, o.ts));
+            }
+        }
     }
 }
 
