@@ -1,4 +1,4 @@
-use crate::{mapper::MapperPlacementPolicy, ReducerPlacementPolicy};
+use crate::{ShufflePattern, mapper::MapperPlacementPolicy, ReducerPlacementPolicy};
 use nethint::brain::{self, BrainSetting};
 use nethint::simulator::SimulatorSetting;
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,9 @@ pub struct ExperimentConfig {
     /// Run experiments from trace file
     #[serde(default)]
     pub trace: Option<std::path::PathBuf>,
+
+    /// How to generate the shuffle
+    pub shuffle: Option<ShufflePattern>,
 
     /// Number of testcases
     pub ncases: usize,
