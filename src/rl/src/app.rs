@@ -18,7 +18,7 @@ pub struct RLApp<'c> {
     replayer: Replayer,
     jct: Option<Duration>,
     seed: u64,
-    allreduce_policy: RLPolicy,
+    rl_policy: RLPolicy,
     remaining_iterations: usize,
     remaining_flows: usize,
     nethint_level: usize,
@@ -36,7 +36,7 @@ impl<'c> RLApp<'c> {
         job_spec: &'c JobSpec,
         cluster: Option<Rc<dyn Topology>>,
         seed: u64,
-        allreduce_policy: RLPolicy,
+        rl_policy: RLPolicy,
         nethint_level: usize,
         autotune: Option<usize>,
     ) -> Self {
@@ -47,7 +47,7 @@ impl<'c> RLApp<'c> {
             replayer: Replayer::new(trace),
             jct: None,
             seed,
-            allreduce_policy,
+            rl_policy,
             remaining_iterations: job_spec.num_iterations,
             remaining_flows: 0,
             nethint_level,
@@ -63,7 +63,7 @@ impl<'c> RLApp<'c> {
     pub fn rl_traffic(&mut self, start_time: Timestamp) {
         let mut trace = Trace::new();
 
-        let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.allreduce_policy {
+        let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.rl_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
