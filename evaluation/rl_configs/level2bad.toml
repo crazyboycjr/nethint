@@ -18,7 +18,7 @@ buffer_size = 1000_000_000
 num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 8_000_000_000.0
+poisson_lambda = 8_00_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
