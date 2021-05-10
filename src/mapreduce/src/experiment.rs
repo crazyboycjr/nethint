@@ -18,7 +18,6 @@ use mapreduce::{
 
 use mapreduce::config::{read_config, ExperimentConfig};
 
-
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "MapReduce Experiment", about = "MapReduce Experiment")]
 pub struct Opt {
@@ -64,7 +63,7 @@ fn main() {
         .unwrap();
 
     let brain = Brain::build_cloud(config.brain.clone());
-    
+
     log::info!("cluster:\n{}", brain.borrow().cluster().to_dot());
 
     // create the output directory if it does not exist
@@ -120,7 +119,7 @@ fn run_batch(
         .unwrap();
 
     let ncases = std::cmp::min(config.ncases, job_trace.count);
-    
+
     // Read job information (start_ts, job_spec) from file
     let mut job = Vec::new();
     let mut app_group = AppGroup::new();
@@ -137,7 +136,7 @@ fn run_batch(
             // let start_ts = record.ts * 1_000_000;
             let time_scale = config.time_scale.unwrap_or(1.0);
             let start_ts = ((record.ts * 1_000_000) as f64 * time_scale) as _;
-            
+
             log::debug!("record: {:?}", record);
             // let job_spec = JobSpec::new(
             //     record.num_map * config.num_map,
@@ -148,11 +147,11 @@ fn run_batch(
             let reduce_scale = config.reduce_scale.unwrap_or(1.0);
             let job_spec = JobSpec::new(
                 std::cmp::max(1, (record.num_map as f64 * map_scale) as usize),
-                std::cmp::max(
-                    1,
-                    (record.num_reduce as f64 * reduce_scale) as usize,
-                ),
-                ShufflePattern::FromTrace(Box::new(record)),
+                std::cmp::max(1, (record.num_reduce as f64 * reduce_scale) as usize),
+                config
+                    .shuffle
+                    .clone()
+                    .unwrap_or(ShufflePattern::FromTrace(Box::new(record))),
             );
             (start_ts, job_spec)
         };
@@ -185,7 +184,7 @@ fn run_batch(
                 FromTrace(r) => FromTrace(r.clone()),
             }
         };
-        
+
         let mapreduce_app = Box::new(MapReduceApp::new(
             seed,
             job_spec,
@@ -224,8 +223,7 @@ fn run_batch(
 
         app_group.add(*start_ts, virtualized_app);
     }
-    
-    
+
     log::debug!("app_group: {:?}", app_group);
 
     // setup simulator
@@ -237,7 +235,7 @@ fn run_batch(
 
     // run application in simulator
     let app_jct = simulator.run_with_application(Box::new(app_group));
-    
+
     let mut app_stats: Vec<_> = app_jct
         .iter()
         .map(|(i, jct)| (*i, start_ts_vec[*i], jct.unwrap()))
@@ -250,7 +248,8 @@ fn run_batch(
             .filter(|&(id, _start, _dura)| {
                 let record = &job_trace.records[id];
                 let weights: Vec<_> = record.reducers.iter().map(|(_x, y)| *y as u64).collect();
-                !(record.num_map == 1 || weights.iter().copied().max() == weights.iter().copied().min())
+                !(record.num_map == 1
+                    || weights.iter().copied().max() == weights.iter().copied().min())
             })
             .collect();
     }
@@ -280,7 +279,6 @@ fn save_result(path: std::path::PathBuf, app_stats: Vec<(usize, u64, u64)>) {
     writeln!(f, "{:?}", app_stats).unwrap();
 }
 
-
 // this code snippet is copied from scheduler.rs
 fn is_job_trivial(job_spec: &JobSpec) -> bool {
     match job_spec.shuffle_pat {
@@ -294,7 +292,8 @@ fn is_job_trivial(job_spec: &JobSpec) -> bool {
                     <= 1.05 * weights.iter().copied().min().unwrap() as f64
         }
         _ => {
-            unimplemented!();
+            job_spec.num_map == 1 || job_spec.num_reduce == 1
+            // unimplemented!();
         }
     }
 }

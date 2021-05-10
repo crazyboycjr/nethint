@@ -7,11 +7,10 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 configs=(
 standard_hybrid2.toml
-standard_hybrid4.toml
 background_dynamic_strong.toml
 background_off.toml
 background_static_strong.toml
-probe_bad.toml
+level2probe.toml
 )
 
 for conf in ${configs[@]}; do

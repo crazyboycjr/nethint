@@ -11,7 +11,7 @@ ncases = 500
 # When running from trace, these parameters become scale factors
 num_map = 1
 num_reduce = 1
-enable_computation_time = true
+enable_computation_time = false
 
 # Multiply the traffic size by a number
 traffic_scale = 100.0
