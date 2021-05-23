@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::RLAlgorithm;
 use nethint::{
     cluster::Topology,
@@ -290,6 +291,10 @@ impl RatTree {
         log::trace!("{:?}", siderack);
         log::trace!("{:?}", sidechains);
 
+
+        let mut width: HashMap<String, usize> = HashMap::new();
+        let mut parent: HashMap<String, String> = HashMap::new();
+
         for i in 0..ringlets[0].0.len()-1 {
             let sender = format!("host_{}", ringlets[0].0[i]);
             let receiver = format!("host_{}", ringlets[0].0[i+1]);
@@ -328,12 +333,71 @@ impl RatTree {
                 flows.push(flow);
             }
         }
-        
-        for (i, j) in sidechains {
+
+        for &(i, j) in &sidechains {
             let sender = format!("host_{}", i);
             let receiver = format!("host_{}", j);
             let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
+        }
+        
+        // build trees
+        for f in &flows {
+            let sender = f.src.clone();
+            let receiver = f.dst.clone();
+            *width.entry(sender.clone()).or_insert(0) += 1;
+            parent.insert(receiver, sender).unwrap_none();
+        }
+
+        // change original flow to new flows by `contraction`
+        let mut new_flows = flows.clone();
+        for flow in &flows {
+            let sender = flow.src.clone();
+            let receiver = flow.dst.clone();
+
+            if *width.get(&sender).unwrap_or(&0) == 1 && *width.get(&receiver).unwrap_or(&0) == 0 {
+                // combine the two nodes
+                let bw1 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&sender))].bandwidth.val().min(min_rx);
+                let bw2 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&receiver))].bandwidth.val().min(min_rx);
+                let k = bw1 as f64 / bw2 as f64;
+                assert!(k >= 1.0, "bw1: {}, bw2: {}", bw1, bw2);
+
+                let p = parent[&sender].clone();
+                // modify the flow from the parent to sender
+                let flow1 = Flow::new((size as f64 / (k + 1.) * k) as usize, &p, &sender, None);
+                let flow2 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &p, &receiver, None);
+                let flow3 = Flow::new((size as f64 / (k + 1.) * k) as usize, &sender, &receiver, None);
+                let flow4 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &receiver, &sender, None);
+
+                let mut found = 0;
+                for f in &mut new_flows {
+                    if f.src == flow1.src && f.dst == flow1.dst {
+                        f.bytes = flow1.bytes;
+                        found += 1;
+                    }
+                }
+
+                assert_eq!(found, 1);
+
+                let mut found = 0;
+                for f in &mut new_flows {
+                    if f.src == flow3.src && f.dst == flow3.dst {
+                        f.bytes = flow3.bytes;
+                        found += 1;
+                    }
+                }
+
+                assert_eq!(found, 1);
+
+                log::warn!("old: {:?}", flow);
+                log::warn!("new 1: {:?}", flow1);
+                log::warn!("new 2: {:?}", flow2);
+                log::warn!("new 3: {:?}", flow3);
+                log::warn!("new 4: {:?}", flow4);
+
+                new_flows.push(flow2);
+                new_flows.push(flow4);
+            }
         }
 
         // if sidechains.len() >= 1 {
@@ -348,7 +412,8 @@ impl RatTree {
         //         writeln!(f, "{:?}", sidechains).unwrap();
         //     }
         // }
-        log::trace!("{:?}", flows);
-        flows
+        log::trace!("{:?}", new_flows);
+        new_flows
+        // flows
     }
 }
