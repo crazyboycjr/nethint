@@ -1,9 +1,6 @@
-use std::collections::HashMap;
 use crate::RLAlgorithm;
-use nethint::{
-    cluster::Topology,
-    Flow,
-};
+use nethint::{cluster::Topology, Flow};
+use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct RatTree {
@@ -36,8 +33,8 @@ fn compact_chain(
     let name = format!("host_{}", chain[0]);
     let node_ix = vcluster.get_node_index(&name);
     let mut min_rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
-    .bandwidth
-    .val();
+        .bandwidth
+        .val();
     for x in chain.clone() {
         let name = format!("host_{}", x);
         let node_ix = vcluster.get_node_index(&name);
@@ -62,7 +59,6 @@ fn compact_chain(
         let mut upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
         let mut new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
 
-
         while upbandwidth < min_rx {
             let mut found = false;
             for i in 0..chain.len() - 3 {
@@ -76,7 +72,7 @@ fn compact_chain(
                 if m.contains_key(&chain[i]) {
                     oldrate = m[&chain[i]];
                 }
-                    log::trace!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
+                log::trace!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
 
                 if tx - new_chain_rate > old_chain_rate + oldrate {
                     side_chain.push((chain[i], chain[chain.len() - 1]));
@@ -119,7 +115,7 @@ fn compact_chain(
     let node_ix = vcluster.get_node_index(&name);
     let first_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
     let last_tx = if chain.len() >= 2 {
-        let name = format!("host_{}", chain[chain.len()-2]);
+        let name = format!("host_{}", chain[chain.len() - 2]);
         let node_ix = vcluster.get_node_index(&name);
         let last_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
         last_tx
@@ -141,7 +137,7 @@ fn compact_chain(
         upbandwidth -= oldrate;
         if upbandwidth > max_tx {
             if i != chain.len() - 1 {
-            max_tx = upbandwidth - chain_rate;
+                max_tx = upbandwidth - chain_rate;
             } else {
                 max_tx = upbandwidth;
             }
@@ -170,7 +166,7 @@ impl RatTree {
         vcluster: &dyn Topology,
     ) -> Vec<Flow> {
         let mut ringlets = Vec::new();
-        let mut root_ringlet = (Vec::new(), 0, 0 ,0);
+        let mut root_ringlet = (Vec::new(), 0, 0, 0);
         let mut sidechains = Vec::new();
         for i in 0..vcluster.num_switches() - 1 {
             let mut ringlet = Vec::new();
@@ -199,14 +195,18 @@ impl RatTree {
                     let node_ix = vcluster.get_node_index(&name);
                     vcluster[vcluster.get_uplink(node_ix)].bandwidth.val()
                 });
-            
+
                 ringlet.reverse();
 
                 let mut side_chain = Vec::new();
                 let result = compact_chain(&mut ringlet, &mut side_chain, vcluster);
                 sidechains.append(&mut side_chain);
-                ringlets.push((ringlet, result.0, std::cmp::min(tor_upbandwidth,result.1), result.2));
-
+                ringlets.push((
+                    ringlet,
+                    result.0,
+                    std::cmp::min(tor_upbandwidth, result.1),
+                    result.2,
+                ));
             } else {
                 let pos = pos.unwrap();
                 ringlet.remove(pos);
@@ -221,7 +221,12 @@ impl RatTree {
                 let mut side_chain = Vec::new();
                 let result = compact_chain(&mut ringlet, &mut side_chain, vcluster);
                 sidechains.append(&mut side_chain);
-                root_ringlet = (ringlet, result.0, std::cmp::min(tor_upbandwidth,result.1), result.2);
+                root_ringlet = (
+                    ringlet,
+                    result.0,
+                    std::cmp::min(tor_upbandwidth, result.1),
+                    result.2,
+                );
             }
         }
 
@@ -280,8 +285,6 @@ impl RatTree {
             log::info!("new_rate: {}", new_rate);
         }
 
-        log::info!("min_rx: {}", min_rx);
-
         let mut flows = Vec::new();
 
         // let n = vcluster.num_hosts();
@@ -291,13 +294,12 @@ impl RatTree {
         log::trace!("{:?}", siderack);
         log::trace!("{:?}", sidechains);
 
-
         let mut width: HashMap<String, usize> = HashMap::new();
         let mut parent: HashMap<String, String> = HashMap::new();
 
-        for i in 0..ringlets[0].0.len()-1 {
+        for i in 0..ringlets[0].0.len() - 1 {
             let sender = format!("host_{}", ringlets[0].0[i]);
-            let receiver = format!("host_{}", ringlets[0].0[i+1]);
+            let receiver = format!("host_{}", ringlets[0].0[i + 1]);
             let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
         }
@@ -312,9 +314,9 @@ impl RatTree {
             let receiver = format!("host_{}", ringlet[0]);
             let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
-            for i in 0..ringlet.len()-1 {
+            for i in 0..ringlet.len() - 1 {
                 let sender = format!("host_{}", ringlet[i]);
-                let receiver = format!("host_{}", ringlet[i+1]);
+                let receiver = format!("host_{}", ringlet[i + 1]);
                 let flow = Flow::new(size as usize, &sender, &receiver, None);
                 flows.push(flow);
             }
@@ -340,7 +342,16 @@ impl RatTree {
             let flow = Flow::new(size as usize, &sender, &receiver, None);
             flows.push(flow);
         }
-        
+
+        if !std::env::var("RL_USE_NEW_ALGO")
+            .unwrap_or("false".into())
+            .to_lowercase()
+            .parse()
+            .unwrap_or(false)
+        {
+            return flows;
+        }
+
         // build trees
         for f in &flows {
             let sender = f.src.clone();
@@ -357,8 +368,12 @@ impl RatTree {
 
             if *width.get(&sender).unwrap_or(&0) == 1 && *width.get(&receiver).unwrap_or(&0) == 0 {
                 // combine the two nodes
-                let bw1 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&sender))].bandwidth.val().min(min_rx);
-                let bw2 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&receiver))].bandwidth.val().min(min_rx);
+                let bw1 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&sender))]
+                    .bandwidth
+                    .val();
+                let bw2 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&receiver))]
+                    .bandwidth
+                    .val();
                 let k = bw1 as f64 / bw2 as f64;
                 assert!(k >= 1.0, "bw1: {}, bw2: {}", bw1, bw2);
 
@@ -366,8 +381,18 @@ impl RatTree {
                 // modify the flow from the parent to sender
                 let flow1 = Flow::new((size as f64 / (k + 1.) * k) as usize, &p, &sender, None);
                 let flow2 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &p, &receiver, None);
-                let flow3 = Flow::new((size as f64 / (k + 1.) * k) as usize, &sender, &receiver, None);
-                let flow4 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &receiver, &sender, None);
+                let flow3 = Flow::new(
+                    (size as f64 / (k + 1.) * k) as usize,
+                    &sender,
+                    &receiver,
+                    None,
+                );
+                let flow4 = Flow::new(
+                    (size as f64 / (k + 1.) * 1.) as usize,
+                    &receiver,
+                    &sender,
+                    None,
+                );
 
                 let mut found = 0;
                 for f in &mut new_flows {
@@ -400,6 +425,45 @@ impl RatTree {
             }
         }
 
+        // calculate min(min_rx, source_tx)
+        let min_rx = (0..vcluster.num_hosts()).filter(|&x| x != root_index).map(|i| {
+            let host_name = format!("host_{}", i);
+            let host_ix = vcluster.get_node_index(&host_name);
+            let rx_bw = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(host_ix))].bandwidth;
+            rx_bw
+        }).min().unwrap_or(nethint::bandwidth::MAX);
+
+        let source_tx = {
+            let host_name = format!("host_{}", root_index);
+            let host_ix = vcluster.get_node_index(&host_name);
+            let tx_bw = vcluster[vcluster.get_uplink(host_ix)].bandwidth;
+            tx_bw
+        };
+
+        log::info!("min_rx: {}, source_tx: {}", min_rx, source_tx);
+
+        let mut speed_bound = min_rx.val().min(source_tx.val());
+        let sender = format!("host_{}", root_index);
+        let receiver = format!("host_{}", (root_index + 1) % vcluster.num_hosts());
+        let rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(vcluster.get_node_index(&receiver)))].bandwidth;
+        let flow_rate = source_tx.val().min(rx.val());
+        if ringlets.len() > 1 {
+            let rack_sender = format!("host_{}", ringlets[ringlets.len() - 2].1);
+            let tx_to_last_rack = vcluster[vcluster.get_uplink(vcluster.get_node_index(&rack_sender))].bandwidth;
+            speed_bound = speed_bound.min(tx_to_last_rack.val());
+        }
+        let single_flow_of_optimal_bound = Flow::new((size as f64 * flow_rate as f64 / speed_bound as f64) as usize, &sender, &receiver, None);
+        let single_flow = vec![single_flow_of_optimal_bound];
+
+        if std::env::var("RL_BOUND")
+            .unwrap_or("false".into())
+            .to_lowercase()
+            .parse()
+            .unwrap_or(false)
+        {
+            return single_flow;
+        }
+
         // if sidechains.len() >= 1 {
         //     if let Ok(path) = std::env::var("NETHINT_RL_LOG_FILE") {
         //         use std::io::{Seek, Write};
@@ -412,8 +476,9 @@ impl RatTree {
         //         writeln!(f, "{:?}", sidechains).unwrap();
         //     }
         // }
-        log::trace!("{:?}", new_flows);
+        log::info!("{:?}", new_flows);
         new_flows
-        // flows
+
+
     }
 }
