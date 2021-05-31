@@ -1,5 +1,5 @@
 use crate::RLAlgorithm;
-use nethint::{cluster::Topology, Flow};
+use nethint::{cluster::Topology, Flow, bandwidth::Bandwidth};
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
@@ -362,96 +362,168 @@ impl RatTree {
 
         // change original flow to new flows by `contraction`
         let mut new_flows = flows.clone();
-        for flow in &flows {
-            let sender = flow.src.clone();
-            let receiver = flow.dst.clone();
+        let mut all_to_all_flows = Vec::new();
+        if ringlets.len() > 1 {
+            // do it with the last ringlet
+            let ringlet = ringlets.last().unwrap().0.clone();
+            let group_size = ringlet.len();
+            let rate_sum: u64 = ringlet.iter().map(|&i| {
+                get_fwd_rate(vcluster, i, group_size).val()
+            }).sum();
 
-            if *width.get(&sender).unwrap_or(&0) == 1 && *width.get(&receiver).unwrap_or(&0) == 0 {
-                // combine the two nodes
-                let bw1 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&sender))]
-                    .bandwidth
-                    .val();
-                let bw2 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&receiver))]
-                    .bandwidth
-                    .val();
-                let k = bw1 as f64 / bw2 as f64;
-                assert!(k >= 1.0, "bw1: {}, bw2: {}", bw1, bw2);
+            log::info!("multiracks, all_to_all group size: {}, all_to_all rate: {}", group_size, rate_sum / (group_size - 1) as u64);
+            let last_sender = format!("host_{}", ringlets[ringlets.len() - 2].1);
+            for &i in &ringlet {
+                assert_ne!(i, root_index);
 
-                let p = parent[&sender].clone();
-                // modify the flow from the parent to sender
-                let flow1 = Flow::new((size as f64 / (k + 1.) * k) as usize, &p, &sender, None);
-                let flow2 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &p, &receiver, None);
-                let flow3 = Flow::new(
-                    (size as f64 / (k + 1.) * k) as usize,
-                    &sender,
-                    &receiver,
-                    None,
-                );
-                let flow4 = Flow::new(
-                    (size as f64 / (k + 1.) * 1.) as usize,
-                    &receiver,
-                    &sender,
-                    None,
-                );
+                let sender = format!("host_{}", i);
+                let fwd_rate_i = get_fwd_rate(vcluster, i, group_size).val();
 
-                let mut found = 0;
-                for f in &mut new_flows {
-                    if f.src == flow1.src && f.dst == flow1.dst {
-                        f.bytes = flow1.bytes;
-                        found += 1;
-                    }
+                let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
+                let flow1 = Flow::new(size_i, &last_sender, &sender, None);
+                all_to_all_flows.push(flow1);
+
+                for &j in &ringlet {
+                    if j == i { continue; }
+                    let receiver = format!("host_{}", j);
+                    let flow2 = Flow::new(size_i, &sender, &receiver, None);
+                    all_to_all_flows.push(flow2);
                 }
+            }
 
-                assert_eq!(found, 1);
+            let tx_to_last_rack = get_up_bw(vcluster, ringlets[ringlets.len() - 2].1).val();
+            if tx_to_last_rack > rate_sum / (group_size - 1) as u64 {
+                log::error!("{} vs {}", tx_to_last_rack, rate_sum / (group_size - 1) as u64);
+            }
+        } else {
+            let n = vcluster.num_hosts();
+            let group_size = n - 1;
+            let rate_sum: u64 = (0..n).filter(|&i| i != root_index).map(|i| {
+                get_fwd_rate(vcluster, i, group_size).val()
+            }).sum();
 
-                let mut found = 0;
-                for f in &mut new_flows {
-                    if f.src == flow3.src && f.dst == flow3.dst {
-                        f.bytes = flow3.bytes;
-                        found += 1;
-                    }
+            log::info!("all_to_all group size: {}, all_to_all rate: {}", group_size, rate_sum / (group_size - 1) as u64);
+            let root = format!("host_{}", root_index);
+            for i in 0..n {
+                if i == root_index { continue; }
+
+                let sender = format!("host_{}", i);
+                let fwd_rate_i = get_fwd_rate(vcluster, i, group_size).val();
+
+                let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
+                let flow1 = Flow::new(size_i, &root, &sender, None);
+                all_to_all_flows.push(flow1);
+
+                for j in 0..n {
+                    if j == i || j == root_index { continue; }
+                    let receiver = format!("host_{}", j);
+                    let flow2 = Flow::new(size_i, &sender, &receiver, None);
+                    all_to_all_flows.push(flow2);
                 }
+            }
 
-                assert_eq!(found, 1);
-
-                log::warn!("old: {:?}", flow);
-                log::warn!("new 1: {:?}", flow1);
-                log::warn!("new 2: {:?}", flow2);
-                log::warn!("new 3: {:?}", flow3);
-                log::warn!("new 4: {:?}", flow4);
-
-                new_flows.push(flow2);
-                new_flows.push(flow4);
+            let root_tx = get_up_bw(vcluster, root_index).val();
+            if root_tx > rate_sum / (group_size - 1) as u64 {
+                // it's not an error here, just want it to be highlighted
+                log::error!("{} vs {}", root_tx, rate_sum / (group_size - 1) as u64);
             }
         }
 
+        for af in all_to_all_flows {
+            let mut found = false;
+            for f in &mut new_flows {
+                if f.src == af.src && f.dst == af.dst {
+                    f.bytes = af.bytes;
+                    found = true;
+                }
+            }
+            if !found {
+                new_flows.push(af);
+            }
+        }
+
+        // for flow in &flows {
+        //     let sender = flow.src.clone();
+        //     let receiver = flow.dst.clone();
+
+        //     if *width.get(&sender).unwrap_or(&0) == 1 && *width.get(&receiver).unwrap_or(&0) == 0 {
+        //         // combine the two nodes
+        //         let bw1 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&sender))]
+        //             .bandwidth
+        //             .val();
+        //         let bw2 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&receiver))]
+        //             .bandwidth
+        //             .val();
+        //         let k = bw1 as f64 / bw2 as f64;
+        //         assert!(k >= 1.0, "bw1: {}, bw2: {}", bw1, bw2);
+
+        //         let p = parent[&sender].clone();
+        //         // modify the flow from the parent to sender
+        //         let flow1 = Flow::new((size as f64 / (k + 1.) * k) as usize, &p, &sender, None);
+        //         let flow2 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &p, &receiver, None);
+        //         let flow3 = Flow::new(
+        //             (size as f64 / (k + 1.) * k) as usize,
+        //             &sender,
+        //             &receiver,
+        //             None,
+        //         );
+        //         let flow4 = Flow::new(
+        //             (size as f64 / (k + 1.) * 1.) as usize,
+        //             &receiver,
+        //             &sender,
+        //             None,
+        //         );
+
+        //         let mut found = 0;
+        //         for f in &mut new_flows {
+        //             if f.src == flow1.src && f.dst == flow1.dst {
+        //                 f.bytes = flow1.bytes;
+        //                 found += 1;
+        //             }
+        //         }
+
+        //         assert_eq!(found, 1);
+
+        //         let mut found = 0;
+        //         for f in &mut new_flows {
+        //             if f.src == flow3.src && f.dst == flow3.dst {
+        //                 f.bytes = flow3.bytes;
+        //                 found += 1;
+        //             }
+        //         }
+
+        //         assert_eq!(found, 1);
+
+        //         log::warn!("old: {:?}", flow);
+        //         log::warn!("new 1: {:?}", flow1);
+        //         log::warn!("new 2: {:?}", flow2);
+        //         log::warn!("new 3: {:?}", flow3);
+        //         log::warn!("new 4: {:?}", flow4);
+
+        //         new_flows.push(flow2);
+        //         new_flows.push(flow4);
+        //     }
+        // }
+
         // calculate min(min_rx, source_tx)
         let min_rx = (0..vcluster.num_hosts()).filter(|&x| x != root_index).map(|i| {
-            let host_name = format!("host_{}", i);
-            let host_ix = vcluster.get_node_index(&host_name);
-            let rx_bw = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(host_ix))].bandwidth;
-            rx_bw
+            get_down_bw(vcluster, i)
         }).min().unwrap_or(nethint::bandwidth::MAX);
 
-        let source_tx = {
-            let host_name = format!("host_{}", root_index);
-            let host_ix = vcluster.get_node_index(&host_name);
-            let tx_bw = vcluster[vcluster.get_uplink(host_ix)].bandwidth;
-            tx_bw
-        };
+        let source_tx = get_up_bw(vcluster, root_index);
 
         log::info!("min_rx: {}, source_tx: {}", min_rx, source_tx);
 
         let mut speed_bound = min_rx.val().min(source_tx.val());
-        let sender = format!("host_{}", root_index);
-        let receiver = format!("host_{}", (root_index + 1) % vcluster.num_hosts());
-        let rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(vcluster.get_node_index(&receiver)))].bandwidth;
-        let flow_rate = source_tx.val().min(rx.val());
         if ringlets.len() > 1 {
-            let rack_sender = format!("host_{}", ringlets[ringlets.len() - 2].1);
-            let tx_to_last_rack = vcluster[vcluster.get_uplink(vcluster.get_node_index(&rack_sender))].bandwidth;
+            let rack_sender = ringlets[ringlets.len() - 2].1;
+            let tx_to_last_rack = get_up_bw(vcluster, rack_sender);
             speed_bound = speed_bound.min(tx_to_last_rack.val());
         }
+        let sender = format!("host_{}", root_index);
+        let receiver = format!("host_{}", (root_index + 1) % vcluster.num_hosts());
+        let rx = get_down_bw(vcluster, (root_index + 1) % vcluster.num_hosts());
+        let flow_rate = source_tx.val().min(rx.val());
         let single_flow_of_optimal_bound = Flow::new((size as f64 * flow_rate as f64 / speed_bound as f64) as usize, &sender, &receiver, None);
         let single_flow = vec![single_flow_of_optimal_bound];
 
@@ -481,4 +553,26 @@ impl RatTree {
 
 
     }
+}
+
+#[inline]
+fn get_up_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
+    let host_name = format!("host_{}", host_id);
+    let host_ix = vc.get_node_index(&host_name);
+    vc[vc.get_uplink(host_ix)].bandwidth
+}
+
+#[inline]
+fn get_down_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
+    let host_name = format!("host_{}", host_id);
+    let host_ix = vc.get_node_index(&host_name);
+    vc[vc.get_reverse_link(vc.get_uplink(host_ix))].bandwidth
+}
+
+#[inline]
+fn get_fwd_rate(vc: &dyn Topology, host_id: usize, group_size: usize) -> Bandwidth {
+    let tx = get_up_bw(vc, host_id);
+    let rx = get_down_bw(vc, host_id);
+    let fwd_rate = std::cmp::min(tx, rx * (group_size - 1));
+    fwd_rate
 }
