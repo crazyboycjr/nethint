@@ -1,5 +1,5 @@
 use crate::RLAlgorithm;
-use nethint::{cluster::Topology, Flow, bandwidth::Bandwidth};
+use nethint::{cluster::{Topology, NodeIx}, Flow, bandwidth::Bandwidth};
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
@@ -159,7 +159,8 @@ fn compact_chain(
 }
 
 impl RatTree {
-    fn run_rl_traffic(
+    #[allow(dead_code)]
+    fn _run_rl_traffic(
         &mut self,
         root_index: usize,
         size: u64,
@@ -575,4 +576,125 @@ fn get_fwd_rate(vc: &dyn Topology, host_id: usize, group_size: usize) -> Bandwid
     let rx = get_down_bw(vc, host_id);
     let fwd_rate = std::cmp::min(tx, rx * (group_size - 1));
     fwd_rate
+}
+
+#[inline]
+fn get_fwd_rate2(vc: &dyn Topology, host_id: usize) -> Bandwidth {
+    let tx = get_up_bw(vc, host_id);
+    let rx = get_down_bw(vc, host_id);
+    let fwd_rate = std::cmp::min(tx, rx);
+    fwd_rate
+}
+
+fn group_by_key<T, K, F>(iter: impl Iterator<Item = T>, mut f: F) -> Vec<Vec<T>>
+where
+    F: FnMut(&T) -> K,
+    K: Ord,
+{
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<K, Vec<T>> = Default::default();
+    for i in iter {
+        let key = f(&i);
+        groups.entry(key).or_default().push(i);
+    }
+    groups.into_values().collect()
+}
+
+fn get_rack_ix(vcluster: &dyn Topology, rank: usize) -> NodeIx {
+    let host_name = format!("host_{}", rank);
+    let host_ix = vcluster.get_node_index(&host_name);
+    let rack_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
+    rack_ix
+}
+
+impl RatTree {
+    #[allow(dead_code)]
+    fn run_rl_traffic(
+        &mut self,
+        root_index: usize,
+        size: u64,
+        vc: &dyn Topology,
+    ) -> Vec<Flow> {
+
+        let n = vc.num_hosts();
+        let mut groups = group_by_key(0..n, |&i| get_rack_ix(vc, i));
+        let root_group_pos = groups.iter().position(|g| g.contains(&root_index)).unwrap();
+        groups.swap(0, root_group_pos);
+
+        // ranks of subroot
+        let sub_roots: Vec<usize> = groups.iter().map(|g| {
+            if g.contains(&root_index) {
+                root_index
+            } else {
+                g.iter().copied().max_by_key(|&rank| get_fwd_rate2(vc, rank)).unwrap()
+            }
+        }).collect();
+
+        let mut flows = Vec::new();
+        for (g, &sub_root) in groups.iter().zip(&sub_roots) {
+            let rate_sum: u64 = g.iter().filter(|&&i| i != sub_root).map(|&i| {
+                get_fwd_rate(vc, i, g.len() - 1).val()
+            }).sum();
+            let sub_root_s = format!("host_{}", sub_root);
+
+            for &i in g {
+                if i == sub_root {
+                    continue;
+                }
+
+                let sender = format!("host_{}", i);
+                let size_i = if g.len() == 2 {
+                    size as usize
+                } else {
+                    let fwd_rate_i = get_fwd_rate(vc, i, g.len() - 1).val();
+                    let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
+                    size_i
+                };
+
+                let flow1 = Flow::new(size_i, &sub_root_s, &sender, None);
+                flows.push(flow1);
+
+                for &j in g {
+                    if j == sub_root || j == i {
+                        continue;
+                    }
+
+                    let receiver = format!("host_{}", j);
+                    let flow2 = Flow::new(size_i, &sender, &receiver, None);
+                    flows.push(flow2);
+                }
+            }
+        }
+
+        let rate_sum: u64 = sub_roots.iter().filter(|&&i| i != root_index).map(|&i| {
+            get_fwd_rate2(vc, i).val()
+        }).sum();
+
+        let root = format!("host_{}", root_index);
+        for &i in &sub_roots {
+            if i == root_index {
+                continue;
+            }
+
+            let sender = format!("host_{}", i);
+            let fwd_rate_i = get_fwd_rate2(vc, i).val();
+            let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
+
+            let flow1 = Flow::new(size_i, &root, &sender, None);
+            flows.push(flow1);
+
+            for &j in &sub_roots {
+                if j == root_index || j == i {
+                    continue;
+                }
+
+                let receiver = format!("host_{}", j);
+                let flow2 = Flow::new(size_i, &sender, &receiver, None);
+                flows.push(flow2);
+            }
+        }
+
+        log::info!("flows: {:?}", flows);
+        flows
+    }
 }
