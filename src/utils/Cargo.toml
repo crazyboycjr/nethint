@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 log = "0.4.14"
 anyhow = "1.0.38"
+lazy_static = "1.4.0"

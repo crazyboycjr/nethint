@@ -107,7 +107,9 @@ impl<T> BackgroundFlowApp<T> {
                     }
                 }
             }
-            AppEventKind::NetHintResponse(..) | AppEventKind::Notification(_) => {
+            AppEventKind::NetHintResponse(..)
+            | AppEventKind::UserNotification(..)
+            | AppEventKind::AdapterNotification(..) => {
                 unreachable!();
             }
         }
@@ -185,7 +187,9 @@ impl<T> BackgroundFlowApp<T> {
                     }
                 }
             }
-            AppEventKind::NetHintResponse(..) | AppEventKind::Notification(_) => {
+            AppEventKind::NetHintResponse(..)
+            | AppEventKind::UserNotification(..)
+            | AppEventKind::AdapterNotification(..) => {
                 unreachable!();
             }
         }

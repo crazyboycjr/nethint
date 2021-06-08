@@ -407,6 +407,8 @@ impl AllReduceAlgorithm for RatAllReduce {
         };
 
         let mut rat_solver: CachedSolver<RatSolver<_>, _, _> = CachedSolver::new(generate_func);
+        // NOTE(cjr): use non-cached solver when testing controller overhead
+        // let mut rat_solver = RatSolver::new(generate_func);
         rat_solver.solve(&(0, size, vcluster))
     }
     // fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {

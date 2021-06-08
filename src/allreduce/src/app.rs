@@ -12,6 +12,8 @@ use crate::{
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
 };
 
+use utils::collector::OverheadCollector;
+
 pub struct AllReduceApp<'c> {
     job_spec: &'c JobSpec,
     cluster: Option<Rc<dyn Topology>>,
@@ -26,6 +28,7 @@ pub struct AllReduceApp<'c> {
     nethint_level: usize,
     autotune: Option<usize>,
     allreduce_algorithm: Option<Box<dyn AllReduceAlgorithm>>,
+    overhead_collector: OverheadCollector,
 }
 
 impl<'c> std::fmt::Debug for AllReduceApp<'c> {
@@ -61,6 +64,7 @@ impl<'c> AllReduceApp<'c> {
             nethint_level,
             autotune,
             allreduce_algorithm: None,
+            overhead_collector: Default::default(),
         }
     }
 
@@ -144,7 +148,14 @@ impl<'c> Application for AllReduceApp<'c> {
                     // since we have the cluster, start and schedule the app again
                     let start_time = self.iteration_start
                         + self.computation_time.max(event.ts - self.iteration_start);
+
+                    let start = std::time::Instant::now();
                     self.allreduce(start_time);
+                    let end = std::time::Instant::now();
+                    let overhead = end - start;
+                    // print controller overhead to job scale
+                    self.overhead_collector.collect(overhead, self.job_spec.num_workers);
+
                     return self
                         .replayer
                         .on_event(AppEvent::new(start_time, AppEventKind::AppStart));

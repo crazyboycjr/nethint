@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
-    background_flow_hard::{BackgroundFlowHard, search_zipf_exp},
+    background_flow_hard::{search_zipf_exp, BackgroundFlowHard},
     bandwidth::{self, Bandwidth, BandwidthTrait},
     brain::{Brain, TenantId},
     cluster::{Cluster, Link, LinkIx, Route, RouteHint, Topology},
@@ -21,6 +21,7 @@ use crate::{
 };
 use crate::{
     Duration, FairnessModel, Flow, SharingMode, Timestamp, ToStdDuration, Token, Trace, TraceRecord,
+    TIMER_ID,
 };
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
@@ -254,9 +255,9 @@ impl Simulator {
         unimplemented!();
     }
 
-    fn register_once(&mut self, next_ready: Timestamp, token: Token) {
+    fn register_once(&mut self, next_ready: Timestamp, token: Option<Token>, timer_id: Option<TimerId>) {
         self.timers
-            .push(Box::new(OnceTimer::new(next_ready, token)));
+            .push(Box::new(OnceTimer::new(next_ready, token, timer_id)));
     }
 
     #[inline]
@@ -534,7 +535,12 @@ impl Simulator {
                         let once_timer = timer.as_any().downcast_ref::<OnceTimer>().unwrap();
                         debug!("{:?}", once_timer);
                         let token = once_timer.token;
-                        break AppEventKind::Notification(token);
+                        let timer_id = once_timer.timer_id;
+                        if timer_id.is_some() {
+                            break AppEventKind::AdapterNotification(token, timer_id.unwrap());
+                        } else {
+                            break AppEventKind::UserNotification(token);
+                        }
                     }
                 }
             }
@@ -635,8 +641,14 @@ impl<'a> Executor<'a> for Simulator {
                         );
                         new_events.append(app.on_event(app_event!(response)));
                     }
-                    Event::RegisterTimer(after_dura, token) => {
-                        self.register_once(self.ts + after_dura, token);
+                    Event::AdapterRegisterTimer(after_dura, token, timer_id) => {
+                        self.register_once(self.ts + after_dura, token, Some(timer_id));
+                    }
+                    Event::UserRegisterTimer(after_dura, token) => {
+                        // panic!("currently we do not support user app directly register this 
+                        //         kind of timer, considering save and restore the token 
+                        //         just like stored_flow_token");
+                        self.register_once(self.ts + after_dura, token, None);
                     }
                 }
             }
@@ -1078,6 +1090,27 @@ impl std::cmp::Ord for FlowState {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct TimerId(pub usize);
+
+impl TimerId {
+    pub fn new() -> TimerId {
+        TimerId(TIMER_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+    }
+}
+
+impl From<usize> for TimerId {
+    fn from(val: usize) -> TimerId {
+        TimerId(val)
+    }
+}
+
+impl From<TimerId> for usize {
+    fn from(val: TimerId) -> usize {
+        val.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     /// Application notifies the simulator with the arrival of a set of flows.
@@ -1089,7 +1122,11 @@ pub enum Event {
     NetHintRequest(usize, TenantId, NetHintVersion, usize),
     /// A Timer event is registered by Application. It notifies the application after duration ns.
     /// Token is used to identify the timer.
-    RegisterTimer(Duration, Token),
+    // RegisterTimer(Duration, Option<Token>, TimerId),
+    AdapterRegisterTimer(Duration, Option<Token>, TimerId),
+    /// This kind of events only faces to the user apps, and it will be
+    /// translated into and from `AdapterRegisterTimer`.
+    UserRegisterTimer(Duration, Option<Token>),
 }
 
 /// Iterator of Event
