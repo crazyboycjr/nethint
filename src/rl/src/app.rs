@@ -8,12 +8,13 @@ use nethint::{
 use std::rc::Rc;
 
 use crate::{
-    random_ring::RandomTree, rat::RatTree, topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm,
-    RLPolicy,
+    contraction::Contraction, random_ring::RandomTree, rat::RatTree,
+    topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
-pub struct RLApp<'c> {
-    job_spec: &'c JobSpec,
+pub struct RLApp {
+    root_index_modifed: bool,
+    job_spec: JobSpec,
     cluster: Option<Rc<dyn Topology>>,
     replayer: Replayer,
     jct: Option<Duration>,
@@ -25,15 +26,15 @@ pub struct RLApp<'c> {
     autotune: Option<usize>,
 }
 
-impl<'c> std::fmt::Debug for RLApp<'c> {
+impl std::fmt::Debug for RLApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "RLApp")
     }
 }
 
-impl<'c> RLApp<'c> {
+impl RLApp {
     pub fn new(
-        job_spec: &'c JobSpec,
+        job_spec: &JobSpec,
         cluster: Option<Rc<dyn Topology>>,
         seed: u64,
         rl_policy: RLPolicy,
@@ -42,7 +43,8 @@ impl<'c> RLApp<'c> {
     ) -> Self {
         let trace = Trace::new();
         RLApp {
-            job_spec,
+            root_index_modifed: false,
+            job_spec: job_spec.clone(),
             cluster,
             replayer: Replayer::new(trace),
             jct: None,
@@ -66,6 +68,7 @@ impl<'c> RLApp<'c> {
         let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.rl_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
+            RLPolicy::Contraction => Box::new(Contraction::new(self.seed)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
         };
 
@@ -87,16 +90,40 @@ impl<'c> RLApp<'c> {
     }
 
     fn request_nethint(&self) -> Events {
+        // COMMENT(cjr): here in simulation, we request hintv2 in any case so as to pick the root_index
+        // with the node of maximal sending rate
         match self.nethint_level {
-            0 => Event::NetHintRequest(0, 0, NetHintVersion::V1, 2).into(),
-            1 => Event::NetHintRequest(0, 0, NetHintVersion::V1, 2).into(),
+            0 => Event::NetHintRequest(0, 0, NetHintVersion::V2, 2).into(),
+            1 => Event::NetHintRequest(0, 0, NetHintVersion::V2, 2).into(),
             2 => Event::NetHintRequest(0, 0, NetHintVersion::V2, 2).into(),
             _ => panic!("unexpected nethint_level: {}", self.nethint_level),
         }
     }
+
+    fn adjust_root_index(&mut self, vc: Rc<dyn Topology>) {
+        if !self.root_index_modifed {
+            let max_node = (0..vc.num_hosts())
+                .map(|i| {
+                    let hostname = format!("host_{}", i);
+                    let host_ix = vc.get_node_index(&hostname);
+                    (i, vc[vc.get_uplink(host_ix)].bandwidth)
+                })
+                .max_by_key(|x| x.1);
+            let orig = self.job_spec.root_index;
+            if let Some(max_node) = max_node {
+                self.job_spec.root_index = max_node.0;
+            }
+            self.root_index_modifed = true;
+            log::info!(
+                "root_index original: {}, modified to: {}",
+                orig,
+                self.job_spec.root_index
+            );
+        }
+    }
 }
 
-impl<'c> Application for RLApp<'c> {
+impl Application for RLApp {
     type Output = Option<Duration>;
     fn on_event(&mut self, event: AppEvent) -> Events {
         if self.cluster.is_none() {
@@ -112,6 +139,9 @@ impl<'c> Application for RLApp<'c> {
                         "nethint response: {}",
                         self.cluster.as_ref().unwrap().to_dot()
                     );
+                    // reset the root_index
+                    let vc = Rc::clone(self.cluster.as_ref().unwrap());
+                    self.adjust_root_index(vc);
                     // since we have the cluster, start and schedule the app again
                     self.rl_traffic(event.ts);
                     return self

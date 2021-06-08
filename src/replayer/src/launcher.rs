@@ -5,7 +5,6 @@
 // 192.168.211.6:22
 // $ rplaunch -f hostfile -n jobname -o output --controller-uri 192.168.211.3:9000 --controller-ssh
 // 192.168.211.3
-#![feature(str_split_once)]
 #![feature(command_access)]
 
 use std::process::Command;

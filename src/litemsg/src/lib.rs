@@ -1,5 +1,3 @@
-#![feature(option_unwrap_none)]
-#![feature(str_split_once)]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
@@ -218,9 +216,9 @@ pub fn connect_peers(
                                 addr: node.addr,
                                 port: 0,
                             };
-                            passive_peers.insert(renamed_node, stream).unwrap_none();
+                            passive_peers.insert(renamed_node, stream).ok_or(()).unwrap_err();
                         } else {
-                            passive_peers.insert(node, stream).unwrap_none();
+                            passive_peers.insert(node, stream).ok_or(()).unwrap_err();
                         }
                     }
                     _ => panic!("unexpected cmd: {:?}", cmd),
@@ -235,7 +233,7 @@ pub fn connect_peers(
 
         utils::send_cmd_sync(&mut peer, &command::Command::AddNodePeer(my_node.clone()))?;
 
-        active_peers.insert(node.clone(), peer).unwrap_none();
+        active_peers.insert(node.clone(), peer).ok_or(()).unwrap_err();
 
         // everyone also connects to itself
         if node == my_node {

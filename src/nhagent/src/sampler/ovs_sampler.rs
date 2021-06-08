@@ -274,7 +274,8 @@ impl OvsSampler {
             for (eth, vnodename) in local_eth_table.iter() {
                 vnode_counter
                     .insert(eth.to_owned(), CounterUnit::new(vnodename))
-                    .unwrap_none();
+                    .ok_or(())
+                    .unwrap_err();
             }
 
             for ovs_flow in ovs_flows {
@@ -405,7 +406,7 @@ pub fn get_local_eth_table() -> anyhow::Result<HashMap<EthAddr, String>> {
             let vfid: u64 = tokens[1].parse().unwrap();
             let eth_str = tokens[3];
             let eth: EthAddr = eth_str.parse()?;
-            local_eth_table.insert(eth, vfid.to_string()).unwrap_none();
+            local_eth_table.insert(eth, vfid.to_string()).ok_or(()).unwrap_err();
         }
     }
 

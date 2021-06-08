@@ -1,7 +1,7 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 50
+ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
@@ -10,16 +10,18 @@ ncases = 50
 # job_size_distribution = [[40, 4], [40, 8], [20, 12], [20, 16]]
 # job_size_distribution = [[40, 32], [40, 64]]
 job_size_distribution = [[40, 4], [40, 8], [40, 12]]
+# job_size_distribution = [[40, 6]]
+# job_size_distribution = [[40, 6], [40, 12]]
 
 # Buffer size of all jobs, in bytes
-buffer_size = 1000_000_000
+buffer_size = 100_000_000
 
 # Number of iterations for all jobs
 num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
 # poisson_lambda = 8_000_000_000.0
-poisson_lambda = 8_00_000_000.0
+poisson_lambda = 8_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -40,22 +42,29 @@ policy = "Random"
 probe = { enable = false }
 nethint_level = 2
 
-[[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = true, round_ms = 10 }
-nethint_level = 1
+# [[batch]]
+# policy = "TopologyAware" # which is ring
+# probe = { enable = true, round_ms = 10 }
+# nethint_level = 1
+# 
+# [[batch]]
+# policy = "TopologyAware" # which is ring
+# probe = { enable = false }
+# nethint_level = 1
 
 [[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = false }
-nethint_level = 1
+policy = "RAT"
+probe = { enable = true, round_ms = 10 }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 1
 
 [[batch]]
 policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 10
+auto_tune = 1
 
 [simulator]
 nethint = true
@@ -65,7 +74,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1_00_000_000, probability = 1.0, amplitude = 9, average_load = 0.3 }
+background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

@@ -14,7 +14,7 @@ buffer_size = 100_000_000
 
 # computation_speed is used to present the relationship between buffer_size and computation time
 # computation_time = buffer_size*computation_speed
-computation_speed = 0.1
+# computation_speed = 0.1
 
 # Number of iterations for all jobs
 num_iterations = 10
@@ -61,7 +61,7 @@ policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 1
+auto_tune = 10
 
 [simulator]
 nethint = true

@@ -459,6 +459,7 @@ impl Estimator for SimpleEstimator {
         app_hint: usize, // hint from app, 0 for mapreduce, 1 for allreduce, it's a dirty hack
     ) -> NetHintV2 {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
+        log::info!("estimate_v2: {}", vcluster.to_dot());
 
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {

@@ -1,5 +1,3 @@
-#![feature(option_unwrap_none)]
-#![feature(map_into_keys_values)]
 use serde::{Serialize, Deserialize};
 
 pub mod argument;
@@ -7,10 +5,10 @@ pub mod argument;
 pub mod app;
 
 pub mod random_ring;
-
 pub mod topology_aware;
-
 pub mod rat;
+pub mod contraction;
+
 pub mod config;
 
 use nethint:: {
@@ -41,6 +39,7 @@ impl JobSpec {
 pub enum RLPolicy {
     Random,
     TopologyAware,
+    Contraction,
     /// Resilient Aggregation Tree
     RAT,
 }
