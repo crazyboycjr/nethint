@@ -40,29 +40,31 @@ probe = { enable = false }
 nethint_level = 0
 
 [[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = true, round_ms = 10 }
-nethint_level = 1
+policy = "RAT"
+probe = { enable = true, round_ms = 100 }
+nethint_level = 2
+auto_tune = 1
 
 [[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = false }
-nethint_level = 1
+policy = "RAT"
+probe = { enable = true, round_ms = 100 }
+nethint_level = 2
+auto_tune = 100
 
 [[batch]]
 policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 10
+auto_tune = 1
 
 [simulator]
 nethint = true
 sample_interval_ns = 100_000_000 # 100ms
 loopback_speed = 400
 # possible values of fairness model are "PerFlowMaxMin", "PerVmPairMaxMin", and "TenantFlowMaxMin"
-fairness = "TenantFlowMaxMin"
-# fairness = "PerFlowMaxMin"
+# fairness = "TenantFlowMaxMin"
+fairness = "PerFlowMaxMin"
 
 # background_flow_hard = { enable = true, frequency_ns = 1_000_000_000, probability = 0.1, amplitude = 1 }
 background_flow_hard = { enable = false }
