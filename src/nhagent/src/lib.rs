@@ -1,6 +1,4 @@
-#![feature(str_split_once)]
 #![feature(command_access)]
-#![feature(map_into_keys_values)]
 
 pub mod cluster;
 pub mod sampler;

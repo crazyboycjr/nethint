@@ -1,16 +1,13 @@
-use lpsolve;
-use std::{
-    collections::{BTreeMap, HashMap},
-    str::from_utf8,
-};
+use std::collections::HashMap;
 
 use crate::AllReduceAlgorithm;
 use nethint::{
-    bandwidth::{BandwidthTrait, Bandwidth},
-    cluster::{Link, LinkIx, Topology, helpers::*},
+    bandwidth::BandwidthTrait,
+    cluster::{helpers::*, Link, LinkIx, Topology},
     Flow,
 };
 
+use rat_solver::{CachedSolver, RatSolver, Solver};
 use utils::algo::*;
 
 #[derive(Debug, Default)]
@@ -385,7 +382,7 @@ mod tests {
 
         let mut buffer = Vec::new();
         lp.write_lp(&mut buffer);
-        let problem_str = from_utf8(&buffer).unwrap();
+        let problem_str = std::str::from_utf8(&buffer).unwrap();
         println!("{}", problem_str);
 
         let status = lp.solve();
@@ -398,235 +395,38 @@ mod tests {
     }
 }
 
-fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
-    let n = vcluster.num_hosts();
-    let mut lp = lpsolve::Problem::new(0, tree_set.len() as i32 + 1).unwrap();
-
-    // set verbosity
-    unsafe {
-        lpsolve_sys::set_verbose(lp.to_lprec(), lpsolve::Verbosity::Critical as i32);
-    }
-
-    // host level constraints
-    // let bw: Vec<_> = (0..n)
-    //     .map(|i| {
-    //         let host_name = format!("host_{}", i);
-    //         let host_ix = vcluster.get_node_index(&host_name);
-    //         std::cmp::min(
-    //             vcluster[vcluster.get_uplink(host_ix)].bandwidth.val(),
-    //             vcluster[vcluster.get_reverse_link(vcluster.get_uplink(host_ix))]
-    //                 .bandwidth
-    //                 .val(),
-    //         ) as f64
-    //     })
-    //     .collect();
-
-    // let mut deg = vec![vec![0.; tree_set.len() + 1]; n];
-    // for (k, tree) in tree_set.iter().enumerate() {
-    //     for node in &tree.nodes {
-    //         let r = node.rank;
-    //         deg[r][k + 1] = (node.children.len() + node.parent.iter().len()) as f64;
-    //     }
-    // }
-    let mut in_deg = vec![vec![0.; tree_set.len() + 1]; n];
-    let mut out_deg = vec![vec![0.; tree_set.len() + 1]; n];
-    for (k, tree) in tree_set.iter().enumerate() {
-        for e in tree.all_edges() {
-            let p = tree[e].from();
-            let n = tree[e].to();
-            in_deg[tree[n].rank()][k + 1] += 1.0;
-            out_deg[tree[p].rank()][k + 1] += 1.0;
-        }
-    }
-
-    // rack level constraints
-    let r = vcluster.num_switches() - 1;
-    let mut rack_in_deg = vec![vec![0.; tree_set.len() + 1]; r];
-    let mut rack_out_deg = vec![vec![0.; tree_set.len() + 1]; r];
-
-    for (k, tree) in tree_set.iter().enumerate() {
-        for e in tree.all_edges() {
-            // p -> p_rack_id -> cloud -> n_rack_id -> n
-            let p = tree[e].from();
-            let n = tree[e].to();
-            let n_rack_id = get_rack_id(vcluster, get_rack_ix(vcluster, tree[n].rank()));
-            let p_rack_id = get_rack_id(vcluster, get_rack_ix(vcluster, tree[p].rank()));
-            if n_rack_id != p_rack_id {
-                // cross rack
-                rack_in_deg[n_rack_id][k + 1] += 1.0;
-                rack_out_deg[p_rack_id][k + 1] += 1.0;
-            }
-        }
-    }
-    // let rack_bw: Vec<_> = (0..r)
-    //     .map(|i| {
-    //         let tor_name = format!("tor_{}", i);
-    //         let tor_ix = vcluster.get_node_index(&tor_name);
-    //         // allreduce tasks has symmetric bi-directional traffic
-    //         std::cmp::min(
-    //             vcluster[vcluster.get_uplink(tor_ix)].bandwidth.val(),
-    //             vcluster[vcluster.get_reverse_link(vcluster.get_uplink(tor_ix))]
-    //                 .bandwidth
-    //                 .val(),
-    //         ) as f64
-    //     })
-    //     .collect();
-    // let mut rack_deg = vec![vec![0.; tree_set.len() + 1]; r];
-
-    // let groups = group_by_key(0..n, |&i| get_rack_ix(vcluster, i));
-    // let mut rank_to_rack_id: BTreeMap<usize, usize> = Default::default();
-    // for (_i, group) in groups.into_iter().enumerate() {
-    //     let host_ix = vcluster.get_node_index(&format!("host_{}", group[0]));
-    //     let tor_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
-    //     let rack_id: usize = vcluster[tor_ix]
-    //         .name
-    //         .strip_prefix("tor_")
-    //         .unwrap()
-    //         .parse()
-    //         .unwrap();
-    //     for rank in group {
-    //         rank_to_rack_id.insert(rank, rack_id).ok_or(()).unwrap_err();
-    //     }
-    // }
-    // for (k, tree) in tree_set.iter().enumerate() {
-    //     for n in tree.iter() {
-    //         let my_rack_id = rank_to_rack_id[&tree[n].rank];
-    //         if let Some(p) = tree[n].parent {
-    //             if rank_to_rack_id[&tree[p].rank] != my_rack_id {
-    //                 rack_deg[my_rack_id][k + 1] += 1.0;
-    //             }
-    //         }
-    //         for &child in &tree[n].children {
-    //             let child_rank = tree[child].rank;
-    //             if rank_to_rack_id[&child_rank] != my_rack_id {
-    //                 rack_deg[my_rack_id][k + 1] += 1.0;
-    //             }
-    //         }
-    //     }
-    // }
-
-    // minimize y
-    let mut obj_func = vec![0.; tree_set.len() + 1];
-    obj_func.push(1.);
-    lp.set_objective_function(&obj_func);
-
-    macro_rules! add_flow_constraint {
-        ($mdeg:expr, $get_bw_func:expr) => {
-            for (i, deg) in $mdeg.iter().enumerate() {
-                let mut constraint = deg.clone();
-                let bw = $get_bw_func(vcluster, i).val() as f64;
-                // be careful about the precision issues of the underlying LP solver
-                constraint.push(-1.0 * bw / size as f64);
-                lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
-            }
-        };
-    }
-    if tree_set.iter().all(|t| !t.is_directed()) {
-        fn get_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
-            std::cmp::min(get_down_bw(vc, host_id), get_up_bw(vc, host_id))
-        }
-        fn get_rack_bw(vc: &dyn Topology, rack_id: usize) -> Bandwidth {
-            std::cmp::min(get_rack_down_bw(vc, rack_id), get_rack_up_bw(vc, rack_id))
-        }
-        // in_deg and out_deg should be identical
-        add_flow_constraint!(in_deg, get_bw);
-        add_flow_constraint!(rack_in_deg, get_rack_bw);
-    } else {
-        add_flow_constraint!(in_deg, get_down_bw);
-        add_flow_constraint!(out_deg, get_up_bw);
-        add_flow_constraint!(rack_in_deg, get_rack_down_bw);
-        add_flow_constraint!(rack_out_deg, get_rack_up_bw);
-    }
-
-
-    // // D is a degree matrix. D[i][k] is the degree of node i in kth aggregation tree.
-    // // Bw is a diagonal bandwidth matrix. Bw[i][i] = bw[i];
-    // // Bw^{-1} \cdot D \cdot \vec{w} <= \vec{y}
-    // for (i, deg) in deg.iter().enumerate() {
-    //     let mut constraint = deg.clone();
-    //     constraint.push(-1.0 * bw[i] / size as f64);
-    //     lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
-    // }
-
-    // // Dr is a degree matrix. Dr[i][k] is the degree of ToR i in kth aggregation tree.
-    // // Bwr is a diagonal bandwidth matrix. Bwr[i][i] = bw_rack[i];
-    // // Bwr^{-1} \cdot Dr \cdot \vec{w} <= \vec{y}
-    // for (i, deg) in rack_deg.iter().enumerate() {
-    //     let mut constraint = deg.clone();
-    //     constraint.push(-1.0 * rack_bw[i] / size as f64);
-    //     lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
-    // }
-
-    // w1 + w2 + ... wn = 1.0
-    let mut constraint = vec![1.; tree_set.len() + 1];
-    constraint.push(0.);
-    lp.add_constraint(&constraint, 1., lpsolve::ConstraintType::Eq);
-
-    // \vec{w} >= 0
-    for i in 0..tree_set.len() {
-        let mut constraint = vec![0.; tree_set.len() + 2];
-        constraint[i + 1] = 1.;
-        lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Ge);
-    }
-
-    let mut buffer = Vec::new();
-    lp.write_lp(&mut buffer);
-    let problem_str = from_utf8(&buffer).unwrap();
-    log::debug!("{}", problem_str);
-
-    let status = lp.solve();
-    assert_eq!(status, lpsolve::SolveStatus::Optimal);
-    log::debug!("status: {:?}", status);
-
-    let mut w = vec![0.; tree_set.len() + 1];
-    lp.get_solution_variables(&mut w);
-    log::debug!("weights: {:?}", w);
-
-    // adjust if w[i] < 0
-    w.into_iter().map(|x| x.max(0.)).collect()
-}
-
-fn construct_flows(tree_set: &[Tree], weights: &[f64], size: u64) -> Vec<Flow> {
-    let mut flows = Vec::new();
-
-    for (w, tree) in weights.into_iter().zip(tree_set) {
-        // traverse all edges in the tree
-        if w.abs() < 1e-10 {
-            continue;
-        }
-
-        for e in tree.all_edges() {
-            let p = tree[e].from();
-            let n = tree[e].to();
-            let sender = format!("host_{}", tree[p].rank());
-            let receiver = format!("host_{}", tree[n].rank());
-            let flow = Flow::new((size as f64 * w).floor() as usize, &sender, &receiver, None);
-            flows.push(flow);
-        }
-    }
-
-    flows
-}
-
 impl AllReduceAlgorithm for RatAllReduce {
     fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
-        if self.check_cache((size, vcluster)) {
-            return self.last_result.clone();
-        }
+        let generate_func = || -> Vec<Tree> {
+            vec![
+                generate_embeddings(vcluster, self.num_trees, construct_rat_offset),
+                generate_embeddings(vcluster, self.num_trees, construct_ps_offset),
+                // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
+            ]
+            .concat()
+        };
 
-        // let tree_set = generate_rats(vcluster, self.num_trees);
-        let tree_set = vec![
-            generate_embeddings(vcluster, self.num_trees, construct_rat_offset),
-            generate_embeddings(vcluster, self.num_trees, construct_ps_offset),
-            // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
-        ].concat();
-        // log::info!("tree_set: {:#?}", tree_set);
-        let weights = linear_programming(vcluster, &tree_set, size);
-        let flows  = construct_flows(&tree_set, &weights, size);
-
-        self.update_cache((size, vcluster), flows.clone());
-        self.last_result = flows.clone();
-
-        flows
+        let mut rat_solver: CachedSolver<RatSolver<_>, _, _> = CachedSolver::new(generate_func);
+        rat_solver.solve(&(0, size, vcluster))
     }
+    // fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+    //     if self.check_cache((size, vcluster)) {
+    //         return self.last_result.clone();
+    //     }
+
+    //     // let tree_set = generate_rats(vcluster, self.num_trees);
+    //     let tree_set = vec![
+    //         generate_embeddings(vcluster, self.num_trees, construct_rat_offset),
+    //         generate_embeddings(vcluster, self.num_trees, construct_ps_offset),
+    //         // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
+    //     ].concat();
+    //     // log::info!("tree_set: {:#?}", tree_set);
+    //     let weights = linear_programming(vcluster, &tree_set, size);
+    //     let flows  = construct_flows(&tree_set, &weights, size);
+
+    //     self.update_cache((size, vcluster), flows.clone());
+    //     self.last_result = flows.clone();
+
+    //     flows
+    // }
 }

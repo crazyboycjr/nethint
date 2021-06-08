@@ -25,6 +25,7 @@ dependencies = [
  "nethint",
  "rand 0.8.3",
  "rand_distr",
+ "rat_solver",
  "rayon",
  "serde",
  "structopt",
@@ -1223,6 +1224,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rat_solver"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "lpsolve",
+ "lpsolve-sys",
+ "nethint",
+ "utils",
+]
+
+[[package]]
 name = "rayon"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1313,12 +1325,11 @@ dependencies = [
  "lazy_static",
  "log",
  "logging",
- "lpsolve",
- "lpsolve-sys",
  "mapreduce",
  "nethint",
  "rand 0.8.3",
  "rand_distr",
+ "rat_solver",
  "rayon",
  "serde",
  "structopt",

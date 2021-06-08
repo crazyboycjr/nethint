@@ -1,5 +1,3 @@
-#![feature(map_into_keys_values)]
-
 use nethint::{
     background_flow_hard::BackgroundFlowHard,
     brain::{BrainSetting, PlacementStrategy},

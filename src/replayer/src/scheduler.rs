@@ -1,7 +1,6 @@
 // ./rplaunch --brain-uri 152.3.137.219:9000 --controller-ssh 192.168.211.35 --controller-uri 192.168.211.35:9000 --hostfile ~/hostfile --jobname allreduce --config ~/allreduce_single.toml
 
 // $ scheduler -n jobname -o jobs --brain-uri 152.3.137.219:9000 -c experiment.toml
-#![feature(str_split_once)]
 #![feature(command_access)]
 
 use std::process::Command;

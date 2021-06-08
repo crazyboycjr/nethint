@@ -1,0 +1,13 @@
+[package]
+name = "rat_solver"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+nethint = { path = "../nethint" }
+utils = { path = "../utils" }
+log = "0.4.14"
+lpsolve = "0.1.0"
+lpsolve-sys = "5.5.0"
