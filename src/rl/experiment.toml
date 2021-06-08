@@ -9,8 +9,8 @@ ncases = 30
 # job_size_distribution = [[40, 4], [40, 8], [40, 12]]
 # job_size_distribution = [[40, 4], [40, 8], [20, 12], [20, 16]]
 # job_size_distribution = [[40, 32], [40, 64]]
-# job_size_distribution = [[40, 4], [40, 8], [40, 12]]
-job_size_distribution = [[40, 6]]
+job_size_distribution = [[40, 4], [40, 8], [40, 12]]
+# job_size_distribution = [[40, 6]]
 # job_size_distribution = [[40, 6], [40, 12]]
 
 # Buffer size of all jobs, in bytes
@@ -42,22 +42,29 @@ policy = "Random"
 probe = { enable = false }
 nethint_level = 2
 
-[[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = true, round_ms = 10 }
-nethint_level = 1
+# [[batch]]
+# policy = "TopologyAware" # which is ring
+# probe = { enable = true, round_ms = 10 }
+# nethint_level = 1
+# 
+# [[batch]]
+# policy = "TopologyAware" # which is ring
+# probe = { enable = false }
+# nethint_level = 1
 
 [[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = false }
-nethint_level = 1
+policy = "RAT"
+probe = { enable = true, round_ms = 10 }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 1
 
 [[batch]]
 policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-# auto_tune = 10
+auto_tune = 1
 
 [simulator]
 nethint = true

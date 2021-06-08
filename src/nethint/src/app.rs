@@ -306,7 +306,8 @@ where
                             r.ts += start_off;
                             self.stored_flow_token
                                 .insert(r.flow.id, r.flow.token)
-                                .unwrap_none(); // store the token
+                                .ok_or(())
+                                .unwrap_err();
                             r.flow.token = Some(Token::encode(app_id));
                         });
                         Event::FlowArrive(recs).into()

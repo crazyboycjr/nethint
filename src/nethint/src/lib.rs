@@ -1,4 +1,3 @@
-#![feature(option_unwrap_none)]
 #![feature(option_zip)]
 #![feature(concat_idents)]
 

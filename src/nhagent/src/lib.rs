@@ -1,5 +1,4 @@
 #![feature(str_split_once)]
-#![feature(option_unwrap_none)]
 #![feature(command_access)]
 #![feature(map_into_keys_values)]
 

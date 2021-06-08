@@ -1,4 +1,3 @@
-#![feature(option_unwrap_none)]
 #![feature(new_uninit)]
 
 use std::collections::HashMap;

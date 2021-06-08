@@ -1,4 +1,3 @@
-#![feature(option_unwrap_none)]
 #![feature(map_into_keys_values)]
 
 use nethint::{
@@ -613,7 +612,8 @@ impl Handler {
             let l = pcluster.inner().get_reverse_link(*l);
             my_rack_traffic
                 .insert(l, self.traffic.get(&l).cloned().unwrap_or_default())
-                .unwrap_none();
+                .ok_or(())
+                .unwrap_err();
         }
         let my_rack_uplink = pcluster.inner().get_uplink(my_rack_ix);
         my_rack_traffic
@@ -624,7 +624,8 @@ impl Handler {
                     .cloned()
                     .unwrap_or_default(),
             )
-            .unwrap_none();
+            .ok_or(())
+            .unwrap_err();
         // 2. send to all other rack leaders
         let mut time_list = TimeList::new();
         if let Some(tr) = self.time_list_for_remote.get(timing::ON_COLLECTED) {

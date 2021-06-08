@@ -8,8 +8,8 @@ use nethint::{
 use std::rc::Rc;
 
 use crate::{
-    random_ring::RandomTree, rat::RatTree, topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm,
-    RLPolicy,
+    contraction::Contraction, random_ring::RandomTree, rat::RatTree,
+    topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
 pub struct RLApp {
@@ -68,6 +68,7 @@ impl RLApp {
         let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.rl_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
+            RLPolicy::Contraction => Box::new(Contraction::new(self.seed)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
         };
 
@@ -99,7 +100,7 @@ impl RLApp {
         }
     }
 
-    fn modify_root_index(&mut self, vc: Rc<dyn Topology>) {
+    fn adjust_root_index(&mut self, vc: Rc<dyn Topology>) {
         if !self.root_index_modifed {
             let max_node = (0..vc.num_hosts())
                 .map(|i| {
@@ -140,7 +141,7 @@ impl Application for RLApp {
                     );
                     // reset the root_index
                     let vc = Rc::clone(self.cluster.as_ref().unwrap());
-                    self.modify_root_index(vc);
+                    self.adjust_root_index(vc);
                     // since we have the cluster, start and schedule the app again
                     self.rl_traffic(event.ts);
                     return self

@@ -294,8 +294,9 @@ impl Brain {
 
         for link_ix in cluster.all_links() {
             if rng.gen_range(0.0..1.0) < probability {
-
-                if link_ix.index() % 2 == 0 { continue; }
+                if link_ix.index() % 2 == 0 {
+                    continue;
+                }
 
                 // integer overflow will only be checked in debug mode, so I should have detected an error here.
                 let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();
@@ -372,9 +373,7 @@ impl Brain {
         }
 
         let taken = self.used.values().map(|x| x.len()).sum::<usize>();
-        if taken + nhosts
-            > self.cluster.num_hosts() * self.setting.max_slots
-        {
+        if taken + nhosts > self.cluster.num_hosts() * self.setting.max_slots {
             return Err(Error::NoHost(
                 self.cluster.num_hosts() * self.setting.max_slots - taken,
                 nhosts,
@@ -423,7 +422,8 @@ impl Brain {
 
             self.vlink_to_plink
                 .insert((tenant_id, vlink_ix), plink_ix)
-                .unwrap_none();
+                .ok_or(())
+                .unwrap_err();
             self.plink_to_vlinks
                 .entry(plink_ix)
                 .or_insert_with(Vec::new)
@@ -433,7 +433,8 @@ impl Brain {
         // update tenant_id -> VirtCluster
         self.vclusters
             .insert(tenant_id, Rc::new(RefCell::new(vcluster)))
-            .unwrap_none();
+            .ok_or(())
+            .unwrap_err();
 
         Ok(ret)
     }
@@ -546,7 +547,7 @@ impl Brain {
                 let next = Self::find_next_slot(e, max_slots)
                     .unwrap_or_else(|| panic!("host_ix: {:?}, used: {:?}", host_ix, e));
                 e.push(next);
-                virt_to_vmno.insert(vhost_name.clone(), next).unwrap_none();
+                virt_to_vmno.insert(vhost_name.clone(), next).ok_or(()).unwrap_err();
             });
         }
 
@@ -555,7 +556,8 @@ impl Brain {
                 self.cluster().get_node_index("cloud"),
                 "virtual_cloud".to_owned(),
             )
-            .unwrap_none();
+            .ok_or(())
+            .unwrap_err();
 
         let virt_to_phys = host_alloc
             .into_iter()

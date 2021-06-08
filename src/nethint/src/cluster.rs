@@ -6,7 +6,7 @@ use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, EdgeIndices, Graph, NodeIndex},
 };
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::bandwidth::Bandwidth;
 use crate::brain::TenantId;
@@ -47,6 +47,34 @@ pub trait Topology:
     fn translate(&self, vname: &str) -> String;
     fn to_dot(&self) -> Dot<&Graph<Node, Link>>;
 }
+
+// We want to compare two topologies without some degree of tolerance.
+// it is inappropriate to implement this comparison as PartialEq.
+impl PartialEq for &dyn Topology {
+    fn eq(&self, other: &&dyn Topology) -> bool {
+        use crate::bandwidth::BandwidthTrait;
+
+        let dump: HashMap<LinkIx, Link> = self
+            .all_links()
+            .map(|link_ix| (link_ix, self[link_ix].clone()))
+            .collect();
+
+        other.all_links().all(|link_ix| {
+            let l1 = other[link_ix].clone();
+            if let Some(l2) = dump.get(&link_ix) {
+                let f = l1.bandwidth + 1.gbps() >= l2.bandwidth
+                    && l2.bandwidth + 1.gbps() >= l1.bandwidth;
+                if !f {
+                    log::debug!("l1: {}, l2: {}", l1, l2);
+                }
+                f
+            } else {
+                false
+            }
+        })
+    }
+}
+
 
 pub trait TopologyClone: Topology {
     fn into_box(&self) -> Box<dyn TopologyClone + '_>;
@@ -564,5 +592,66 @@ pub enum RouteHint<'a> {
 impl<'a> Default for RouteHint<'a> {
     fn default() -> Self {
         RouteHint::VirtAddr(None, None)
+    }
+}
+
+// helper functions
+pub mod helpers {
+    use super::*;
+
+    #[inline]
+    pub fn get_up_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
+        let host_name = format!("host_{}", host_id);
+        let host_ix = vc.get_node_index(&host_name);
+        vc[vc.get_uplink(host_ix)].bandwidth
+    }
+
+    #[inline]
+    pub fn get_down_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
+        let host_name = format!("host_{}", host_id);
+        let host_ix = vc.get_node_index(&host_name);
+        vc[vc.get_reverse_link(vc.get_uplink(host_ix))].bandwidth
+    }
+
+    #[inline]
+    pub fn get_rack_up_bw(vc: &dyn Topology, rack_id: usize) -> Bandwidth {
+        let host_name = format!("tor_{}", rack_id);
+        let tor_ix = vc.get_node_index(&host_name);
+        vc[vc.get_uplink(tor_ix)].bandwidth
+    }
+
+    #[inline]
+    pub fn get_rack_down_bw(vc: &dyn Topology, rack_id: usize) -> Bandwidth {
+        let host_name = format!("tor_{}", rack_id);
+        let tor_ix = vc.get_node_index(&host_name);
+        vc[vc.get_reverse_link(vc.get_uplink(tor_ix))].bandwidth
+    }
+
+    #[inline]
+    pub fn get_rack_ix(vc: &dyn Topology, host_id: usize) -> NodeIx {
+        let host_name = format!("host_{}", host_id);
+        let host_ix = vc.get_node_index(&host_name);
+        let rack_ix = vc.get_target(vc.get_uplink(host_ix));
+        rack_ix
+    }
+
+    #[inline]
+    pub fn get_host_id(vc: &dyn Topology, host_ix: NodeIx) -> usize {
+        vc[host_ix]
+            .name
+            .strip_prefix("host_")
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    #[inline]
+    pub fn get_rack_id(vc: &dyn Topology, rack_ix: NodeIx) -> usize {
+        vc[rack_ix]
+            .name
+            .strip_prefix("tor_")
+            .unwrap()
+            .parse()
+            .unwrap()
     }
 }

@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use rl::{
-    config::ProbeConfig, random_ring::RandomTree, rat::RatTree, topology_aware::TopologyAwareTree,
-    JobSpec, RLAlgorithm, RLPolicy,
+    config::ProbeConfig, contraction::Contraction, random_ring::RandomTree, rat::RatTree,
+    topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
 use nethint::{
@@ -237,6 +237,7 @@ impl RLApp {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, num_trees)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, num_trees)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
+            RLPolicy::Contraction => Box::new(Contraction::new(self.seed)),
         }
     }
 
@@ -289,9 +290,10 @@ impl RLApp {
         let niters = self
             .setting
             .auto_tune
-            .unwrap_or(self.job_spec.num_iterations).min(self.remaining_iterations);
+            .unwrap_or(self.job_spec.num_iterations)
+            .min(self.remaining_iterations);
         for (k, size) in matrix {
-        // for flow in flows {
+            // for flow in flows {
             // let size = flow.bytes;
             // let src_hostname = &self.vname_to_hostname[&flow.src];
             // let dst_hostname = &self.vname_to_hostname[&flow.dst];
@@ -402,7 +404,8 @@ impl RLApp {
             // for rl broadcast
             num_trees
         };
-        let mut demand_sum_bw = (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
+        let mut demand_sum_bw =
+            (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
         if demand_sum_bw > plink_capacity {
             demand_sum_bw = plink_capacity;
         }

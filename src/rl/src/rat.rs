@@ -1,6 +1,10 @@
 use crate::RLAlgorithm;
-use nethint::{cluster::{Topology, NodeIx}, Flow, bandwidth::Bandwidth};
-use std::collections::HashMap;
+use nethint::{
+    bandwidth::Bandwidth,
+    cluster::{helpers::*, Topology},
+    Flow,
+};
+use utils::algo::*;
 
 #[derive(Debug, Default)]
 pub struct RatTree {
@@ -24,560 +28,6 @@ impl RLAlgorithm for RatTree {
     }
 }
 
-#[allow(dead_code)]
-fn compact_chain(
-    chain: &mut Vec<usize>,
-    side_chain: &mut Vec<(usize, usize)>,
-    vcluster: &dyn Topology,
-) -> (usize, u64, u64) {
-    let name = format!("host_{}", chain[0]);
-    let node_ix = vcluster.get_node_index(&name);
-    let mut min_rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
-        .bandwidth
-        .val();
-    for x in chain.clone() {
-        let name = format!("host_{}", x);
-        let node_ix = vcluster.get_node_index(&name);
-        let rx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
-            .bandwidth
-            .val();
-        if rx < min_rx {
-            min_rx = rx;
-        }
-    }
-    let mut m = std::collections::HashMap::<usize, u64>::new();
-
-    if chain.len() > 2 {
-        let mut name = format!("host_{}", chain[chain.len() - 2]);
-        let mut node_ix = vcluster.get_node_index(&name);
-        let mut upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-
-        let mut old_chain_rate = std::cmp::min(upbandwidth, min_rx);
-
-        let mut name_l2 = format!("host_{}", chain[chain.len() - 3]);
-        let mut node_ix_l2 = vcluster.get_node_index(&name_l2);
-        let mut upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
-        let mut new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
-
-        while upbandwidth < min_rx {
-            let mut found = false;
-            for i in 0..chain.len() - 3 {
-                let name = format!("host_{}", chain[i]);
-                let node_ix = vcluster.get_node_index(&name);
-                let tx = vcluster[vcluster.get_reverse_link(vcluster.get_uplink(node_ix))]
-                    .bandwidth
-                    .val();
-
-                let mut oldrate = 0;
-                if m.contains_key(&chain[i]) {
-                    oldrate = m[&chain[i]];
-                }
-                log::trace!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
-
-                if tx - new_chain_rate > old_chain_rate + oldrate {
-                    side_chain.push((chain[i], chain[chain.len() - 1]));
-                    chain.pop();
-                    // log::error!("{} - {} > {}", tx, new_chain_rate, old_chain_rate);
-                    if !m.contains_key(&chain[i]) {
-                        m.insert(chain[i], 0);
-                    }
-                    *m.get_mut(&chain[i]).unwrap() += new_chain_rate;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                break;
-            }
-
-            if m.contains_key(&chain[chain.len() - 1]) {
-                break;
-            }
-
-            if chain.len() <= 2 {
-                break;
-            }
-
-            name = format!("host_{}", chain[chain.len() - 2]);
-            node_ix = vcluster.get_node_index(&name);
-            upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-
-            old_chain_rate = std::cmp::min(upbandwidth, min_rx);
-
-            name_l2 = format!("host_{}", chain[chain.len() - 3]);
-            node_ix_l2 = vcluster.get_node_index(&name_l2);
-            upbandwidth_l2 = vcluster[vcluster.get_uplink(node_ix_l2)].bandwidth.val();
-            new_chain_rate = std::cmp::min(upbandwidth_l2, min_rx);
-        }
-    }
-
-    let name = format!("host_{}", chain[0]);
-    let node_ix = vcluster.get_node_index(&name);
-    let first_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-    let last_tx = if chain.len() >= 2 {
-        let name = format!("host_{}", chain[chain.len() - 2]);
-        let node_ix = vcluster.get_node_index(&name);
-        let last_tx = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-        last_tx
-    } else {
-        u64::MAX
-    };
-    let chain_rate = std::cmp::min(std::cmp::min(first_tx, last_tx), min_rx);
-
-    let mut max_tx = 0;
-    let mut max_node = 0;
-    for i in 0..chain.len() {
-        let name = format!("host_{}", chain[i]);
-        let node_ix = vcluster.get_node_index(&name);
-        let mut upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-        let mut oldrate = 0;
-        if m.contains_key(&chain[i]) {
-            oldrate = m[&chain[i]];
-        }
-        upbandwidth -= oldrate;
-        if upbandwidth > max_tx {
-            if i != chain.len() - 1 {
-                max_tx = upbandwidth - chain_rate;
-            } else {
-                max_tx = upbandwidth;
-            }
-            max_node = chain[i].clone();
-        }
-    }
-
-    for (_x, y) in side_chain {
-        let name = format!("host_{}", y);
-        let node_ix = vcluster.get_node_index(&name);
-        let upbandwidth = vcluster[vcluster.get_uplink(node_ix)].bandwidth.val();
-        if upbandwidth > max_tx {
-            max_tx = upbandwidth;
-            max_node = y.clone();
-        }
-    }
-
-    (max_node, max_tx, min_rx)
-}
-
-impl RatTree {
-    #[allow(dead_code)]
-    fn _run_rl_traffic(
-        &mut self,
-        root_index: usize,
-        size: u64,
-        vcluster: &dyn Topology,
-    ) -> Vec<Flow> {
-        let mut ringlets = Vec::new();
-        let mut root_ringlet = (Vec::new(), 0, 0, 0);
-        let mut sidechains = Vec::new();
-        for i in 0..vcluster.num_switches() - 1 {
-            let mut ringlet = Vec::new();
-            let tor = format!("tor_{}", i);
-
-            let tor_upbandwidth = vcluster[vcluster.get_uplink(vcluster.get_node_index(&tor))]
-                .bandwidth
-                .val();
-
-            for link_ix in vcluster.get_downlinks(vcluster.get_node_index(&tor)) {
-                let h = vcluster.get_target(*link_ix);
-                let host_idx = vcluster[h]
-                    .name
-                    .strip_prefix("host_")
-                    .unwrap()
-                    .parse::<usize>()
-                    .unwrap();
-                ringlet.push(host_idx)
-            }
-
-            let pos = ringlet.iter().position(|x| *x == root_index);
-
-            if pos == None {
-                ringlet.sort_by_key(|x| {
-                    let name = format!("host_{}", x);
-                    let node_ix = vcluster.get_node_index(&name);
-                    vcluster[vcluster.get_uplink(node_ix)].bandwidth.val()
-                });
-
-                ringlet.reverse();
-
-                let mut side_chain = Vec::new();
-                let result = compact_chain(&mut ringlet, &mut side_chain, vcluster);
-                sidechains.append(&mut side_chain);
-                ringlets.push((
-                    ringlet,
-                    result.0,
-                    std::cmp::min(tor_upbandwidth, result.1),
-                    result.2,
-                ));
-            } else {
-                let pos = pos.unwrap();
-                ringlet.remove(pos);
-                ringlet.sort_by_key(|x| {
-                    let name = format!("host_{}", x);
-                    let node_ix = vcluster.get_node_index(&name);
-                    vcluster[vcluster.get_uplink(node_ix)].bandwidth.val()
-                });
-                ringlet.reverse();
-
-                ringlet.insert(0, root_index);
-                let mut side_chain = Vec::new();
-                let result = compact_chain(&mut ringlet, &mut side_chain, vcluster);
-                sidechains.append(&mut side_chain);
-                root_ringlet = (
-                    ringlet,
-                    result.0,
-                    std::cmp::min(tor_upbandwidth, result.1),
-                    result.2,
-                );
-            }
-        }
-
-        ringlets.sort_by_key(|x| x.2);
-        ringlets.reverse();
-        ringlets.insert(0, root_ringlet);
-
-        let mut min_rx = ringlets[0].2;
-        for (_ringlet, _out_node, _upbandwidth, rx) in &ringlets {
-            if rx < &min_rx {
-                min_rx = *rx;
-            }
-        }
-
-        let mut siderack = Vec::new();
-        let mut m = std::collections::HashMap::<usize, u64>::new();
-
-        if ringlets.len() > 2 {
-            let mut upbandwidth = ringlets[ringlets.len() - 2].2;
-            let mut current_rate = std::cmp::min(min_rx, upbandwidth);
-            let mut new_rate = std::cmp::min(min_rx, ringlets[ringlets.len() - 3].2);
-            while upbandwidth < min_rx {
-                let mut found = false;
-                for i in 0..ringlets.len() - 3 {
-                    let mut oldrate = 0;
-                    if m.contains_key(&i) {
-                        oldrate = m[&i];
-                    }
-                    if ringlets[i].2 - current_rate > new_rate + oldrate {
-                        siderack.push((i, ringlets[ringlets.len() - 1].clone()));
-                        ringlets.pop();
-
-                        if !m.contains_key(&i) {
-                            m.insert(i, 0);
-                        }
-                        *m.get_mut(&i).unwrap() += new_rate;
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    break;
-                }
-
-                if ringlets.len() < 3 {
-                    break;
-                }
-
-                if m.contains_key(&(ringlets.len() - 1)) {
-                    break;
-                }
-                upbandwidth = ringlets[ringlets.len() - 2].2;
-                current_rate = std::cmp::min(min_rx, upbandwidth);
-                new_rate = std::cmp::min(min_rx, ringlets[ringlets.len() - 3].2);
-            }
-            log::info!("new_rate: {}", new_rate);
-        }
-
-        let mut flows = Vec::new();
-
-        // let n = vcluster.num_hosts();
-
-        log::trace!("root_index: {}", root_index);
-        log::trace!("{:?}", ringlets);
-        log::trace!("{:?}", siderack);
-        log::trace!("{:?}", sidechains);
-
-        let mut width: HashMap<String, usize> = HashMap::new();
-        let mut parent: HashMap<String, String> = HashMap::new();
-
-        for i in 0..ringlets[0].0.len() - 1 {
-            let sender = format!("host_{}", ringlets[0].0[i]);
-            let receiver = format!("host_{}", ringlets[0].0[i + 1]);
-            let flow = Flow::new(size as usize, &sender, &receiver, None);
-            flows.push(flow);
-        }
-        let mut last_out = ringlets[0].1;
-        let mut j = 0;
-        for (ringlet, out_id, _upbandwidth, _min_rx) in &ringlets {
-            j += 1;
-            if j == 1 {
-                continue;
-            }
-            let sender = format!("host_{}", last_out);
-            let receiver = format!("host_{}", ringlet[0]);
-            let flow = Flow::new(size as usize, &sender, &receiver, None);
-            flows.push(flow);
-            for i in 0..ringlet.len() - 1 {
-                let sender = format!("host_{}", ringlet[i]);
-                let receiver = format!("host_{}", ringlet[i + 1]);
-                let flow = Flow::new(size as usize, &sender, &receiver, None);
-                flows.push(flow);
-            }
-            last_out = *out_id;
-        }
-
-        for (i, (ringlet, _out_id, _upbandwidth, _min_rx)) in siderack {
-            let sender = format!("host_{}", ringlets[i].1);
-            let receiver = format!("host_{}", ringlet[0]);
-            let flow = Flow::new(size as usize, &sender, &receiver, None);
-            flows.push(flow);
-            for x in 0..ringlet.len() - 1 {
-                let sender = format!("host_{}", ringlet[x]);
-                let receiver = format!("host_{}", ringlet[x + 1]);
-                let flow = Flow::new(size as usize, &sender, &receiver, None);
-                flows.push(flow);
-            }
-        }
-
-        for &(i, j) in &sidechains {
-            let sender = format!("host_{}", i);
-            let receiver = format!("host_{}", j);
-            let flow = Flow::new(size as usize, &sender, &receiver, None);
-            flows.push(flow);
-        }
-
-        if !std::env::var("RL_USE_NEW_ALGO")
-            .unwrap_or("false".into())
-            .to_lowercase()
-            .parse()
-            .unwrap_or(false)
-        {
-            return flows;
-        }
-
-        // build trees
-        for f in &flows {
-            let sender = f.src.clone();
-            let receiver = f.dst.clone();
-            *width.entry(sender.clone()).or_insert(0) += 1;
-            parent.insert(receiver, sender).unwrap_none();
-        }
-
-        // change original flow to new flows by `contraction`
-        let mut new_flows = flows.clone();
-        let mut all_to_all_flows = Vec::new();
-        if ringlets.len() > 1 {
-            // do it with the last ringlet
-            let ringlet = ringlets.last().unwrap().0.clone();
-            let group_size = ringlet.len();
-            let rate_sum: u64 = ringlet.iter().map(|&i| {
-                get_fwd_rate(vcluster, i, group_size).val()
-            }).sum();
-
-            log::info!("multiracks, all_to_all group size: {}, all_to_all rate: {}", group_size, rate_sum / (group_size - 1) as u64);
-            let last_sender = format!("host_{}", ringlets[ringlets.len() - 2].1);
-            for &i in &ringlet {
-                assert_ne!(i, root_index);
-
-                let sender = format!("host_{}", i);
-                let fwd_rate_i = get_fwd_rate(vcluster, i, group_size).val();
-
-                let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
-                let flow1 = Flow::new(size_i, &last_sender, &sender, None);
-                all_to_all_flows.push(flow1);
-
-                for &j in &ringlet {
-                    if j == i { continue; }
-                    let receiver = format!("host_{}", j);
-                    let flow2 = Flow::new(size_i, &sender, &receiver, None);
-                    all_to_all_flows.push(flow2);
-                }
-            }
-
-            let tx_to_last_rack = get_up_bw(vcluster, ringlets[ringlets.len() - 2].1).val();
-            if tx_to_last_rack > rate_sum / (group_size - 1) as u64 {
-                log::error!("{} vs {}", tx_to_last_rack, rate_sum / (group_size - 1) as u64);
-            }
-        } else {
-            let n = vcluster.num_hosts();
-            let group_size = n - 1;
-            let rate_sum: u64 = (0..n).filter(|&i| i != root_index).map(|i| {
-                get_fwd_rate(vcluster, i, group_size).val()
-            }).sum();
-
-            log::info!("all_to_all group size: {}, all_to_all rate: {}", group_size, rate_sum / (group_size - 1) as u64);
-            let root = format!("host_{}", root_index);
-            for i in 0..n {
-                if i == root_index { continue; }
-
-                let sender = format!("host_{}", i);
-                let fwd_rate_i = get_fwd_rate(vcluster, i, group_size).val();
-
-                let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
-                let flow1 = Flow::new(size_i, &root, &sender, None);
-                all_to_all_flows.push(flow1);
-
-                for j in 0..n {
-                    if j == i || j == root_index { continue; }
-                    let receiver = format!("host_{}", j);
-                    let flow2 = Flow::new(size_i, &sender, &receiver, None);
-                    all_to_all_flows.push(flow2);
-                }
-            }
-
-            let root_tx = get_up_bw(vcluster, root_index).val();
-            if root_tx > rate_sum / (group_size - 1) as u64 {
-                // it's not an error here, just want it to be highlighted
-                log::error!("{} vs {}", root_tx, rate_sum / (group_size - 1) as u64);
-            }
-        }
-
-        for af in all_to_all_flows {
-            let mut found = false;
-            for f in &mut new_flows {
-                if f.src == af.src && f.dst == af.dst {
-                    f.bytes = af.bytes;
-                    found = true;
-                }
-            }
-            if !found {
-                new_flows.push(af);
-            }
-        }
-
-        // for flow in &flows {
-        //     let sender = flow.src.clone();
-        //     let receiver = flow.dst.clone();
-
-        //     if *width.get(&sender).unwrap_or(&0) == 1 && *width.get(&receiver).unwrap_or(&0) == 0 {
-        //         // combine the two nodes
-        //         let bw1 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&sender))]
-        //             .bandwidth
-        //             .val();
-        //         let bw2 = vcluster[vcluster.get_uplink(vcluster.get_node_index(&receiver))]
-        //             .bandwidth
-        //             .val();
-        //         let k = bw1 as f64 / bw2 as f64;
-        //         assert!(k >= 1.0, "bw1: {}, bw2: {}", bw1, bw2);
-
-        //         let p = parent[&sender].clone();
-        //         // modify the flow from the parent to sender
-        //         let flow1 = Flow::new((size as f64 / (k + 1.) * k) as usize, &p, &sender, None);
-        //         let flow2 = Flow::new((size as f64 / (k + 1.) * 1.) as usize, &p, &receiver, None);
-        //         let flow3 = Flow::new(
-        //             (size as f64 / (k + 1.) * k) as usize,
-        //             &sender,
-        //             &receiver,
-        //             None,
-        //         );
-        //         let flow4 = Flow::new(
-        //             (size as f64 / (k + 1.) * 1.) as usize,
-        //             &receiver,
-        //             &sender,
-        //             None,
-        //         );
-
-        //         let mut found = 0;
-        //         for f in &mut new_flows {
-        //             if f.src == flow1.src && f.dst == flow1.dst {
-        //                 f.bytes = flow1.bytes;
-        //                 found += 1;
-        //             }
-        //         }
-
-        //         assert_eq!(found, 1);
-
-        //         let mut found = 0;
-        //         for f in &mut new_flows {
-        //             if f.src == flow3.src && f.dst == flow3.dst {
-        //                 f.bytes = flow3.bytes;
-        //                 found += 1;
-        //             }
-        //         }
-
-        //         assert_eq!(found, 1);
-
-        //         log::warn!("old: {:?}", flow);
-        //         log::warn!("new 1: {:?}", flow1);
-        //         log::warn!("new 2: {:?}", flow2);
-        //         log::warn!("new 3: {:?}", flow3);
-        //         log::warn!("new 4: {:?}", flow4);
-
-        //         new_flows.push(flow2);
-        //         new_flows.push(flow4);
-        //     }
-        // }
-
-        // calculate min(min_rx, source_tx)
-        let min_rx = (0..vcluster.num_hosts()).filter(|&x| x != root_index).map(|i| {
-            get_down_bw(vcluster, i)
-        }).min().unwrap_or(nethint::bandwidth::MAX);
-
-        let source_tx = get_up_bw(vcluster, root_index);
-
-        log::info!("min_rx: {}, source_tx: {}", min_rx, source_tx);
-
-        let mut speed_bound = min_rx.val().min(source_tx.val());
-        if ringlets.len() > 1 {
-            let rack_sender = ringlets[ringlets.len() - 2].1;
-            let tx_to_last_rack = get_up_bw(vcluster, rack_sender);
-            speed_bound = speed_bound.min(tx_to_last_rack.val());
-        }
-        let sender = format!("host_{}", root_index);
-        let receiver = format!("host_{}", (root_index + 1) % vcluster.num_hosts());
-        let rx = get_down_bw(vcluster, (root_index + 1) % vcluster.num_hosts());
-        let flow_rate = source_tx.val().min(rx.val());
-        let single_flow_of_optimal_bound = Flow::new((size as f64 * flow_rate as f64 / speed_bound as f64) as usize, &sender, &receiver, None);
-        let single_flow = vec![single_flow_of_optimal_bound];
-
-        if std::env::var("RL_BOUND")
-            .unwrap_or("false".into())
-            .to_lowercase()
-            .parse()
-            .unwrap_or(false)
-        {
-            return single_flow;
-        }
-
-        // if sidechains.len() >= 1 {
-        //     if let Ok(path) = std::env::var("NETHINT_RL_LOG_FILE") {
-        //         use std::io::{Seek, Write};
-        //         let mut f = std::fs::OpenOptions::new()
-        //             .write(true)
-        //             .create(true)
-        //             .open(path)
-        //             .unwrap();
-        //         f.seek(std::io::SeekFrom::End(0)).unwrap();
-        //         writeln!(f, "{:?}", sidechains).unwrap();
-        //     }
-        // }
-        log::info!("{:?}", new_flows);
-        new_flows
-
-
-    }
-}
-
-#[inline]
-fn get_up_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
-    let host_name = format!("host_{}", host_id);
-    let host_ix = vc.get_node_index(&host_name);
-    vc[vc.get_uplink(host_ix)].bandwidth
-}
-
-#[inline]
-fn get_down_bw(vc: &dyn Topology, host_id: usize) -> Bandwidth {
-    let host_name = format!("host_{}", host_id);
-    let host_ix = vc.get_node_index(&host_name);
-    vc[vc.get_reverse_link(vc.get_uplink(host_ix))].bandwidth
-}
-
-#[inline]
-fn get_fwd_rate(vc: &dyn Topology, host_id: usize, group_size: usize) -> Bandwidth {
-    let tx = get_up_bw(vc, host_id);
-    let rx = get_down_bw(vc, host_id);
-    let fwd_rate = std::cmp::min(tx, rx * (group_size - 1));
-    fwd_rate
-}
-
 #[inline]
 fn get_fwd_rate2(vc: &dyn Topology, host_id: usize) -> Bandwidth {
     let tx = get_up_bw(vc, host_id);
@@ -586,115 +36,508 @@ fn get_fwd_rate2(vc: &dyn Topology, host_id: usize) -> Bandwidth {
     fwd_rate
 }
 
-fn group_by_key<T, K, F>(iter: impl Iterator<Item = T>, mut f: F) -> Vec<Vec<T>>
-where
-    F: FnMut(&T) -> K,
-    K: Ord,
-{
-    use std::collections::BTreeMap;
-    let mut groups: BTreeMap<K, Vec<T>> = Default::default();
-    for i in iter {
-        let key = f(&i);
-        groups.entry(key).or_default().push(i);
+fn construct_rat_offset(
+    vc: &dyn Topology,
+    groups: &Vec<Vec<usize>>,
+    root_index: usize,
+    offset: usize,
+) -> Tree {
+    // the starting position of each group
+    let begin_pos: Vec<usize> = groups
+        .iter()
+        .scan(0, |state, g| {
+            let ret = *state;
+            *state += g.len();
+            Some(ret)
+        })
+        .collect();
+
+    let ranks: Vec<_> = groups.iter().flatten().copied().collect();
+    assert!(offset < ranks.len());
+    let root_rank = root_index;
+
+    // let mut tree = Tree::default();
+    let mut tree = Tree::new_directed();
+
+    // always ensure the root as the first node
+    let root = tree.push(Node::new(root_rank));
+
+    let mut sub_roots = Vec::new();
+
+    for (group, pos) in groups.iter().zip(begin_pos) {
+        assert!(!group.is_empty());
+        let first_rank = group[(offset + ranks.len() - pos) % group.len()];
+        // log::debug!("offset: {}, first_rank: {}, group: {:?}", offset, first_rank, group);
+
+        let sub_root = tree.push(Node::new(first_rank));
+        sub_roots.push(sub_root);
+        for i in 1..group.len() {
+            let r = group[(i + offset + ranks.len() - pos) % group.len()];
+            assert_ne!(r, first_rank);
+            assert_ne!(r, root_rank);
+            let tn = tree.push(Node::new(r));
+            tree.connect(sub_root, tn);
+        }
     }
-    groups.into_values().collect()
+
+    // chain all first ranks from highest forwarding rate to lowest forwarding rate
+    if !sub_roots.is_empty() {
+        let mut sub_root0 = sub_roots[0];
+        sub_roots.remove(0);
+        tree.connect(root, sub_root0);
+
+        sub_roots.sort_by_key(|&n| {
+            let r = tree[n].rank();
+            let fwdrate = get_fwd_rate2(vc, r);
+            std::cmp::Reverse(fwdrate)
+        });
+
+        for sr in sub_roots {
+            tree.connect(sub_root0, sr);
+            sub_root0 = sr;
+        }
+    }
+
+    tree
 }
 
-fn get_rack_ix(vcluster: &dyn Topology, rank: usize) -> NodeIx {
-    let host_name = format!("host_{}", rank);
-    let host_ix = vcluster.get_node_index(&host_name);
-    let rack_ix = vcluster.get_target(vcluster.get_uplink(host_ix));
-    rack_ix
-}
+fn generate_embeddings<F>(
+    vc: &dyn Topology,
+    root_index: usize,
+    num_trees_bound: usize,
+    construct_embedding_offset: F,
+) -> Vec<Tree>
+where
+    F: Fn(&dyn Topology, &Vec<Vec<usize>>, usize, usize) -> Tree,
+{
+    let n = vc.num_hosts();
 
-impl RatTree {
-    #[allow(dead_code)]
-    fn run_rl_traffic(
-        &mut self,
-        root_index: usize,
-        size: u64,
-        vc: &dyn Topology,
-    ) -> Vec<Flow> {
-
-        let n = vc.num_hosts();
+    let groups = {
+        // each group consists of the nodes within a rack
         let mut groups = group_by_key(0..n, |&i| get_rack_ix(vc, i));
+        // make the group contains the root_index the first group
         let root_group_pos = groups.iter().position(|g| g.contains(&root_index)).unwrap();
         groups.swap(0, root_group_pos);
-
-        // ranks of subroot
-        let sub_roots: Vec<usize> = groups.iter().map(|g| {
-            if g.contains(&root_index) {
-                root_index
-            } else {
-                g.iter().copied().max_by_key(|&rank| get_fwd_rate2(vc, rank)).unwrap()
-            }
-        }).collect();
-
-        let mut flows = Vec::new();
-        for (g, &sub_root) in groups.iter().zip(&sub_roots) {
-            let rate_sum: u64 = g.iter().filter(|&&i| i != sub_root).map(|&i| {
-                get_fwd_rate(vc, i, g.len() - 1).val()
-            }).sum();
-            let sub_root_s = format!("host_{}", sub_root);
-
-            for &i in g {
-                if i == sub_root {
-                    continue;
-                }
-
-                let sender = format!("host_{}", i);
-                let size_i = if g.len() == 2 {
-                    size as usize
-                } else {
-                    let fwd_rate_i = get_fwd_rate(vc, i, g.len() - 1).val();
-                    let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
-                    size_i
-                };
-
-                let flow1 = Flow::new(size_i, &sub_root_s, &sender, None);
-                flows.push(flow1);
-
-                for &j in g {
-                    if j == sub_root || j == i {
-                        continue;
-                    }
-
-                    let receiver = format!("host_{}", j);
-                    let flow2 = Flow::new(size_i, &sender, &receiver, None);
-                    flows.push(flow2);
-                }
-            }
+        // remove the root node from the first group for convenience later
+        groups[0].retain(|&x| x != root_index);
+        // in case that the root group becomes empty
+        if groups[0].is_empty() {
+            groups.remove(0);
         }
+        groups
+    };
 
-        let rate_sum: u64 = sub_roots.iter().filter(|&&i| i != root_index).map(|&i| {
-            get_fwd_rate2(vc, i).val()
-        }).sum();
+    let n = n - 1;
+    let m = n.min(num_trees_bound);
+    let mut base = 0;
+    let mut tree_set = Vec::with_capacity(m);
+    for i in 0..m {
+        let off = if m < n {
+            (base + i / groups.len()) % n
+        } else {
+            i
+        };
+        let tree_i = construct_embedding_offset(vc, &groups, root_index, off);
+        tree_set.push(tree_i);
+        base += groups[i % groups.len()].len();
+    }
 
-        let root = format!("host_{}", root_index);
-        for &i in &sub_roots {
-            if i == root_index {
-                continue;
-            }
+    tree_set
+}
 
-            let sender = format!("host_{}", i);
-            let fwd_rate_i = get_fwd_rate2(vc, i).val();
-            let size_i = (size as f64 * fwd_rate_i as f64 / rate_sum as f64) as usize;
+// fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
+//     let mut lp = lpsolve::Problem::new(0, tree_set.len() as i32 + 1).unwrap();
+// 
+//     // set verbosity
+//     unsafe {
+//         lpsolve_sys::set_verbose(lp.to_lprec(), lpsolve::Verbosity::Critical as i32);
+//     }
+// 
+//     // host level constraints
+//     let n = vcluster.num_hosts();
+// 
+//     // in/out_deg[i][j] means the in/out-degree of node i in the jth tree.
+//     let mut in_deg = vec![vec![0.; tree_set.len() + 1]; n];
+//     let mut out_deg = vec![vec![0.; tree_set.len() + 1]; n];
+//     for (k, tree) in tree_set.iter().enumerate() {
+//         for e in tree.all_edges() {
+//             let p = tree[e].from();
+//             let n = tree[e].to();
+//             in_deg[tree[n].rank()][k + 1] += 1.0;
+//             out_deg[tree[p].rank()][k + 1] += 1.0;
+//         }
+//     }
+// 
+//     // rack level constraints
+//     let r = vcluster.num_switches() - 1; // total number of ToR switches
+//     let mut rack_in_deg = vec![vec![0.; tree_set.len() + 1]; r];
+//     let mut rack_out_deg = vec![vec![0.; tree_set.len() + 1]; r];
+// 
+//     for (k, tree) in tree_set.iter().enumerate() {
+//         for e in tree.all_edges() {
+//             // p -> p_rack_id -> cloud -> n_rack_id -> n
+//             let p = tree[e].from();
+//             let n = tree[e].to();
+//             let n_rack_id = get_rack_id(vcluster, get_rack_ix(vcluster, tree[n].rank()));
+//             let p_rack_id = get_rack_id(vcluster, get_rack_ix(vcluster, tree[p].rank()));
+//             if n_rack_id != p_rack_id {
+//                 // cross rack
+//                 rack_in_deg[n_rack_id][k + 1] += 1.0;
+//                 rack_out_deg[p_rack_id][k + 1] += 1.0;
+//             }
+//         }
+//     }
+// 
+//     // minimize y
+//     let mut obj_func = vec![0.; tree_set.len() + 1];
+//     obj_func.push(1.);
+//     lp.set_objective_function(&obj_func);
+// 
+//     // D is a degree matrix. D[i][k] is the degree of node i in kth aggregation tree.
+//     // Bw is a diagonal bandwidth matrix. Bw[i][i] = bw[i];
+//     // Bw^{-1} \cdot D \cdot \vec{w} <= \vec{y}
+//     macro_rules! add_flow_constraint {
+//         ($mdeg:expr, $get_bw_func:expr) => {
+//             for (i, deg) in $mdeg.iter().enumerate() {
+//                 let mut constraint = deg.clone();
+//                 let bw = $get_bw_func(vcluster, i).val() as f64;
+//                 // be careful about the precision issues of the underlying LP solver
+//                 constraint.push(-1.0 * bw / size as f64);
+//                 lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
+//             }
+//         };
+//     }
+// 
+//     add_flow_constraint!(in_deg, get_down_bw);
+//     add_flow_constraint!(out_deg, get_up_bw);
+//     add_flow_constraint!(rack_in_deg, get_rack_down_bw);
+//     add_flow_constraint!(rack_out_deg, get_rack_up_bw);
+// 
+//     // w1 + w2 + ... wn = 1.0
+//     let mut constraint = vec![1.; tree_set.len() + 1];
+//     constraint.push(0.);
+//     lp.add_constraint(&constraint, 1., lpsolve::ConstraintType::Eq);
+// 
+//     // \vec{w} >= 0
+//     for i in 0..tree_set.len() {
+//         let mut constraint = vec![0.; tree_set.len() + 2];
+//         constraint[i + 1] = 1.;
+//         lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Ge);
+//     }
+// 
+//     let mut buffer = Vec::new();
+//     lp.write_lp(&mut buffer);
+//     let problem_str = std::str::from_utf8(&buffer).unwrap();
+//     log::debug!("{}", problem_str);
+// 
+//     let status = lp.solve();
+//     assert_eq!(status, lpsolve::SolveStatus::Optimal);
+//     log::debug!("status: {:?}", status);
+// 
+//     let mut w = vec![0.; tree_set.len() + 1];
+//     lp.get_solution_variables(&mut w);
+//     log::debug!("weights: {:?}", w);
+// 
+//     // adjust if w[i] < 0
+//     w.into_iter().map(|x| x.max(0.)).collect()
+// }
+// 
+// fn construct_flows(tree_set: &[Tree], weights: &[f64], size: u64) -> Vec<Flow> {
+//     let mut flows = Vec::new();
+// 
+//     for (w, tree) in weights.into_iter().zip(tree_set) {
+//         // traverse all edges in the tree
+//         if w.abs() < 1e-10 {
+//             continue;
+//         }
+// 
+//         for e in tree.all_edges() {
+//             let p = tree[e].from();
+//             let n = tree[e].to();
+//             let sender = format!("host_{}", tree[p].rank());
+//             let receiver = format!("host_{}", tree[n].rank());
+//             let flow = Flow::new((size as f64 * w).floor() as usize, &sender, &receiver, None);
+//             flows.push(flow);
+//         }
+//     }
+// 
+//     flows
+// }
 
-            let flow1 = Flow::new(size_i, &root, &sender, None);
-            flows.push(flow1);
+impl RatTree {
+    fn run_rl_traffic(&mut self, root_index: usize, size: u64, vc: &dyn Topology) -> Vec<Flow> {
+        let generate_func = || -> Vec<Tree> {
+            vec![generate_embeddings(
+                vc,
+                root_index,
+                vc.num_hosts(),
+                construct_rat_offset,
+            )]
+            .concat()
+        };
 
-            for &j in &sub_roots {
-                if j == root_index || j == i {
-                    continue;
-                }
+        let mut rat_solver: CachedSolver<RatSolver<_>, _, _> = CachedSolver::new(generate_func);
+        // let mut rat_solver = RatSolver::new(generate_func);
+        rat_solver.solve(&(root_index, size, vc))
 
-                let receiver = format!("host_{}", j);
-                let flow2 = Flow::new(size_i, &sender, &receiver, None);
-                flows.push(flow2);
-            }
+        // let tree_set = vec![
+        //     generate_embeddings(vc, root_index, vc.num_hosts(), construct_rat_offset),
+        //     // generate_embeddings(vc, self.num_trees, construct_chain_offset),
+        // ]
+        // .concat();
+        // // log::info!("tree_set: {:?}", tree_set);
+        // let weights = linear_programming(vc, &tree_set, size);
+
+        // let flows = construct_flows(&tree_set, &weights, size);
+        // // log::info!("root_index: {}, flows: {:?}", root_index, flows);
+        // flows
+    }
+}
+
+pub trait Cached<I, O> {
+    fn check_cache(&self, input: &I) -> bool;
+
+    fn update_cache(&mut self, input: &I, output: O);
+
+    fn get(&self, input: &I) -> O;
+}
+
+#[derive(Debug)]
+pub struct SingleEntryCache<I, O> {
+    last_input: Option<I>,
+    last_output: Option<O>,
+}
+
+impl<I, O> SingleEntryCache<I, O> {
+    pub fn new() -> Self {
+        Self {
+            last_input: None,
+            last_output: None,
         }
+    }
+}
 
-        log::info!("flows: {:?}", flows);
+impl<I: Clone + PartialEq, O: Clone> Cached<I, O> for SingleEntryCache<I, O> {
+    #[inline]
+    fn check_cache(&self, input: &I) -> bool {
+        self.last_input.as_ref().map_or(false, |i| i == input)
+    }
+
+    #[inline]
+    fn update_cache(&mut self, input: &I, output: O) {
+        self.last_input.replace(input.clone());
+        self.last_output.replace(output.clone());
+    }
+
+    #[inline]
+    fn get(&self, _input: &I) -> O {
+        self.last_output.as_ref().unwrap().clone()
+    }
+}
+
+pub struct CachedSolver<S, I, O> {
+    solver: S,
+    cache: SingleEntryCache<I, O>,
+}
+
+impl<'a, State, S, I, O> Solver<'a, State> for CachedSolver<S, I, O>
+where
+    S: Solver<'a, State, Input = I, Output = O>,
+    I: Clone + PartialEq,
+    O: Clone,
+{
+    type Input = I;
+    type Output = O;
+
+    fn new(init_state: State) -> Self {
+        CachedSolver {
+            solver: S::new(init_state),
+            cache: SingleEntryCache::new(),
+        }
+    }
+
+    fn solve(&'a mut self, input: &Self::Input) -> Self::Output {
+        if self.cache.check_cache(input) {
+            return self.cache.get(input);
+        }
+        let output = self.solver.solve(input);
+        self.cache.update_cache(input, output.clone());
+        output
+    }
+}
+
+/// A solver with initial state `State` takes an input `I`, and returns an output `O`
+/// by calling `solve`.
+pub trait Solver<'a, State> {
+    type Input;
+    type Output;
+    fn new(init_state: State) -> Self;
+    fn solve(&'a mut self, input: &Self::Input) -> Self::Output;
+}
+
+pub struct RatSolver<F> {
+    generate_embeddings: F,
+}
+
+impl<'a, F> Solver<'a, F> for RatSolver<F>
+where
+    F: Fn() -> Vec<Tree>,
+{
+    type Input = (usize, u64, &'a dyn Topology);
+    type Output = Vec<Flow>;
+
+    fn new(generate_embeddings: F) -> Self {
+        RatSolver {
+            generate_embeddings,
+        }
+    }
+
+    fn solve(&mut self, &(_root_index, size, vcluster): &Self::Input) -> Self::Output {
+        // 1. tree/embeddings generation
+        let tree_set = (self.generate_embeddings)();
+
+        // 2. run linear programming
+        let weights = Self::linear_programming(vcluster, &tree_set, size);
+
+        // 3. construct flows
+        let flows = Self::construct_flows(&tree_set, &weights, size);
+
         flows
     }
 }
+
+impl<F> RatSolver<F> {
+    fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
+        let mut lp = lpsolve::Problem::new(0, tree_set.len() as i32 + 1).unwrap();
+
+        // set verbosity
+        unsafe {
+            lpsolve_sys::set_verbose(lp.to_lprec(), lpsolve::Verbosity::Critical as i32);
+        }
+
+        // host level constraints
+        let n = vcluster.num_hosts();
+
+        // in/out_deg[i][j] means the in/out-degree of node i in the jth tree.
+        let mut in_deg = vec![vec![0.; tree_set.len() + 1]; n];
+        let mut out_deg = vec![vec![0.; tree_set.len() + 1]; n];
+        for (k, tree) in tree_set.iter().enumerate() {
+            for e in tree.all_edges() {
+                let p = tree[e].from();
+                let n = tree[e].to();
+                in_deg[tree[n].rank()][k + 1] += 1.0;
+                out_deg[tree[p].rank()][k + 1] += 1.0;
+            }
+        }
+
+        // rack level constraints
+        let r = vcluster.num_switches() - 1; // total number of ToR switches
+        let mut rack_in_deg = vec![vec![0.; tree_set.len() + 1]; r];
+        let mut rack_out_deg = vec![vec![0.; tree_set.len() + 1]; r];
+
+        for (k, tree) in tree_set.iter().enumerate() {
+            for e in tree.all_edges() {
+                // p -> p_rack_id -> cloud -> n_rack_id -> n
+                let p = tree[e].from();
+                let n = tree[e].to();
+                let n_rack_id = get_rack_id(vcluster, get_rack_ix(vcluster, tree[n].rank()));
+                let p_rack_id = get_rack_id(vcluster, get_rack_ix(vcluster, tree[p].rank()));
+                if n_rack_id != p_rack_id {
+                    // cross rack
+                    rack_in_deg[n_rack_id][k + 1] += 1.0;
+                    rack_out_deg[p_rack_id][k + 1] += 1.0;
+                }
+            }
+        }
+
+        // minimize y
+        let mut obj_func = vec![0.; tree_set.len() + 1];
+        obj_func.push(1.);
+        lp.set_objective_function(&obj_func);
+
+        // D is a degree matrix. D[i][k] is the degree of node i in kth aggregation tree.
+        // Bw is a diagonal bandwidth matrix. Bw[i][i] = bw[i];
+        // Bw^{-1} \cdot D \cdot \vec{w} <= \vec{y}
+        macro_rules! add_flow_constraint {
+            ($mdeg:expr, $get_bw_func:expr) => {
+                for (i, deg) in $mdeg.iter().enumerate() {
+                    let mut constraint = deg.clone();
+                    let bw = $get_bw_func(vcluster, i).val() as f64;
+                    // be careful about the precision issues of the underlying LP solver
+                    constraint.push(-1.0 * bw / size as f64);
+                    lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Le);
+                }
+            };
+        }
+
+        add_flow_constraint!(in_deg, get_down_bw);
+        add_flow_constraint!(out_deg, get_up_bw);
+        add_flow_constraint!(rack_in_deg, get_rack_down_bw);
+        add_flow_constraint!(rack_out_deg, get_rack_up_bw);
+
+        // w1 + w2 + ... wn = 1.0
+        let mut constraint = vec![1.; tree_set.len() + 1];
+        constraint.push(0.);
+        lp.add_constraint(&constraint, 1., lpsolve::ConstraintType::Eq);
+
+        // \vec{w} >= 0
+        for i in 0..tree_set.len() {
+            let mut constraint = vec![0.; tree_set.len() + 2];
+            constraint[i + 1] = 1.;
+            lp.add_constraint(&constraint, 0., lpsolve::ConstraintType::Ge);
+        }
+
+        let mut buffer = Vec::new();
+        lp.write_lp(&mut buffer);
+        let problem_str = std::str::from_utf8(&buffer).unwrap();
+        log::debug!("{}", problem_str);
+
+        let status = lp.solve();
+        assert_eq!(status, lpsolve::SolveStatus::Optimal);
+        log::debug!("status: {:?}", status);
+
+        let mut w = vec![0.; tree_set.len() + 1];
+        lp.get_solution_variables(&mut w);
+        log::debug!("weights: {:?}", w);
+
+        // adjust if w[i] < 0
+        w.into_iter().map(|x| x.max(0.)).collect()
+    }
+
+    fn construct_flows(tree_set: &[Tree], weights: &[f64], size: u64) -> Vec<Flow> {
+        let mut flows = Vec::new();
+
+        for (w, tree) in weights.into_iter().zip(tree_set) {
+            // traverse all edges in the tree
+            if w.abs() < 1e-10 {
+                continue;
+            }
+
+            for e in tree.all_edges() {
+                let p = tree[e].from();
+                let n = tree[e].to();
+                let sender = format!("host_{}", tree[p].rank());
+                let receiver = format!("host_{}", tree[n].rank());
+                let flow = Flow::new((size as f64 * w).floor() as usize, &sender, &receiver, None);
+                flows.push(flow);
+            }
+        }
+
+        flows
+    }
+}
+
+// fn run_rl_traffic(root_index: usize, size: u64, vc: &dyn Topology) -> Vec<Flow> {
+//     let generate_func = || -> Vec<Tree> {
+//         vec![generate_embeddings(
+//             vc,
+//             root_index,
+//             vc.num_hosts(),
+//             construct_rat_offset,
+//         )]
+//         .concat()
+//     };
+// 
+//     let mut rat_solver: CachedSolver<RatSolver<_>, _, _> = CachedSolver::new(generate_func);
+//     rat_solver.solve(&(root_index, size, vc))
+// }
