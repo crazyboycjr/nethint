@@ -14,10 +14,10 @@ job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
 buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 1000
+num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 24_000_000_000.0
+poisson_lambda = 24_00_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -39,19 +39,10 @@ probe = { enable = false }
 nethint_level = 0
 
 [[batch]]
-policy = "TopologyAware" # which is ring
+policy = "RAT"
 probe = { enable = true, round_ms = 10 }
-nethint_level = 1
-
-[[batch]]
-policy = "TopologyAware" # which is ring
-probe = { enable = false }
-nethint_level = 1
-
-# [[batch]]
-# policy = "RAT"
-# probe = { enable = false }
-# nethint_level = 2
+nethint_level = 2
+auto_tune = 10
 
 [[batch]]
 policy = "RAT"

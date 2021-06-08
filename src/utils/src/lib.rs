@@ -4,3 +4,4 @@ pub mod cmd_helper;
 pub mod fs;
 pub mod net;
 pub mod algo;
+pub mod collector;

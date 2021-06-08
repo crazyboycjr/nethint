@@ -12,7 +12,7 @@ num_map = 1
 num_reduce = 1
 
 # Multiply the traffic size by a number
-traffic_scale = 300.0
+traffic_scale = 10.0
 
 # enable computation time: false: off true: on
 enable_computation_time = false
@@ -40,21 +40,21 @@ collocate = true
 # Number of repeats for each batch of experiments
 batch_repeat = 1
 
-[[batch]]
-reducer_policy = "Random"
-probe = { enable = false }
-# NetHint level, possible values are 0, 1, 2
-nethint_level = 1
-
-[[batch]]
-reducer_policy = "HierarchicalGreedyLevel1"
-probe = { enable = true, round_ms = 10 }
-nethint_level = 1
-
-[[batch]]
-reducer_policy = "HierarchicalGreedyLevel1"
-probe = { enable = false }
-nethint_level = 1
+# [[batch]]
+# reducer_policy = "Random"
+# probe = { enable = false }
+# # NetHint level, possible values are 0, 1, 2
+# nethint_level = 1
+# 
+# [[batch]]
+# reducer_policy = "HierarchicalGreedyLevel1"
+# probe = { enable = true, round_ms = 10 }
+# nethint_level = 1
+# 
+# [[batch]]
+# reducer_policy = "HierarchicalGreedyLevel1"
+# probe = { enable = false }
+# nethint_level = 1
 
 [[batch]]
 reducer_policy = "HierarchicalGreedyPaper" # please use this

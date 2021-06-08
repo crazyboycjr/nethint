@@ -16,6 +16,7 @@ thread_local! {
 
 lazy_static! {
     static ref FLOW_ID: AtomicUsize = AtomicUsize::new(0);
+    static ref TIMER_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
 pub mod bandwidth;

@@ -573,8 +573,9 @@ impl Estimator for SimpleEstimator {
 }
 
 fn append_log_file(str: &str) {
-    use std::io::{Seek, Write};
-    let mut f = utils::fs::open_with_create_append("/tmp/ff");
-    f.seek(std::io::SeekFrom::End(0)).unwrap();
-    writeln!(f, "{}", str).unwrap();
+    // use std::io::{Seek, Write};
+    // let mut f = utils::fs::open_with_create_append("/tmp/ff");
+    // f.seek(std::io::SeekFrom::End(0)).unwrap();
+    // writeln!(f, "{}", str).unwrap();
+    utils::fs::append_to_file("/tmp/ff", str);
 }

@@ -12,6 +12,8 @@ use crate::{
     topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
+use utils::collector::OverheadCollector;
+
 pub struct RLApp {
     root_index_modifed: bool,
     job_spec: JobSpec,
@@ -24,6 +26,7 @@ pub struct RLApp {
     remaining_flows: usize,
     nethint_level: usize,
     autotune: Option<usize>,
+    overhead_collector: OverheadCollector,
 }
 
 impl std::fmt::Debug for RLApp {
@@ -54,6 +57,7 @@ impl RLApp {
             remaining_flows: 0,
             nethint_level,
             autotune,
+            overhead_collector: Default::default(),
         }
     }
 
@@ -142,8 +146,15 @@ impl Application for RLApp {
                     // reset the root_index
                     let vc = Rc::clone(self.cluster.as_ref().unwrap());
                     self.adjust_root_index(vc);
+
+                    let start = std::time::Instant::now();
                     // since we have the cluster, start and schedule the app again
                     self.rl_traffic(event.ts);
+                    let end = std::time::Instant::now();
+                    let overhead = end - start;
+                    // print controller overhead to job scale
+                    self.overhead_collector.collect(overhead, self.job_spec.num_workers);
+
                     return self
                         .replayer
                         .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));

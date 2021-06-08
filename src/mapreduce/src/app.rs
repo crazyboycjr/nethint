@@ -20,6 +20,8 @@ use nethint::{
 };
 use rand::{self, distributions::Distribution, rngs::StdRng, Rng, SeedableRng, prelude::*};
 
+use utils::collector::OverheadCollector;
+
 #[derive(Debug, Clone, Default)]
 struct ReducerMeta {
     unit_estimation_time: f64,
@@ -58,6 +60,7 @@ pub struct MapReduceApp<'c> {
     host_bandwidth: f64,
     enable_computation_time: bool,
     reducer_meta: ReducerMeta,
+    overhead_collector: OverheadCollector,
 }
 
 
@@ -103,6 +106,7 @@ impl<'c> MapReduceApp<'c> {
             host_bandwidth,
             enable_computation_time,
             reducer_meta: ReducerMeta::default(),
+            overhead_collector: Default::default(),
         }
     }
 
@@ -294,7 +298,14 @@ impl<'c> Application for MapReduceApp<'c> {
                         self.cluster.as_ref().unwrap().to_dot()
                     );
                     // since we have the cluster, start and schedule the app again
+                    let start = std::time::Instant::now();
+                    // since we have the cluster, start and schedule the app again
                     self.start();
+                    let end = std::time::Instant::now();
+                    let overhead = end - start;
+                    // print controller overhead to job scale
+                    self.overhead_collector.collect(overhead, self.job_spec.num_map.max(self.job_spec.num_reduce));
+
                     return self
                         .replayer
                         .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));

@@ -79,8 +79,13 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                 self.app
                     .on_event(AppEvent::new(now, AppEventKind::FlowComplete(raw_flows)))
             }
-            AppEventKind::NetHintResponse(..) | AppEventKind::Notification(_) => {
+            AppEventKind::NetHintResponse(..) | AppEventKind::UserNotification(..) => {
                 self.app.on_event(AppEvent::new(now, event.event))
+            }
+            AppEventKind::AdapterNotification(..) => {
+                panic!(
+                    "unless the inner app is an AppGroup, which will be supported later"
+                );
             }
         };
 
@@ -111,10 +116,12 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Tenant<'a, T> {
                         assert_eq!(tenant_id, 0);
                         Event::NetHintRequest(app_id, self.tenant_id, version, app_hint)
                     }
-                    Event::RegisterTimer(..) => {
-                        unreachable!(
-                            "unless the inner app is an AppGroup, which will be supported later"
-                        );
+                    Event::UserRegisterTimer(..) => {
+                        // forward without touching it
+                        sim_event
+                    }
+                    Event::AdapterRegisterTimer(..) => {
+                        panic!("not allowed");
                     }
                 }
             })

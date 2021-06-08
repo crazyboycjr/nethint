@@ -5,7 +5,7 @@ use fnv::FnvHashMap as HashMap;
 use crate::brain::TenantId;
 use crate::{
     hint::NetHintV2,
-    simulator::{Event, Events},
+    simulator::{Event, Events, TimerId},
     Token,
 };
 use crate::{Timestamp, Trace, TraceRecord};
@@ -29,8 +29,10 @@ pub enum AppEventKind {
     AppStart,
     NetHintResponse(usize, TenantId, NetHintV2),
     FlowComplete(Vec<TraceRecord>),
-    // Time up event triggered
-    Notification(Token),
+    /// Time up event triggered
+    // Notification(Option<Token>, TimerId),
+    AdapterNotification(Option<Token>, TimerId),
+    UserNotification(Option<Token>),
 }
 
 /// An Applicatoin can interact with the simulator based on the flow completion event it received.
@@ -62,7 +64,9 @@ impl Application for Replayer {
                     Events::new()
                 }
             }
-            AppEventKind::NetHintResponse(..) | AppEventKind::Notification(_) => Events::new(), // Replayer does not handle these events
+            AppEventKind::NetHintResponse(..)
+            | AppEventKind::UserNotification(_)
+            | AppEventKind::AdapterNotification(..) => Events::new(), // Replayer does not handle these events
         }
     }
     fn answer(&mut self) -> Self::Output {
@@ -125,7 +129,8 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Sequence<'a, T> {
             }
             AppEventKind::AppStart
             | AppEventKind::NetHintResponse(..)
-            | AppEventKind::Notification(_) => AppEvent::new(now - app_start_time, event.event),
+            | AppEventKind::AdapterNotification(..)
+            | AppEventKind::UserNotification(_) => AppEvent::new(now - app_start_time, event.event),
         };
 
         let events = self.apps[self.cur_app].on_event(new_event);
@@ -157,7 +162,8 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Sequence<'a, T> {
                         }
                         Event::FlowArrive(flows).into()
                     }
-                    Event::NetHintRequest(..) | Event::RegisterTimer(..) => sim_event.into(),
+                    Event::NetHintRequest(..) | Event::UserRegisterTimer(..) => sim_event.into(),
+                    Event::AdapterRegisterTimer(..) => panic!("now allowed"),
                 }
             })
             .collect()
@@ -166,6 +172,12 @@ impl<'a, T: Clone + std::fmt::Debug> Application for Sequence<'a, T> {
     fn answer(&mut self) -> Self::Output {
         self.output.clone()
     }
+}
+
+#[derive(Debug)]
+enum TimerRequestor {
+    Adapter,
+    UserApp(Option<Token>), // user token
 }
 
 /// AppGroup is an application created by combining multiple applications started at different timestamps.
@@ -177,6 +189,7 @@ pub struct AppGroup<'a, T> {
     apps: Vec<(Timestamp, Box<dyn Application<Output = T> + 'a>)>,
     output: Vec<(usize, T)>,
     stored_flow_token: HashMap<usize, Option<Token>>,
+    stored_timer_token: HashMap<TimerId, TimerRequestor>,
 }
 
 pub trait AppGroupTokenCoding {
@@ -215,7 +228,12 @@ where
                         let start_off = self.apps[app_id].0;
                         // println!("start off {:?}", start_off);
                         let token = Token::encode(app_id);
-                        Event::RegisterTimer(start_off, token)
+                        let new_timer_id = TimerId::new();
+                        self.stored_timer_token
+                            .insert(new_timer_id, TimerRequestor::Adapter)
+                            .ok_or(())
+                            .unwrap_err();
+                        Event::AdapterRegisterTimer(start_off, Some(token), new_timer_id)
                     })
                     .collect()
             }
@@ -249,10 +267,26 @@ where
                 let app_event_kind = AppEventKind::NetHintResponse(app_id, tenant_id, vc);
                 self.forward(app_id, event.ts, app_event_kind)
             }
-            AppEventKind::Notification(token) => {
+            AppEventKind::AdapterNotification(token, timer_id) => {
                 // now the timestamp is at self.apps[app_id].start_off
-                let app_id = token.decode();
-                self.forward(app_id, event.ts, AppEventKind::AppStart)
+                match self.stored_timer_token[&timer_id] {
+                    TimerRequestor::Adapter => {
+                        let app_id = token.unwrap().decode();
+                        self.forward(app_id, event.ts, AppEventKind::AppStart)
+                    }
+                    TimerRequestor::UserApp(user_token) => {
+                        let app_id = token.unwrap().decode();
+                        self.stored_timer_token.remove(&timer_id).unwrap();
+                        self.forward(
+                            app_id,
+                            event.ts,
+                            AppEventKind::UserNotification(user_token),
+                        )
+                    }
+                }
+            }
+            AppEventKind::UserNotification(..) => {
+                panic!("impossible for an adapter to receive user notification");
             }
         };
 
@@ -278,6 +312,7 @@ where
             apps: Default::default(),
             output: Default::default(),
             stored_flow_token: HashMap::default(),
+            stored_timer_token: HashMap::default(),
         }
     }
 
@@ -323,11 +358,21 @@ where
                         assert_eq!(inner_app_id, 0);
                         Event::NetHintRequest(app_id, tenant_id, version, app_hint).into()
                     }
-                    Event::RegisterTimer(_dura, token) => {
-                        panic!(
-                            "impossible to receive timer registration from user app, token: {:?}",
-                            token
-                        );
+                    Event::AdapterRegisterTimer(..) => {
+                        panic!("user not allowed to register timer as adapters");
+                    }
+                    Event::UserRegisterTimer(dura, token) => {
+                        // panic!(
+                        //     "impossible to receive timer registration from user app, token: {:?}",
+                        //     token
+                        // );
+                        let new_token = Token::encode(app_id);
+                        let new_timer_id = TimerId::new();
+                        self.stored_timer_token
+                            .insert(new_timer_id, TimerRequestor::UserApp(token))
+                            .ok_or(())
+                            .unwrap_err();
+                        Event::AdapterRegisterTimer(dura, Some(new_token), new_timer_id).into()
                     }
                 }
             })

@@ -46,14 +46,9 @@ probe = { enable = false }
 nethint_level = 1
 
 [[batch]]
-reducer_policy = "HierarchicalGreedyLevel1"
+reducer_policy = "HierarchicalGreedyPaper"
 probe = { enable = true, round_ms = 10 }
-nethint_level = 1
-
-[[batch]]
-reducer_policy = "HierarchicalGreedyLevel1"
-probe = { enable = false }
-nethint_level = 1
+nethint_level = 2
 
 [[batch]]
 reducer_policy = "HierarchicalGreedyPaper" # please use this

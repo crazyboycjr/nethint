@@ -1,6 +1,7 @@
 use std::any::Any;
 
 use crate::{Duration, Timestamp, Token};
+use crate::simulator::TimerId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimerKind {
@@ -72,15 +73,17 @@ impl PoissonTimer {
 pub struct OnceTimer {
     kind: TimerKind,
     next_ready: Timestamp,
-    pub token: Token,
+    pub token: Option<Token>,
+    pub timer_id: Option<TimerId>,
 }
 
 impl OnceTimer {
-    pub fn new(next_ready: Timestamp, token: Token) -> Self {
+    pub fn new(next_ready: Timestamp, token: Option<Token>, timer_id: Option<TimerId>) -> Self {
         OnceTimer {
             kind: TimerKind::Once,
             next_ready,
             token,
+            timer_id,
         }
     }
 }

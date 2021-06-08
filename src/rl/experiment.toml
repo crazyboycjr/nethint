@@ -10,6 +10,7 @@ ncases = 30
 # job_size_distribution = [[40, 4], [40, 8], [20, 12], [20, 16]]
 # job_size_distribution = [[40, 32], [40, 64]]
 job_size_distribution = [[40, 4], [40, 8], [40, 12]]
+# job_size_distribution = [[1, 2], [1, 4], [1, 8], [1, 16], [1, 32], [1, 64]]
 # job_size_distribution = [[40, 6]]
 # job_size_distribution = [[40, 6], [40, 12]]
 
@@ -54,7 +55,7 @@ nethint_level = 2
 
 [[batch]]
 policy = "RAT"
-probe = { enable = true, round_ms = 10 }
+probe = { enable = true, round_ms = 100 }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
 auto_tune = 1
