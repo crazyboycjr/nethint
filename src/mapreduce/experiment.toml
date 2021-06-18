@@ -14,7 +14,7 @@ num_reduce = 1
 # Multiply the traffic size by a number
 traffic_scale = 10.0
 
-# enable computation time: false: off true: on
+# enable computation time: true/false
 enable_computation_time = false
 
 # Mapper placement policy
