@@ -62,6 +62,13 @@ auto_tune = 1
 
 [[batch]]
 policy = "RAT"
+probe = { enable = true, round_ms = 100 }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 100
+
+[[batch]]
+policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled

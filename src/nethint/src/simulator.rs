@@ -533,7 +533,7 @@ impl Simulator {
                     if timer.kind() == TimerKind::Once {
                         let timer = self.timers.pop().unwrap();
                         let once_timer = timer.as_any().downcast_ref::<OnceTimer>().unwrap();
-                        debug!("{:?}", once_timer);
+                        log::trace!("{:?}", once_timer);
                         let token = once_timer.token;
                         let timer_id = once_timer.timer_id;
                         if timer_id.is_some() {

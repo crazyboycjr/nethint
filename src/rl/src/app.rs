@@ -5,6 +5,7 @@ use nethint::{
     simulator::{Event, Events},
     Duration, Timestamp, Trace, TraceRecord,
 };
+use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::{
@@ -151,16 +152,28 @@ impl Application for RLApp {
                     // since we have the cluster, start and schedule the app again
                     self.rl_traffic(event.ts);
                     let end = std::time::Instant::now();
-                    let overhead = end - start;
+                    let computing_delay = end - start;
                     // print controller overhead to job scale
-                    self.overhead_collector.collect(overhead, self.job_spec.num_workers);
+                    self.overhead_collector
+                        .collect(computing_delay, self.job_spec.num_workers);
 
-                    return self
-                        .replayer
-                        .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                    log::info!("computing_delay: {:?}", computing_delay);
+                    return Event::UserRegisterTimer(
+                        computing_delay.as_nanos().try_into().unwrap(),
+                        None,
+                    )
+                    .into();
                 }
                 _ => unreachable!(),
             }
+        }
+
+        if let AppEventKind::UserNotification(ref token) = &event.event {
+            assert!(token.is_none());
+
+            return self
+                .replayer
+                .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
         }
 
         if let AppEventKind::FlowComplete(ref flows) = &event.event {

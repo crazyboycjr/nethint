@@ -6,6 +6,7 @@ use nethint::{
     Duration, Timestamp, Trace, TraceRecord,
 };
 use std::rc::Rc;
+use std::convert::TryInto;
 
 use crate::{
     random_ring::RandomRingAllReduce, rat::RatAllReduce,
@@ -152,16 +153,27 @@ impl<'c> Application for AllReduceApp<'c> {
                     let start = std::time::Instant::now();
                     self.allreduce(start_time);
                     let end = std::time::Instant::now();
-                    let overhead = end - start;
+                    let computing_delay = end - start;
                     // print controller overhead to job scale
-                    self.overhead_collector.collect(overhead, self.job_spec.num_workers);
+                    self.overhead_collector.collect(computing_delay, self.job_spec.num_workers);
 
-                    return self
-                        .replayer
-                        .on_event(AppEvent::new(start_time, AppEventKind::AppStart));
+                    log::info!("computing_delay: {:?}", computing_delay);
+                    return Event::UserRegisterTimer(
+                        computing_delay.as_nanos().try_into().unwrap(),
+                        None,
+                    )
+                    .into();
                 }
                 _ => unreachable!(),
             }
+        }
+
+        if let AppEventKind::UserNotification(ref token) = &event.event {
+            assert!(token.is_none());
+
+            return self
+                .replayer
+                .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
         }
 
         if let AppEventKind::FlowComplete(ref flows) = &event.event {

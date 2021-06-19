@@ -9,6 +9,7 @@ use crate::{
     PlaceMapper, PlaceReducer, Placement, RandomReducerScheduler, ReducerPlacementPolicy, Shuffle,
     ShufflePattern,
 };
+use std::convert::TryInto;
 use std::cmp;
 use log::info;
 use nethint::{
@@ -302,19 +303,30 @@ impl<'c> Application for MapReduceApp<'c> {
                     // since we have the cluster, start and schedule the app again
                     self.start();
                     let end = std::time::Instant::now();
-                    let overhead = end - start;
+                    let computing_delay = end - start;
                     // print controller overhead to job scale
-                    self.overhead_collector.collect(overhead, self.job_spec.num_map.max(self.job_spec.num_reduce));
+                    self.overhead_collector.collect(computing_delay, self.job_spec.num_map.max(self.job_spec.num_reduce));
 
-                    return self
-                        .replayer
-                        .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+                    log::info!("computing_delay: {:?}", computing_delay);
+                    return Event::UserRegisterTimer(
+                        computing_delay.as_nanos().try_into().unwrap(),
+                        None,
+                    )
+                    .into();
                 }
                 _ => unreachable!(),
             }
         }
 
         assert!(self.cluster.is_some());
+
+        if let AppEventKind::UserNotification(ref token) = &event.event {
+            assert!(token.is_none());
+
+            return self
+                .replayer
+                .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
+        }
 
         let now = event.ts;
 

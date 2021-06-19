@@ -218,7 +218,7 @@ where
             return (Event::AppFinish).into();
         }
 
-        trace!("AppGroup receive an app_event {:?}", event);
+        log::trace!("AppGroup receive an app_event {:?}", event);
         let events = match event.event {
             AppEventKind::AppStart => {
                 // start all apps, modify the start time of flow, gather all flows
@@ -269,6 +269,7 @@ where
             }
             AppEventKind::AdapterNotification(token, timer_id) => {
                 // now the timestamp is at self.apps[app_id].start_off
+                log::trace!("AdapterNotification, token: {:?}, timer_id: {:?}", token, timer_id);
                 match self.stored_timer_token[&timer_id] {
                     TimerRequestor::Adapter => {
                         let app_id = token.unwrap().decode();
@@ -277,6 +278,7 @@ where
                     TimerRequestor::UserApp(user_token) => {
                         let app_id = token.unwrap().decode();
                         self.stored_timer_token.remove(&timer_id).unwrap();
+                        log::trace!("app_id: {}, ts: {}, user_token: {:?}", app_id, event.ts, user_token);
                         self.forward(
                             app_id,
                             event.ts,
@@ -366,6 +368,7 @@ where
                         //     "impossible to receive timer registration from user app, token: {:?}",
                         //     token
                         // );
+                        log::debug!("Event::UserRegisterTime, dura: {}, token: {:?}", dura, token);
                         let new_token = Token::encode(app_id);
                         let new_timer_id = TimerId::new();
                         self.stored_timer_token
