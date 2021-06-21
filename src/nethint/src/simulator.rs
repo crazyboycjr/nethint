@@ -837,7 +837,7 @@ impl NetState {
                     let vsrc = fs.borrow().flow.vsrc.as_ref().unwrap().clone();
                     let vdst = fs.borrow().flow.vdst.as_ref().unwrap().clone();
                     self.vm_flows[0]
-                        .entry((tenant_id, vsrc.clone()))
+                        .entry((tenant_id, vsrc))
                         .or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin))
                         .push(Rc::clone(&fs));
                     self.vm_flows[1]
