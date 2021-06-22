@@ -42,7 +42,7 @@ nethint_level = 0
 policy = "RAT"
 probe = { enable = true, round_ms = 100 }
 nethint_level = 2
-auto_tune = 10
+auto_tune = 100
 
 [[batch]]
 policy = "RAT"
