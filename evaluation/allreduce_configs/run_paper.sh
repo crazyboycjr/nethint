@@ -9,11 +9,12 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 # sed -i 's/^fairness = "PerFlowMaxMin"/fairness = "TenantFlowMaxMin"/' *.toml
 
 configs=(
-standard2.toml
+# standard2.toml
 standard3.toml
-background_dynamic_strong.toml
-background_off.toml
-background_static_strong.toml
+casestudy2.toml
+# background_dynamic_strong.toml
+# background_off.toml
+# background_static_strong.toml
 # level2bad.toml
 )
 

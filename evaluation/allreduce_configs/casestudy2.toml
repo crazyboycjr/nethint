@@ -1,7 +1,7 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 10
+ncases = 100
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
@@ -20,10 +20,10 @@ buffer_size = 100_000_000
 # computation_speed = 0.1
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 1000
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 2_400_000_000.0
+poisson_lambda = 24_000_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -37,7 +37,7 @@ seed = 2
 directory = "/tmp/allreduce_result_for_paper/casestudy2"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -64,7 +64,7 @@ policy = "RAT"
 probe = { enable = true, round_ms = 100 }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 1
+auto_tune = 10
 
 [[batch]]
 policy = "RAT"
@@ -78,7 +78,7 @@ policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 1
+auto_tune = 10
 
 [simulator]
 nethint = true
@@ -88,7 +88,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 0.5, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 1.0, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
