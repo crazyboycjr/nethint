@@ -69,13 +69,6 @@ fn main() {
         std::fs::write(file, format!("{:#?}\n", config)).unwrap();
     };
 
-    // we don't have to be having the exact result as the last run
-    // since the results are relatively good, we can accept any seeds
-    // let seed = std::time::SystemTime::now()
-    //     .duration_since(std::time::UNIX_EPOCH)
-    //     .unwrap()
-    //     .as_secs();
-    // log::info!("seed = {}", seed);
     let seed = config.seed;
 
     // start to run batches
@@ -138,6 +131,8 @@ fn run_batch(
         let tenant_id = i;
         let (start_ts, job_spec) = jobs.get(i).unwrap();
 
+        let nhosts_to_acquire = job_spec.num_workers;
+
         let rl_app = Box::new(RLApp::new(
             job_spec,
             None,
@@ -145,22 +140,22 @@ fn run_batch(
             batch.policy,
             batch.nethint_level,
             batch.auto_tune,
+            batch.probe,
+            nhosts_to_acquire,
         ));
 
-        let nhosts_to_acquire = job_spec.num_workers;
-
-        let app: Box<dyn Application<Output = _>> = if batch.probe.enable {
-            Box::new(PlinkApp::new(
-                nhosts_to_acquire,
-                batch.probe.round_ms,
-                rl_app,
-            ))
-        } else {
-            rl_app
-        };
+        // let app: Box<dyn Application<Output = _>> = if batch.probe.enable {
+        //     Box::new(PlinkApp::new(
+        //         nhosts_to_acquire,
+        //         batch.probe.round_ms,
+        //         rl_app,
+        //     ))
+        // } else {
+        //     rl_app
+        // };
 
         let virtualized_app = Box::new(Tenant::new(
-            app,
+            rl_app,
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),

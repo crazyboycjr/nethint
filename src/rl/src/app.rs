@@ -1,5 +1,6 @@
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
+    background_flow::{BackgroundFlowApp, BackgroundFlowPattern},
     cluster::Topology,
     hint::NetHintVersion,
     simulator::{Event, Events},
@@ -9,6 +10,7 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::{
+    config::ProbeConfig,
     contraction::Contraction, random_ring::RandomTree, rat::RatTree,
     topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
@@ -28,6 +30,12 @@ pub struct RLApp {
     nethint_level: usize,
     autotune: Option<usize>,
     overhead_collector: OverheadCollector,
+    // dynamic probing
+    probe: ProbeConfig,
+    nhosts_to_acquire: usize,
+    in_probing: bool,
+    probing_start_time: Timestamp,
+    background_flow_app: Option<BackgroundFlowApp<Option<Duration>>>,
 }
 
 impl std::fmt::Debug for RLApp {
@@ -44,6 +52,8 @@ impl RLApp {
         rl_policy: RLPolicy,
         nethint_level: usize,
         autotune: Option<usize>,
+        probe: ProbeConfig,
+        nhosts_to_acquire: usize,
     ) -> Self {
         let trace = Trace::new();
         RLApp {
@@ -59,6 +69,11 @@ impl RLApp {
             nethint_level,
             autotune,
             overhead_collector: Default::default(),
+            probe,
+            nhosts_to_acquire,
+            in_probing: false,
+            probing_start_time: 0,
+            background_flow_app: None,
         }
     }
 
@@ -92,6 +107,33 @@ impl RLApp {
         self.remaining_iterations -= 1;
 
         self.replayer = Replayer::new(trace);
+    }
+
+    // copied from src/allreduce/src/app.rs
+    fn start_probe(&mut self, now: Timestamp) -> Events {
+        assert!(self.probe.enable);
+        assert!(!self.in_probing);
+
+        self.in_probing = true;
+        self.probing_start_time = now;
+
+        let dur_ms = (self.nhosts_to_acquire as u64 * self.probe.round_ms) as _;
+        self.background_flow_app = Some(BackgroundFlowApp::new(
+            self.nhosts_to_acquire,
+            dur_ms,
+            BackgroundFlowPattern::PlinkProbe,
+            Some(100_000_000), // 8ms on 100G
+            None,
+        ));
+
+        let app_event = AppEvent {
+            ts: 0,
+            event: AppEventKind::AppStart,
+        };
+        self.background_flow_app
+            .as_mut()
+            .unwrap()
+            .on_event(app_event)
     }
 
     fn request_nethint(&self) -> Events {
@@ -131,12 +173,52 @@ impl RLApp {
 impl Application for RLApp {
     type Output = Option<Duration>;
     fn on_event(&mut self, event: AppEvent) -> Events {
+        if self.in_probing {
+            let mut event2 = event.clone();
+            event2.ts -= self.probing_start_time;
+
+            let events = self.background_flow_app.as_mut().unwrap().on_event(event2);
+            log::trace!("AllreduceApp, background flow events: {:?}", events);
+
+            let app_events: Events = events
+                .into_iter()
+                .flat_map(|sim_event| match sim_event {
+                    Event::AppFinish => {
+                        self.in_probing = false;
+                        self.probing_start_time = 0;
+                        Events::new()
+                    }
+                    Event::FlowArrive(mut flows) => {
+                        for f in &mut flows {
+                            f.ts += self.probing_start_time;
+                        }
+                        Event::FlowArrive(flows).into()
+                    }
+                    Event::NetHintRequest(..) | Event::UserRegisterTimer(..) => sim_event.into(),
+                    Event::AdapterRegisterTimer(..) => panic!("now allowed"),
+                })
+                .collect();
+
+            if !self.in_probing {
+                assert!(app_events.is_empty());
+                // request nethint
+                self.cluster = None;
+                return self.request_nethint();
+            } else {
+                return app_events;
+            }
+        }
+
         if self.cluster.is_none() {
             // ask simulator for the NetHint
             match event.event {
                 AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return self.request_nethint();
+                    if self.probe.enable {
+                        return self.start_probe(event.ts);
+                    } else {
+                        return self.request_nethint();
+                    }
                 }
                 AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
@@ -189,8 +271,12 @@ impl Application for RLApp {
                     && self.autotune.unwrap() > 0
                     && self.remaining_iterations % self.autotune.unwrap() == 0
                 {
-                    self.cluster = None;
-                    return self.request_nethint();
+                    if self.probe.enable {
+                        return self.start_probe(event.ts);
+                    } else {
+                        self.cluster = None;
+                        return self.request_nethint();
+                    }
                 }
                 self.rl_traffic(self.jct.unwrap());
                 return self
