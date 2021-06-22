@@ -7,9 +7,11 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 configs=(
 standard_hybrid2.toml
-background_dynamic_strong.toml
-background_off.toml
-background_static_strong.toml
+casestudy1.toml
+fallback.toml
+# background_dynamic_strong.toml
+# background_off.toml
+# background_static_strong.toml
 # level2probe.toml
 )
 

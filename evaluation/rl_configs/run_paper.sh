@@ -4,9 +4,10 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 configs=(
 standard2.toml
-background_dynamic_strong.toml
-background_off.toml
-background_static_strong.toml
+nonnegligible_computing_overhead.toml
+# background_dynamic_strong.toml
+# background_off.toml
+# background_static_strong.toml
 # level2bad.toml
 # level2probe.toml
 )

@@ -39,11 +39,11 @@ policy = "Random"
 probe = { enable = false }
 nethint_level = 0
 
-[[batch]]
-policy = "RAT"
-probe = { enable = true, round_ms = 100 }
-nethint_level = 2
-auto_tune = 1
+# [[batch]]
+# policy = "RAT"
+# probe = { enable = true, round_ms = 100 }
+# nethint_level = 2
+# auto_tune = 1
 
 [[batch]]
 policy = "RAT"
