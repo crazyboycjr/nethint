@@ -1,11 +1,11 @@
 use crate::controller::app::Application;
-use crate::controller::plink::PlinkApp;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::{rngs::StdRng, SeedableRng};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::controller::background_flow::{BackgroundFlowApp, BackgroundFlowPattern};
 use allreduce::{
     config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
@@ -90,7 +90,7 @@ impl AllreduceAppBuilder {
         if job_spec.num_workers == 2 {
             setting.auto_tune = None;
         }
-        let mut app: Box<dyn Application> = Box::new(AllreduceApp {
+        let app: Box<dyn Application> = Box::new(AllreduceApp {
             workers: self.workers,
             brain: self.brain,
             hostname_to_node: self.hostname_to_node,
@@ -103,15 +103,17 @@ impl AllreduceAppBuilder {
             vname_to_hostname: Default::default(),
             cluster: None,
             flow_iters: Default::default(),
+            in_probing: false,
+            background_flow_app: None,
         });
 
-        if setting.probe.enable {
-            app = Box::new(PlinkApp::new(
-                job_spec.num_workers,
-                setting.probe.round_ms,
-                app,
-            ));
-        }
+        // if setting.probe.enable {
+        //     app = Box::new(PlinkApp::new(
+        //         job_spec.num_workers,
+        //         setting.probe.round_ms,
+        //         app,
+        //     ));
+        // }
 
         app
     }
@@ -133,6 +135,9 @@ pub struct AllreduceApp {
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
     flow_iters: HashMap<(Node, Node), usize>,
     // flow_iters: HashMap<Token, usize>,
+    // dynamic probe
+    in_probing: bool,
+    background_flow_app: Option<BackgroundFlowApp>,
 }
 
 impl Application for AllreduceApp {
@@ -169,6 +174,29 @@ impl Application for AllreduceApp {
     }
 
     fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
+        if self.in_probing {
+            // forward the cmd to background_flow_app
+            let fin = self.background_flow_app.as_mut().unwrap().on_event(cmd)?;
+            if fin {
+                self.in_probing = false;
+                let mut temp: HashMap<Node, Endpoint> = HashMap::new();
+                std::mem::swap(
+                    &mut temp,
+                    self.background_flow_app.as_mut().unwrap().workers_mut(),
+                );
+                std::mem::swap(self.workers_mut(), &mut temp);
+                self.background_flow_app = None;
+            }
+
+            if !self.in_probing {
+                assert!(fin);
+                // request nethint
+                self.cluster = None;
+                self.request_nethint(NetHintVersion::V2)?;
+            }
+            return Ok(false);
+        }
+
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
@@ -205,7 +233,11 @@ impl Application for AllreduceApp {
                     {
                         self.cluster = None;
                         assert_eq!(self.setting.nethint_level, 2);
-                        self.request_nethint(NetHintVersion::V2)?;
+                        if self.setting.probe.enable {
+                            self.start_probe()?;
+                        } else {
+                            self.request_nethint(NetHintVersion::V2)?;
+                        }
                         return Ok(false);
                     }
                     unreachable!();
@@ -227,6 +259,30 @@ impl Application for AllreduceApp {
 }
 
 impl AllreduceApp {
+    fn start_probe(&mut self) -> anyhow::Result<()> {
+        assert!(self.setting.probe.enable);
+        assert!(!self.in_probing);
+
+        self.in_probing = true;
+
+        let nhosts = self.job_spec.num_workers;
+        let round_ms = self.setting.probe.round_ms;
+
+        let dur_ms = (nhosts as u64 * round_ms) as _;
+        self.background_flow_app = Some(BackgroundFlowApp::new(
+            std::mem::take(self.workers_mut()),
+            self.brain().clone(),
+            self.hostname_to_node().clone(),
+            self.tenant_id(),
+            nhosts,
+            dur_ms,
+            BackgroundFlowPattern::PlinkProbe,
+            Some(10_000_000), // 8ms on 10G
+        ));
+
+        Ok(())
+    }
+
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         let num_rings = self.setting.num_rings.unwrap_or(1);
         let num_trees = self.setting.num_rings.unwrap_or(self.job_spec.num_workers);
@@ -248,7 +304,11 @@ impl AllreduceApp {
                 2 => NetHintVersion::V2,
                 _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
             };
-            self.request_nethint(version)?;
+            if self.setting.probe.enable {
+                self.start_probe()?;
+            } else {
+                self.request_nethint(version)?;
+            }
             return Ok(());
         }
 
@@ -287,9 +347,10 @@ impl AllreduceApp {
         let niters = self
             .setting
             .auto_tune
-            .unwrap_or(self.job_spec.num_iterations).min(self.remaining_iterations);
+            .unwrap_or(self.job_spec.num_iterations)
+            .min(self.remaining_iterations);
         for (k, size) in matrix {
-        // for flow in flows {
+            // for flow in flows {
             // let size = flow.bytes;
             // let src_hostname = &self.vname_to_hostname[&flow.src];
             // let dst_hostname = &self.vname_to_hostname[&flow.dst];
@@ -404,7 +465,8 @@ impl AllreduceApp {
             let b = vc.get_downlinks(vc.get_node_index(&high_node.name)).count();
             a + n + n * (b - 1) / b
         };
-        let mut demand_sum_bw = (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
+        let mut demand_sum_bw =
+            (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
         if demand_sum_bw > plink_capacity {
             demand_sum_bw = plink_capacity;
         }

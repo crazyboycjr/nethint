@@ -1,5 +1,4 @@
 use crate::controller::app::Application;
-use crate::controller::plink::PlinkApp;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::Rng;
@@ -7,6 +6,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::controller::background_flow::{BackgroundFlowApp, BackgroundFlowPattern};
 use rl::{
     config::ProbeConfig, contraction::Contraction, random_ring::RandomTree, rat::RatTree,
     topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
@@ -95,7 +95,7 @@ impl RLAppBuilder {
         if job_spec.num_workers == 2 {
             setting.auto_tune = None;
         }
-        let mut app: Box<dyn Application> = Box::new(RLApp {
+        let app: Box<dyn Application> = Box::new(RLApp {
             workers: self.workers,
             brain: self.brain,
             hostname_to_node: self.hostname_to_node,
@@ -108,15 +108,17 @@ impl RLAppBuilder {
             vname_to_hostname: Default::default(),
             cluster: None,
             flow_iters: Default::default(),
+            in_probing: false,
+            background_flow_app: None,
         });
 
-        if setting.probe.enable {
-            app = Box::new(PlinkApp::new(
-                job_spec.num_workers,
-                setting.probe.round_ms,
-                app,
-            ));
-        }
+        // if setting.probe.enable {
+        //     app = Box::new(PlinkApp::new(
+        //         job_spec.num_workers,
+        //         setting.probe.round_ms,
+        //         app,
+        //     ));
+        // }
 
         app
     }
@@ -137,6 +139,9 @@ pub struct RLApp {
     vname_to_hostname: HashMap<String, String>,
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
     flow_iters: HashMap<(Node, Node), usize>,
+    // dynamic probe
+    in_probing: bool,
+    background_flow_app: Option<BackgroundFlowApp>,
 }
 
 impl Application for RLApp {
@@ -173,6 +178,29 @@ impl Application for RLApp {
     }
 
     fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
+        if self.in_probing {
+            // forward the cmd to background_flow_app
+            let fin = self.background_flow_app.as_mut().unwrap().on_event(cmd)?;
+            if fin {
+                self.in_probing = false;
+                let mut temp: HashMap<Node, Endpoint> = HashMap::new();
+                std::mem::swap(
+                    &mut temp,
+                    self.background_flow_app.as_mut().unwrap().workers_mut(),
+                );
+                std::mem::swap(self.workers_mut(), &mut temp);
+                self.background_flow_app = None;
+            }
+
+            if !self.in_probing {
+                assert!(fin);
+                // request nethint
+                self.cluster = None;
+                self.request_nethint(NetHintVersion::V2)?;
+            }
+            return Ok(false);
+        }
+
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
@@ -209,7 +237,11 @@ impl Application for RLApp {
                     {
                         self.cluster = None;
                         assert_eq!(self.setting.nethint_level, 2);
-                        self.request_nethint(NetHintVersion::V2)?;
+                        if self.setting.probe.enable {
+                            self.start_probe()?;
+                        } else {
+                            self.request_nethint(NetHintVersion::V2)?;
+                        }
                         return Ok(false);
                     }
                     unreachable!();
@@ -231,6 +263,30 @@ impl Application for RLApp {
 }
 
 impl RLApp {
+    fn start_probe(&mut self) -> anyhow::Result<()> {
+        assert!(self.setting.probe.enable);
+        assert!(!self.in_probing);
+
+        self.in_probing = true;
+
+        let nhosts = self.job_spec.num_workers;
+        let round_ms = self.setting.probe.round_ms;
+
+        let dur_ms = (nhosts as u64 * round_ms) as _;
+        self.background_flow_app = Some(BackgroundFlowApp::new(
+            std::mem::take(self.workers_mut()),
+            self.brain().clone(),
+            self.hostname_to_node().clone(),
+            self.tenant_id(),
+            nhosts,
+            dur_ms,
+            BackgroundFlowPattern::PlinkProbe,
+            Some(10_000_000), // 8ms on 10G
+        ));
+
+        Ok(())
+    }
+
     fn new_rl_algorithm(&self) -> Box<dyn RLAlgorithm> {
         let num_trees = self.setting.num_trees.unwrap_or(1);
         match self.setting.rl_policy {
@@ -250,7 +306,11 @@ impl RLApp {
                 2 => NetHintVersion::V2,
                 _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
             };
-            self.request_nethint(version)?;
+            if self.setting.probe.enable {
+                self.start_probe()?;
+            } else {
+                self.request_nethint(version)?;
+            }
             return Ok(());
         }
 
