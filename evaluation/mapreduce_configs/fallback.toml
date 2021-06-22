@@ -112,4 +112,4 @@ host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 600       # bandwidth of a ToR switch, in Gbps
 
 [envs]
-NETHINT_PROVISION_LOG_FILE = "/tmp/mapr_result/provision.txt"
+NETHINT_PROVISION_LOG_FILE = "/tmp/mapr_result_for_paper/fallback/provision.txt"

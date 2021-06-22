@@ -40,7 +40,7 @@ nethint_level = 0
 
 [[batch]]
 policy = "RAT"
-probe = { enable = true, round_ms = 10 }
+probe = { enable = true, round_ms = 100 }
 nethint_level = 2
 auto_tune = 10
 
