@@ -142,11 +142,19 @@ pub struct AllreduceApp {
 
 impl Application for AllreduceApp {
     fn workers(&self) -> &HashMap<Node, Endpoint> {
-        &self.workers
+        if self.in_probing {
+            self.background_flow_app.as_ref().unwrap().workers()
+        } else {
+            &self.workers
+        }
     }
 
     fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
-        &mut self.workers
+        if self.in_probing {
+            self.background_flow_app.as_mut().unwrap().workers_mut()
+        } else {
+            &mut self.workers
+        }
     }
 
     fn brain(&self) -> &Endpoint {
@@ -175,6 +183,8 @@ impl Application for AllreduceApp {
 
     fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
         if self.in_probing {
+            log::info!("AllreduceApp on_event, in_probing, cmd: {:?}", cmd);
+
             // forward the cmd to background_flow_app
             let fin = self.background_flow_app.as_mut().unwrap().on_event(cmd)?;
             if fin {
@@ -186,13 +196,10 @@ impl Application for AllreduceApp {
                 );
                 std::mem::swap(self.workers_mut(), &mut temp);
                 self.background_flow_app = None;
-            }
 
-            if !self.in_probing {
-                assert!(fin);
-                // request nethint
-                self.cluster = None;
-                self.request_nethint(NetHintVersion::V2)?;
+                log::info!("worker_mut.len: {}", self.workers_mut().len());
+
+                self.allreduce()?;
             }
             return Ok(false);
         }
@@ -260,10 +267,9 @@ impl Application for AllreduceApp {
 
 impl AllreduceApp {
     fn start_probe(&mut self) -> anyhow::Result<()> {
+        log::info!("start probe");
         assert!(self.setting.probe.enable);
         assert!(!self.in_probing);
-
-        self.in_probing = true;
 
         let nhosts = self.job_spec.num_workers;
         let round_ms = self.setting.probe.round_ms;
@@ -279,6 +285,11 @@ impl AllreduceApp {
             BackgroundFlowPattern::PlinkProbe,
             Some(10_000_000), // 8ms on 10G
         ));
+
+        self.in_probing = true;
+
+        self.background_flow_app.as_mut().unwrap().vname_to_hostname = self.vname_to_hostname.clone();
+        self.background_flow_app.as_mut().unwrap().start()?;
 
         Ok(())
     }
@@ -296,6 +307,8 @@ impl AllreduceApp {
     }
 
     pub fn allreduce(&mut self) -> anyhow::Result<()> {
+        log::info!("allreduce");
+
         if self.cluster.is_none() {
             // self.request_provision()?;
             let version = match self.setting.nethint_level {
@@ -304,11 +317,7 @@ impl AllreduceApp {
                 2 => NetHintVersion::V2,
                 _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
             };
-            if self.setting.probe.enable {
-                self.start_probe()?;
-            } else {
-                self.request_nethint(version)?;
-            }
+            self.request_nethint(version)?;
             return Ok(());
         }
 
@@ -487,13 +496,22 @@ impl AllreduceApp {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv1.vname_to_hostname;
                 self.cluster = Some(Rc::new(hintv1.vc));
-                self.allreduce()?;
+
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.allreduce()?;
+                }
             }
             NetHintResponseV2(tenant_id, hintv2, _) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);
-                self.allreduce()?;
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.allreduce()?;
+                }
             }
             _ => {
                 panic!("unexpected brain response: {:?}", msg);

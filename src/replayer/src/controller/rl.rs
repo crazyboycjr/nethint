@@ -146,11 +146,19 @@ pub struct RLApp {
 
 impl Application for RLApp {
     fn workers(&self) -> &HashMap<Node, Endpoint> {
-        &self.workers
+        if self.in_probing {
+            self.background_flow_app.as_ref().unwrap().workers()
+        } else {
+            &self.workers
+        }
     }
 
     fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
-        &mut self.workers
+        if self.in_probing {
+            self.background_flow_app.as_mut().unwrap().workers_mut()
+        } else {
+            &mut self.workers
+        }
     }
 
     fn brain(&self) -> &Endpoint {
@@ -172,6 +180,7 @@ impl Application for RLApp {
     fn start(&mut self) -> anyhow::Result<()> {
         self.remaining_iterations = self.job_spec.num_iterations;
         self.rl_algorithm = Some(self.new_rl_algorithm());
+
         self.rl_traffic()?;
 
         Ok(())
@@ -190,13 +199,8 @@ impl Application for RLApp {
                 );
                 std::mem::swap(self.workers_mut(), &mut temp);
                 self.background_flow_app = None;
-            }
 
-            if !self.in_probing {
-                assert!(fin);
-                // request nethint
-                self.cluster = None;
-                self.request_nethint(NetHintVersion::V2)?;
+                self.rl_traffic()?;
             }
             return Ok(false);
         }
@@ -267,8 +271,6 @@ impl RLApp {
         assert!(self.setting.probe.enable);
         assert!(!self.in_probing);
 
-        self.in_probing = true;
-
         let nhosts = self.job_spec.num_workers;
         let round_ms = self.setting.probe.round_ms;
 
@@ -283,6 +285,11 @@ impl RLApp {
             BackgroundFlowPattern::PlinkProbe,
             Some(10_000_000), // 8ms on 10G
         ));
+
+        self.in_probing = true;
+
+        self.background_flow_app.as_mut().unwrap().vname_to_hostname = self.vname_to_hostname.clone();
+        self.background_flow_app.as_mut().unwrap().start()?;
 
         Ok(())
     }
@@ -306,11 +313,7 @@ impl RLApp {
                 2 => NetHintVersion::V2,
                 _ => panic!("unexpected nethint_level: {}", self.setting.nethint_level),
             };
-            if self.setting.probe.enable {
-                self.start_probe()?;
-            } else {
-                self.request_nethint(version)?;
-            }
+            self.request_nethint(version)?;
             return Ok(());
         }
 
@@ -486,13 +489,21 @@ impl RLApp {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv1.vname_to_hostname;
                 self.cluster = Some(Rc::new(hintv1.vc));
-                self.rl_traffic()?;
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.rl_traffic()?;
+                }
             }
             NetHintResponseV2(tenant_id, hintv2, _) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);
-                self.rl_traffic()?;
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.rl_traffic()?;
+                }
             }
             _ => {
                 panic!("unexpected brain response: {:?}", msg);
