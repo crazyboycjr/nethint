@@ -240,11 +240,7 @@ impl Application for AllreduceApp {
                     {
                         self.cluster = None;
                         assert_eq!(self.setting.nethint_level, 2);
-                        if self.setting.probe.enable {
-                            self.start_probe()?;
-                        } else {
-                            self.request_nethint(NetHintVersion::V2)?;
-                        }
+                        self.request_nethint(NetHintVersion::V2)?;
                         return Ok(false);
                     }
                     unreachable!();

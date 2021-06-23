@@ -111,7 +111,7 @@ impl BackgroundFlowApp {
             let dst_node = &self.hostname_to_node[dst_hostname];
             let flow = Flow::new(self.msg_size, src_node.clone(), dst_node.clone(), None);
             let cmd = message::Command::EmitFlow(flow);
-            log::debug!("allreduce::run, cmd: {:?}", cmd);
+            log::debug!("plink_probe_round, cmd: {:?}", cmd);
             let endpoint = self.workers.get_mut(src_node).unwrap_or_else(|| {
                 panic!(
                     "sname: {}, src_hostname: {}, src_node: {:?}, workers: {:?}",
