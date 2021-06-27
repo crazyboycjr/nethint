@@ -1061,7 +1061,8 @@ impl FlowState {
     #[inline]
     fn completed(&self) -> bool {
         // TODO(cjr): check the precision of this condition
-        self.bytes_sent >= self.flow.bytes
+        // self.bytes_sent >= self.flow.bytes
+        self.bytes_sent >= self.flow.bytes || self.time_to_complete() == 0
     }
 
     #[inline]
