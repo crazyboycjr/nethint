@@ -65,10 +65,11 @@ impl RLAlgorithm for TopologyAwareTree {
             // filter all nodes in the communication group
             if group.is_some() {
                 let g = group.clone().unwrap();
-                ring.retain(|x| g.contains(x));
+                ring.retain(|x| *x == root_index || g.contains(x));
             }
 
             let pos = ring.iter().position(|x| *x == root_index).unwrap();
+            let n = ring.len();
 
             // log::error!("pos {} n {}", pos, n);
             // log::error!("{}",root_index);

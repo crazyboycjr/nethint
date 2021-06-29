@@ -19,11 +19,13 @@ job_size_distribution = [[40, 64], [40, 32]]
 buffer_size = 6_800_000
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 1000
+
+partially_sync = true
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
-# poisson_lambda = 8_000_000_000.0
-poisson_lambda = 8_00_000_000.0
+poisson_lambda = 8_000_000_000.0
+# poisson_lambda = 8_00_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -59,7 +61,7 @@ policy = "RAT"
 probe = { enable = true, round_ms = 100 }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 100
+auto_tune = 1000
 
 [[batch]]
 policy = "TopologyAware" # which is ring
@@ -71,7 +73,7 @@ policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 10
+auto_tune = 100
 
 [simulator]
 nethint = true
@@ -81,7 +83,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 5_000_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 1_00_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
