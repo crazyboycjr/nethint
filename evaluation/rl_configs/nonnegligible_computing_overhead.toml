@@ -24,7 +24,7 @@ num_iterations = 1000
 partially_sync = true
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
-poisson_lambda = 8_000_000_000.0
+poisson_lambda = 4_000_000_000.0
 # poisson_lambda = 8_00_000_000.0
 
 placement_strategy = { type = "Compact" }
