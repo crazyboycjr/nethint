@@ -4,8 +4,8 @@ use nethint::{
     cluster::{helpers::*, Topology},
     Flow,
 };
+use rat_solver::{CachedSolver, RatSolver, Solver};
 use utils::algo::*;
-use rat_solver::{Solver, RatSolver, CachedSolver};
 
 #[derive(Debug, Default)]
 pub struct RatTree {
@@ -22,10 +22,11 @@ impl RLAlgorithm for RatTree {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
+        group: Option<Vec<usize>>,
         size: u64,
         vcluster: &dyn Topology,
     ) -> Vec<Flow> {
-        self.run_rl_traffic(root_index, size, vcluster)
+        self.run_rl_traffic(root_index, group, size, vcluster)
     }
 }
 
@@ -102,9 +103,89 @@ fn construct_rat_offset(
     tree
 }
 
+fn prune_tree(x: TreeIdx, tree: &mut Tree, group: &[usize]) -> bool {
+    let mut children = Vec::new();
+    for &e in tree.neighbor_edges(x) {
+        let y = tree[e].to();
+        children.push(y);
+    }
+
+    let mut can_cut = !group.contains(&tree[x].rank());
+    for y in children {
+        let can_cut_br = prune_tree(y, tree, group);
+        if can_cut_br {
+            tree.cut(x, y);
+        }
+        can_cut &= can_cut_br;
+    }
+
+    can_cut
+}
+
+fn prune(tree_set: &mut Vec<Tree>, group: &[usize]) {
+    // prune all leaves that are not in the broadcast group
+    for tree in tree_set {
+        prune_tree(tree.root(), tree, group);
+    }
+}
+
+fn generate_embeddings2<F>(
+    vc: &dyn Topology,
+    root_index: usize,
+    group: &Option<Vec<usize>>,
+    num_trees_bound: usize,
+    construct_embedding_offset: F,
+) -> Vec<Tree>
+where
+    F: Fn(&dyn Topology, &Vec<Vec<usize>>, usize, usize) -> Tree,
+{
+    let n = vc.num_hosts();
+
+    let groups = {
+        // each group consists of the nodes within a rack
+        let mut groups = if group.is_some() {
+            group_by_key(group.clone().unwrap().into_iter(), |&i| get_rack_ix(vc, i))
+        } else {
+            group_by_key(0..n, |&i| get_rack_ix(vc, i))
+        };
+        // make the group contains the root_index the first group
+        let root_group_pos = groups.iter().position(|g| g.contains(&root_index)).unwrap();
+        groups.swap(0, root_group_pos);
+        // remove the root node from the first group for convenience later
+        groups[0].retain(|&x| x != root_index);
+        // in case that the root group becomes empty
+        if groups[0].is_empty() {
+            groups.remove(0);
+        }
+        groups
+    };
+
+    let n = if group.is_some() {
+        group.as_ref().unwrap().len() - 1
+    } else {
+        n - 1
+    };
+    let m = n.min(num_trees_bound);
+    let mut base = 0;
+    let mut tree_set = Vec::with_capacity(m);
+    for i in 0..m {
+        let off = if m < n {
+            (base + i / groups.len()) % n
+        } else {
+            i
+        };
+        let tree_i = construct_embedding_offset(vc, &groups, root_index, off);
+        tree_set.push(tree_i);
+        base += groups[i % groups.len()].len();
+    }
+
+    tree_set
+}
+
 fn generate_embeddings<F>(
     vc: &dyn Topology,
     root_index: usize,
+    group: &Option<Vec<usize>>,
     num_trees_bound: usize,
     construct_embedding_offset: F,
 ) -> Vec<Tree>
@@ -143,25 +224,36 @@ where
         base += groups[i % groups.len()].len();
     }
 
+    if group.is_some() {
+        prune(&mut tree_set, group.as_ref().unwrap())
+    }
+
     tree_set
 }
 
 impl RatTree {
-    fn run_rl_traffic(&mut self, root_index: usize, size: u64, vc: &dyn Topology) -> Vec<Flow> {
+    fn run_rl_traffic(
+        &mut self,
+        root_index: usize,
+        mut group: Option<Vec<usize>>,
+        size: u64,
+        vc: &dyn Topology,
+    ) -> Vec<Flow> {
+        if group.is_some() {
+            group.as_mut().unwrap().sort();
+            group.as_mut().unwrap().insert(0, root_index);
+        }
+
         let generate_func = || -> Vec<Tree> {
-            vec![generate_embeddings(
-                vc,
-                root_index,
-                vc.num_hosts(),
-                construct_rat_offset,
-            )]
+            vec![
+                // generate_embeddings(vc, root_index, &group, vc.num_hosts(), construct_rat_offset),
+                generate_embeddings2(vc, root_index, &group, vc.num_hosts(), construct_rat_offset),
+            ]
             .concat()
         };
 
         // let mut rat_solver = RatSolver::new(generate_func);
-        let mut rat_solver: CachedSolver<RatSolver<_>, _, _> = CachedSolver::new(generate_func);
-        rat_solver.solve(&(root_index, size, vc))
+        let mut rat_solver: CachedSolver<RatSolver<_, _>, _, _> = CachedSolver::new(generate_func);
+        rat_solver.solve(&(size, vc, root_index, &group))
     }
 }
-
-

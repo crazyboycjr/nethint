@@ -142,6 +142,7 @@ fn run_batch(
             batch.auto_tune,
             batch.probe,
             nhosts_to_acquire,
+            config.partially_sync,
         ));
 
         // let app: Box<dyn Application<Output = _>> = if batch.probe.enable {

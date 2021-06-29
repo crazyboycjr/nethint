@@ -17,6 +17,7 @@ impl RLAlgorithm for TopologyAwareTree {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
+        group: Option<Vec<usize>>,
         size: u64,
         vcluster: &dyn Topology,
     ) -> Vec<Flow> {
@@ -59,6 +60,12 @@ impl RLAlgorithm for TopologyAwareTree {
                 for node_idx in ringlet {
                     ring.push(node_idx);
                 }
+            }
+
+            // filter all nodes in the communication group
+            if group.is_some() {
+                let g = group.clone().unwrap();
+                ring.retain(|x| g.contains(x));
             }
 
             let pos = ring.iter().position(|x| *x == root_index).unwrap();

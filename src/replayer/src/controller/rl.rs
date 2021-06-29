@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::controller::background_flow::{BackgroundFlowApp, BackgroundFlowPattern};
 use rl::{
-    config::ProbeConfig, contraction::Contraction, random_ring::RandomTree, rat::RatTree,
+    config::ProbeConfig, random_ring::RandomTree, rat::RatTree,
     topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
@@ -296,7 +296,7 @@ impl RLApp {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, num_trees)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, num_trees)),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
-            RLPolicy::Contraction => Box::new(Contraction::new(self.seed)),
+            RLPolicy::Contraction => panic!("do not use Contraction algorithm")
         }
     }
 

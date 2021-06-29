@@ -1,7 +1,7 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 30
+ncases = 10
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
@@ -9,20 +9,29 @@ ncases = 30
 # job_size_distribution = [[40, 4], [40, 8], [40, 12]]
 # job_size_distribution = [[40, 4], [40, 8], [20, 12], [20, 16]]
 # job_size_distribution = [[40, 32], [40, 64]]
-job_size_distribution = [[40, 4], [40, 8], [40, 12]]
+# job_size_distribution = [[40, 4], [40, 8], [40, 12]]
 # job_size_distribution = [[1, 2], [1, 4], [1, 8], [1, 16], [1, 32], [1, 64]]
 # job_size_distribution = [[40, 6]]
 # job_size_distribution = [[40, 6], [40, 12]]
+job_size_distribution = [[40, 8], [40, 16]]
 
 # Buffer size of all jobs, in bytes
-buffer_size = 100_000_000
+# buffer_size = 100_000_000
+buffer_size = 64_000_000
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 1000
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
+# 64MB/50Gbps*1000 = 10.24s
 # poisson_lambda = 8_000_000_000.0
-poisson_lambda = 8_000_000_000.0
+poisson_lambda = 4_000_000_000.0
+
+# When set to true, the broadcast can start when a majority of workers finish a round.
+# For example, 1 trainer and 7 workers, once 4 workers have finish a round of simulation,
+# they can send the trace to the trainer immediately and the trainer can broadcast the
+# updated model back to these workers.
+partially_sync = true
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -53,26 +62,26 @@ nethint_level = 2
 # probe = { enable = false }
 # nethint_level = 1
 
-[[batch]]
-policy = "RAT"
-probe = { enable = true, round_ms = 100 }
-nethint_level = 2
-# Auto tune after some iterations. default is disabled
-auto_tune = 1
+# [[batch]]
+# policy = "RAT"
+# probe = { enable = true, round_ms = 100 }
+# nethint_level = 2
+# # Auto tune after some iterations. default is disabled
+# auto_tune = 10
 
 [[batch]]
 policy = "RAT"
 probe = { enable = true, round_ms = 100 }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 100
+auto_tune = 1000
 
 [[batch]]
 policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 1
+auto_tune = 10
 
 [simulator]
 nethint = true

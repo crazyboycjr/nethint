@@ -46,6 +46,12 @@ pub struct ExperimentConfig {
     /// Lambda of the poisson arrival
     pub poisson_lambda: f64,
 
+    /// When set to true, the broadcast can start when a majority of workers finish a round.
+    /// For example, 1 trainer and 7 workers, once 4 workers have finish a round of simulation,
+    /// they can send the trace to the trainer immediately and the trainer can broadcast the
+    /// updated model back to these workers.
+    pub partially_sync: bool,
+
     /// akin to AWS Placement Group
     pub placement_strategy: brain::PlacementStrategy,
 

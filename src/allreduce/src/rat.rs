@@ -406,29 +406,9 @@ impl AllReduceAlgorithm for RatAllReduce {
             .concat()
         };
 
-        let mut rat_solver: CachedSolver<RatSolver<_>, _, _> = CachedSolver::new(generate_func);
+        let mut rat_solver: CachedSolver<RatSolver<_, _>, _, _> = CachedSolver::new(generate_func);
         // NOTE(cjr): use non-cached solver when testing controller overhead
         // let mut rat_solver = RatSolver::new(generate_func);
-        rat_solver.solve(&(0, size, vcluster))
+        rat_solver.solve(&(size, vcluster))
     }
-    // fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
-    //     if self.check_cache((size, vcluster)) {
-    //         return self.last_result.clone();
-    //     }
-
-    //     // let tree_set = generate_rats(vcluster, self.num_trees);
-    //     let tree_set = vec![
-    //         generate_embeddings(vcluster, self.num_trees, construct_rat_offset),
-    //         generate_embeddings(vcluster, self.num_trees, construct_ps_offset),
-    //         // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
-    //     ].concat();
-    //     // log::info!("tree_set: {:#?}", tree_set);
-    //     let weights = linear_programming(vcluster, &tree_set, size);
-    //     let flows  = construct_flows(&tree_set, &weights, size);
-
-    //     self.update_cache((size, vcluster), flows.clone());
-    //     self.last_result = flows.clone();
-
-    //     flows
-    // }
 }

@@ -10,12 +10,15 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::{
-    config::ProbeConfig,
-    contraction::Contraction, random_ring::RandomTree, rat::RatTree,
-    topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
+    config::ProbeConfig, random_ring::RandomTree, rat::RatTree, topology_aware::TopologyAwareTree,
+    JobSpec, RLAlgorithm, RLPolicy,
 };
 
 use utils::collector::OverheadCollector;
+
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 
 pub struct RLApp {
     root_index_modifed: bool,
@@ -36,6 +39,9 @@ pub struct RLApp {
     in_probing: bool,
     probing_start_time: Timestamp,
     background_flow_app: Option<BackgroundFlowApp<Option<Duration>>>,
+    // partially sync
+    partially_sync: bool,
+    group_rng: Option<StdRng>,
 }
 
 impl std::fmt::Debug for RLApp {
@@ -54,6 +60,7 @@ impl RLApp {
         autotune: Option<usize>,
         probe: ProbeConfig,
         nhosts_to_acquire: usize,
+        partially_sync: bool,
     ) -> Self {
         let trace = Trace::new();
         RLApp {
@@ -74,6 +81,12 @@ impl RLApp {
             in_probing: false,
             probing_start_time: 0,
             background_flow_app: None,
+            partially_sync,
+            group_rng: if partially_sync {
+                Some(SeedableRng::seed_from_u64(seed))
+            } else {
+                None
+            },
         }
     }
 
@@ -88,12 +101,28 @@ impl RLApp {
         let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.rl_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
-            RLPolicy::Contraction => Box::new(Contraction::new(self.seed)),
+            RLPolicy::Contraction => panic!("do not use Contraction algorithm"),
             RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
+        };
+
+        let group = if self.partially_sync {
+            // generate group members of (n-1)/2+1
+            let n = self.job_spec.num_workers;
+            let mut members: Vec<usize> = (0..n).collect();
+            members.remove(self.job_spec.root_index);
+
+            let (group, _) =
+                members.partial_shuffle(self.group_rng.as_mut().unwrap(), (n - 1) / 2 + 1);
+            let g: Vec<usize> = group.into();
+            log::debug!("group members: {:?}", g);
+            Some(g)
+        } else {
+            None
         };
 
         let flows = rl_algorithm.run_rl_traffic(
             self.job_spec.root_index,
+            group,
             self.job_spec.buffer_size as u64,
             &**self.cluster.as_ref().unwrap(),
         );

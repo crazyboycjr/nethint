@@ -154,6 +154,18 @@ impl Tree {
     }
 
     #[inline]
+    pub fn cut(&mut self, p: TreeIdx, c: TreeIdx) {
+        self[c].parent.take().ok_or(()).unwrap();
+        let pos = self[p].neighbor_edges().position(|&x| self[x].to() == c).unwrap();
+        self[p].neighbor_edges.remove(pos);
+
+        if !self.is_directed() {
+            let pos = self[c].neighbor_edges().position(|&x| self[x].to() == p).unwrap();
+            self[c].neighbor_edges.remove(pos);
+        }
+    }
+
+    #[inline]
     pub fn root(&self) -> TreeIdx {
         assert!(!self.nodes.is_empty());
         TreeIdx(0)
