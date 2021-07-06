@@ -308,6 +308,14 @@ impl<'c> Application for MapReduceApp<'c> {
                     self.overhead_collector.collect(computing_delay, self.job_spec.num_map.max(self.job_spec.num_reduce));
 
                     log::info!("computing_delay: {:?}", computing_delay);
+
+                    if ReducerPlacementPolicy::HierarchicalGreedyLevel1 == self.reducer_place_policy {
+                        return Event::UserRegisterTimer(
+                            100_000, // 100us
+                            None,
+                        )
+                        .into();
+                    }
                     return Event::UserRegisterTimer(
                         computing_delay.as_nanos().try_into().unwrap(),
                         None,
