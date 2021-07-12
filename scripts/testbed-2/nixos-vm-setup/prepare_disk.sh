@@ -3,7 +3,8 @@
 # This script will create cpu_vm_base.img in the current directory,
 # the cpu_vm_base.img can be used as a disk and boot by qemu
 
-FSLABEL="NixOS" MNT_DIR=./mnt
+FSLABEL="NixOS"
+MNT_DIR=./mnt
 mkdir -p $MNT_DIR
 
 DISK_IMG=/tmp/nixos_vm_base.img
@@ -56,21 +57,38 @@ mount $LOOP_PART $MNT_DIR
 # nixos-generate-config --root $MNT_DIR --no-filesystems
 # edit ${MNT_DIR}/etc/nixos/configuration.nix
 # nixos-install --root $MNT_DIR
-mkdir -p $MNT_DIR/etc/nixos/
-cp pubkeys.nix configuration.nix hardware-configuration.nix $MNT_DIR/etc/nixos/
-export NIX_PATH=nixpkgs=/nix/var/nix/profiles/per-user/cjr/channels/nixos/nixpkgs
-# this command will fail at installing bootloader, but it will successfully create grub.cfg
-nixos-install --root $(realpath $MNT_DIR) --no-root-passwd
-# so re-execute it to finish the remaining stages
-nixos-install --root $(realpath $MNT_DIR) --no-bootloader --no-root-passwd
 
-# install bootloader manually. Somehow the nixos-enter cannot work with grub-install on distros other than NixOS
+NIXOS_INSTALL=`command -v nixos-install`
+NIXOS_ENTER=`command -v nixos-enter`
+
+mkdir -p $MNT_DIR/etc/nixos/
+cp flake.nix pubkeys.nix configuration.nix hardware-configuration.nix $MNT_DIR/etc/nixos/
+export NIX_PATH=nixpkgs=/nix/var/nix/profiles/per-user/cjr/channels/nixos/nixpkgs
+PATH_BAK=$PATH
+export PATH=/run/wrappers/bin:/root/.nix-profile/bin:/etc/profiles/per-user/root/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin:$PATH
+
+# this command will fail at installing bootloader, but it will successfully create grub.cfg
+echo stage 1 NIXOS_INSTALL=$NIXOS_INSTALL
+$NIXOS_INSTALL --root $(realpath $MNT_DIR) --no-root-passwd --flake "$MNT_DIR/etc/nixos#nixos" --impure
+# so re-execute it to finish the remaining stages
+echo stage 2 NIXOS_INSTALL=$NIXOS_INSTALL
+$NIXOS_INSTALL --root $(realpath $MNT_DIR) --no-bootloader --no-root-passwd --flake "$MNT_DIR/etc/nixos#nixos" --impure
+
+# install bootloader manually. Somehow the nixos-enter cannot work with grub-install on distros other than NixOS,
 # so I have to use this workaround. TODO(cjr): Also make sure the two grub2 are the same version.
-nix-shell -p grub2 --run "grub-install --boot-directory=$MNT_DIR/boot --recheck --target=i386-pc $LOOP_DEV"
+$NIXOS_ENTER --root $MNT_DIR -c "grub-install --boot-directory=boot --recheck --target=i386-pc $LOOP_DEV"
 
 # some impure staff
-echo "# Created automatically" > $MNT_DIR/home/tenant/.zshrc
+# touch .zshrc
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"echo '# Created automatically' > /home/tenant/.zshrc\""
+# generate ssh a key and authorize it
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"echo | ssh-keygen -t ed25519 -P ''\""
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"cp /home/tenant/.ssh/id_ed25519.pub /home/tenant/.ssh/authorized_keys\""
 
+# export NIX_PATH=nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixos:nixos-config=/etc/nixos/configuration.nix:/nix/var/nix/profiles/per-user/root/channels
+# export PATH=/run/wrappers/bin:/home/tenant/.nix-profile/bin:/etc/profiles/per-user/tenant/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin
+
+export PATH=$PATH_BAK
 sync
 umount $MNT_DIR
 losetup -D

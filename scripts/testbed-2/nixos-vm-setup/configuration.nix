@@ -84,13 +84,13 @@ in
   # Define a user account. Don't forget to set a password with ‘passwd’.
   users.users.tenant = {
     isNormalUser = true;
-	initialHashedPassword = "$6$/1p.mph/$D7ABM0Q92dPIUZh8YPc0y/3D6ioCRR4kZGQuGpq9iwMzaolKL7nbY.jzI3dfwQ9qVl50w2CujpEtraXSdpjDk.";
+    initialHashedPassword = "$6$/1p.mph/$D7ABM0Q92dPIUZh8YPc0y/3D6ioCRR4kZGQuGpq9iwMzaolKL7nbY.jzI3dfwQ9qVl50w2CujpEtraXSdpjDk.";
     extraGroups = [ "wheel" ]; # Enable ‘sudo’ for the user.
     openssh.authorizedKeys.keys = sshPublicKeys;
   };
   users.extraUsers.root = {
-	initialHashedPassword = "$6$/1p.mph/$D7ABM0Q92dPIUZh8YPc0y/3D6ioCRR4kZGQuGpq9iwMzaolKL7nbY.jzI3dfwQ9qVl50w2CujpEtraXSdpjDk.";
-	openssh.authorizedKeys.keys = sshPublicKeys;
+    initialHashedPassword = "$6$/1p.mph/$D7ABM0Q92dPIUZh8YPc0y/3D6ioCRR4kZGQuGpq9iwMzaolKL7nbY.jzI3dfwQ9qVl50w2CujpEtraXSdpjDk.";
+    openssh.authorizedKeys.keys = sshPublicKeys;
   };
 
   security.sudo.extraConfig = ''
@@ -101,15 +101,22 @@ in
   # $ nix search wget
   environment.systemPackages = with pkgs; [
     vim
-    wget curl mtr htop iproute2 pciutils rsync tree
+    wget curl mtr htop iproute2 pciutils rsync tree jq
     zsh grml-zsh-config
     git
     unixtools.ping
     python3
     iperf2
+    patchelf binutils
   ];
   # environment.variables = {
   # };
+  environment.etc."../home/tenant/.zshrc" = {
+    user = "tenant";
+    group = "users";
+    mode = "0644";
+    text = "# Created automatically";
+  };
 
   # Some programs need SUID wrappers, can be configured further or are
   # started in user sessions.
@@ -135,26 +142,42 @@ in
       HISTFILESIZE=400000000
 
       # Prompt modifications.
-      #
-      # In current grml zshrc, changing `$PROMPT` no longer works,
-      # and `zstyle` is used instead, see:
-      # https://unix.stackexchange.com/questions/656152/why-does-setting-prompt-have-no-effect-in-grmls-zshrc
-
-      # Disable the grml `sad-smiley` on the right for exit codes != 0;
-      # it makes copy-pasting out terminal output difficult.
-      # Done by setting the `items` of the right-side setup to the empty list
-      # (as of writing, the default is `items sad-smiley`).
-      # See: https://bts.grml.org/grml/issue2267
+      # https://discourse.nixos.org/t/using-zsh-with-grml-config-and-nix-shell-prompt-indicator/13838
       zstyle ':prompt:grml:right:setup' items
 
-      # Add nix-shell indicator that makes clear when we're in nix-shell.
-      # Set the prompt items to include it in addition to the defaults:
-      # Described in: http://bewatermyfriend.org/p/2013/003/
       function nix_shell_prompt () {
+        if echo "$PATH" | ${pkgs.gnugrep}/bin/grep -qc '/nix/store'; then
+          IN_NIX_SHELL=1
+        fi
         REPLY=''${IN_NIX_SHELL+"(nix-shell):"}
       }
-      grml_theme_add_token nix-shell-indicator -f nix_shell_prompt '%F{magenta}' '%f'
+      grml_theme_has_token nix-shell-indicator || grml_theme_add_token nix-shell-indicator -f nix_shell_prompt '%F{magenta}' '%f'
       zstyle ':prompt:grml:left:setup' items rc nix-shell-indicator change-root user at host path vcs percent
+
+      # fix zsh completion for nix experimental features
+      function _nix() {
+        local ifs_bk="$IFS"
+        local input=("''${(Q)words[@]}")
+        IFS=$'\n'
+        local res=($(NIX_GET_COMPLETIONS=$((CURRENT - 1)) "$input[@]"))
+        IFS="$ifs_bk"
+        local tpe="''${''${res[1]}%%>	*}" # \t* here
+        local -a suggestions
+        declare -a suggestions
+        for suggestion in ''${res:1}; do
+          # FIXME: This doesn't work properly if the suggestion word contains a `:`
+          # itself
+          suggestions+="''${suggestion/	/:}" # \t here
+        done
+        if [[ "$tpe" == filenames ]]; then
+          compadd -f
+        fi
+        _describe 'nix' suggestions
+      }
+
+      compdef _nix nix
+
+      setopt noextendedglob
     '';
   };
 
@@ -168,6 +191,33 @@ in
   # networking.firewall.allowedUDPPorts = [ ... ];
   # Or disable the firewall altogether.
   networking.firewall.enable = false;
+
+  # Nixpkgs
+  nixpkgs.config.allowUnfree = true;
+
+  system.activationScripts = {
+    ldlinux.text = ''
+      mkdir -m 0755 -p /lib64 /lib
+      linker=ld-linux-x86-64.so.2
+      ln -sfn "${pkgs.glibc}/lib/$linker" /lib64/.$linker.tmp
+      mv /lib64/.$linker.tmp /lib64/$linker
+      ln -sfn "${pkgs.glibc}/lib/$linker" /lib/.$linker.tmp
+      mv /lib/.$linker.tmp /lib/$linker
+    '';
+
+    binbash.text = ''
+      mkdir -m 0755 -p /bin
+      ln -sfn "${pkgs.bashInteractive}/bin/bash" /bin/.bash.tmp
+      mv /bin/.bash.tmp /bin/bash # atomically replace /bin/bash
+    '';
+  };
+
+  nix = {
+    package = pkgs.nixUnstable;
+    extraOptions = ''
+      experimental-features = nix-command flakes ca-references
+    '';
+  };
 
   # This value determines the NixOS release from which the default
   # settings for stateful data, like file locations and database versions
