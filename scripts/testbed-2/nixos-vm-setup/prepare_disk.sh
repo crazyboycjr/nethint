@@ -81,9 +81,14 @@ $NIXOS_ENTER --root $MNT_DIR -c "grub-install --boot-directory=boot --recheck --
 # some impure staff
 # touch .zshrc
 $NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"echo '# Created automatically' > /home/tenant/.zshrc\""
-# generate ssh a key and authorize it
-$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"echo | ssh-keygen -t ed25519 -P ''\""
-$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"cp /home/tenant/.ssh/id_ed25519.pub /home/tenant/.ssh/authorized_keys\""
+# generate ssh a key and authorize it.
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"mkdir -p -m 0700 /home/tenant/.ssh\""
+wget https://cjr.host/download/config/vm_sshkey.pub -O $MNT_DIR/tmp/vm_sshkey.pub
+wget https://cjr.host/download/config/vm_sshkey.pri -O $MNT_DIR/tmp/vm_sshkey.pri
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"install -T -m 644 /tmp/vm_sshkey.pub /home/tenant/.ssh/id_ed25519.pub\""
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"cat /tmp/vm_sshkey.pub >> /home/tenant/.ssh/authorized_keys\""
+$NIXOS_ENTER --root $MNT_DIR -c "su tenant -c \"install -T -m 600 /tmp/vm_sshkey.pri /home/tenant/.ssh/id_ed25519\""
+rm $MNT_DIR/tmp/vm_sshkey.pri $MNT_DIR/tmp/vm_sshkey.pub
 
 # export NIX_PATH=nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixos:nixos-config=/etc/nixos/configuration.nix:/nix/var/nix/profiles/per-user/root/channels
 # export PATH=/run/wrappers/bin:/home/tenant/.nix-profile/bin:/etc/profiles/per-user/tenant/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin
