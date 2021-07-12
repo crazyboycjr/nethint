@@ -12,6 +12,7 @@ configs=(
 # standard2.toml
 standard3.toml
 casestudy2.toml
+nonnegligible_computing_overhead.toml
 # background_dynamic_strong.toml
 # background_off.toml
 # background_static_strong.toml
