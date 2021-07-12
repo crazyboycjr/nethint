@@ -273,6 +273,7 @@ mod sched_rl {
                     buffer_size: config.buffer_size,
                     num_iterations: config.num_iterations,
                     poisson_lambda: config.poisson_lambda,
+                    partially_sync: config.partially_sync,
                     seed_base: config.seed,
                     traffic_scale: 1.0,
                     rl_policy: batch.policy,

@@ -2,7 +2,7 @@ use crate::controller::app::Application;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::Rng;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, SeedableRng, seq::SliceRandom};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -30,6 +30,7 @@ pub struct RLSetting {
     pub buffer_size: usize,
     pub num_iterations: usize,
     pub poisson_lambda: f64,
+    pub partially_sync: bool,
     pub seed_base: u64,
     pub traffic_scale: f64,
     pub rl_policy: RLPolicy,
@@ -110,6 +111,11 @@ impl RLAppBuilder {
             flow_iters: Default::default(),
             in_probing: false,
             background_flow_app: None,
+            group_rng: if setting.partially_sync {
+                Some(SeedableRng::seed_from_u64(seed))
+            } else {
+                None
+            }
         });
 
         // if setting.probe.enable {
@@ -142,6 +148,8 @@ pub struct RLApp {
     // dynamic probe
     in_probing: bool,
     background_flow_app: Option<BackgroundFlowApp>,
+    // partially sync
+    group_rng: Option<StdRng>,
 }
 
 impl Application for RLApp {
@@ -320,9 +328,25 @@ impl RLApp {
             self.rl_algorithm = Some(self.new_rl_algorithm());
         }
 
+        let group = if self.setting.partially_sync {
+            // generate group members of (n-1)/2+1
+            let n = self.job_spec.num_workers;
+            let mut members: Vec<usize> = (0..n).collect();
+            members.remove(self.job_spec.root_index);
+
+            let (group, _) =
+                members.partial_shuffle(self.group_rng.as_mut().unwrap(), (n - 1) / 2 + 1);
+            let g: Vec<usize> = group.into();
+            log::debug!("group members: {:?}", g);
+            Some(g)
+        } else {
+            None
+        };
+
         log::debug!("hint: {}", self.cluster.as_ref().unwrap().to_dot());
         let flows = self.rl_algorithm.as_mut().unwrap().run_rl_traffic(
             self.job_spec.root_index,
+            group,
             self.job_spec.buffer_size as u64,
             &**self.cluster.as_ref().unwrap(),
         );

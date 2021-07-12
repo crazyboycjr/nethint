@@ -182,6 +182,7 @@ where
     tree_set
 }
 
+#[allow(unused)]
 fn generate_embeddings<F>(
     vc: &dyn Topology,
     root_index: usize,

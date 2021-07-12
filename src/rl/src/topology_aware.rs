@@ -27,8 +27,6 @@ impl RLAlgorithm for TopologyAwareTree {
 
         let mut flows = Vec::new();
 
-        let n = vcluster.num_hosts();
-
         for _ in 0..self.num_trees {
             let mut ring = Vec::new();
 
