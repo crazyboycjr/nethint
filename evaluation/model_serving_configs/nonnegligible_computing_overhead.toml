@@ -1,7 +1,7 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 1
+ncases = 50
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 64], [40, 32]]
@@ -30,7 +30,7 @@ seed = 1
 directory = "/tmp/model_serving_result_for_paper/nonnegligible_computing_overhead"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -47,12 +47,12 @@ nethint_level = 2
 # probe = { enable = false }
 # nethint_level = 1
 
-[[batch]]
-policy = "RAT"
-probe = { enable = true, round_ms = 100 }
-nethint_level = 2
-# Auto tune after some iterations. default is disabled
-auto_tune = 1000
+# [[batch]]
+# policy = "RAT"
+# probe = { enable = true, round_ms = 100 }
+# nethint_level = 2
+# # Auto tune after some iterations. default is disabled
+# auto_tune = 1000
 
 [[batch]]
 policy = "TopologyAware" # which is ring
@@ -74,7 +74,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 5_00_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 2_00_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
@@ -107,7 +107,7 @@ type = "Arbitrary"  # another possible value is "FatTree"
 nracks = 320        # the number of racks
 rack_size = 6      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
-rack_bw = 200       # bandwidth of a ToR switch, in Gbps
+rack_bw = 400       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # KEY = "value"
