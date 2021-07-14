@@ -111,12 +111,6 @@ in
   ];
   # environment.variables = {
   # };
-  environment.etc."../home/tenant/.zshrc" = {
-    user = "tenant";
-    group = "users";
-    mode = "0644";
-    text = "# Created automatically";
-  };
 
   # Some programs need SUID wrappers, can be configured further or are
   # started in user sessions.
