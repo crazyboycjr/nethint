@@ -46,7 +46,8 @@ struct HostnameIpTable {
 
 lazy_static::lazy_static! {
     static ref HOSTNAME_IP_TABLE: HostnameIpTable = {
-        let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("cpu{}", x)).collect();
+        // let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("cpu{}", x)).collect();
+        let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("nixos{}", x)).collect();
         let ipaddrs: Vec<&str> = include!("./vm_ip_addrs.in");
         HostnameIpTable {
             table: hostnames.into_iter().zip(ipaddrs).map(|(k, v)| (k, v.to_string())).collect()
@@ -70,7 +71,7 @@ fn request_provision(
     nhosts_to_acquire: usize,
     allow_delay: bool,
 ) -> anyhow::Result<NetHintV1Real> {
-    use nhagent::message::Message;
+    use nhagent_v2::message::Message;
     let msg = Message::ProvisionRequest(this_tenant_id, nhosts_to_acquire, allow_delay);
     litemsg::utils::send_cmd_sync(brain, &msg)?;
     let reply: Message = litemsg::utils::recv_cmd_sync(brain)?;
@@ -87,7 +88,7 @@ fn request_provision(
 
 fn request_destroy(brain: &mut std::net::TcpStream, tenant_id: TenantId) -> anyhow::Result<()> {
     // send request to destroy VMs
-    use nhagent::message::Message;
+    use nhagent_v2::message::Message;
     let msg = Message::DestroyRequest(tenant_id);
     litemsg::utils::send_cmd_sync(brain, &msg)?;
     let reply: Message = litemsg::utils::recv_cmd_sync(brain)?;

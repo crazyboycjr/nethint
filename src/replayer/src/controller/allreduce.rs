@@ -483,9 +483,9 @@ impl AllreduceApp {
 
     pub fn handle_brain_response_event(
         &mut self,
-        msg: nhagent::message::Message,
+        msg: nhagent_v2::message::Message,
     ) -> anyhow::Result<()> {
-        use nhagent::message::Message::*;
+        use nhagent_v2::message::Message::*;
         let my_tenant_id = self.tenant_id();
         match msg {
             NetHintResponseV1(tenant_id, hintv1) => {
@@ -499,7 +499,7 @@ impl AllreduceApp {
                     self.allreduce()?;
                 }
             }
-            NetHintResponseV2(tenant_id, hintv2, _) => {
+            NetHintResponseV2(tenant_id, hintv2) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);

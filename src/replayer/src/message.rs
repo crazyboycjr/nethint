@@ -16,5 +16,5 @@ pub enum Command {
     /// send by worker, processed by worker
     Data(Flow),
     /// send by nhagent global leader, processed by controller
-    BrainResponse(nhagent::message::Message),
+    BrainResponse(nhagent_v2::message::Message),
 }

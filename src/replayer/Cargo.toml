@@ -18,7 +18,7 @@ litemsg = { path = "../litemsg" }
 mapreduce = { path = "../mapreduce" }
 allreduce = { path = "../allreduce" }
 rl = { path = "../rl" }
-nhagent = { path = "../nhagent" }
+nhagent_v2 = { path = "../nhagent_v2" }
 utils = { path = "../utils" }
 structopt = "0.3.21"
 nix = "0.19.1"
