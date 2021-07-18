@@ -20,7 +20,7 @@ job_size_distribution = [[40, 8], [40, 16]]
 buffer_size = 64_000_000
 
 # Number of iterations for all jobs
-num_iterations = 1000
+num_iterations = 10
 
 # Lambda of the poisson arrival, 2*100MB/25Gbps*120 = 7.68s
 # 64MB/50Gbps*1000 = 10.24s
@@ -31,7 +31,7 @@ poisson_lambda = 4_000_000_000.0
 # For example, 1 trainer and 7 workers, once 4 workers have finish a round of simulation,
 # they can send the trace to the trainer immediately and the trainer can broadcast the
 # updated model back to these workers.
-partially_sync = true
+partially_sync = false
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -45,7 +45,7 @@ seed = 1
 directory = "/tmp/rl_result"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 5
+batch_repeat = 1
 
 [[batch]]
 policy = "Random"
@@ -90,6 +90,7 @@ loopback_speed = 400
 # possible values of fairness model are "PerFlowMaxMin", "PerVmPairMaxMin", and "TenantFlowMaxMin"
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
+# fairness = "PerVmPairMaxMin"
 
 background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
