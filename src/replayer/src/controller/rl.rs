@@ -467,14 +467,14 @@ impl RLApp {
         num_trees: usize,
     ) -> Bandwidth {
         // XXX(cjr): remember to subtract traffic from this tenant itself from all traffic
-        // assume it has already been subtracted from the return value
+        // assume it has already been subtracted from the return value, see nhagent/src/main.rs
         let demand_sum = traffic.iter().map(|c| c.data[direction].bytes).sum::<u64>() as usize;
         let num_flows = traffic
             .iter()
             .map(|c| c.data[direction].num_competitors)
             .sum::<u32>() as usize;
 
-        // num_nwe_flows will depend on the app
+        // num_new_flows will depend on the app
         let mut high_node = vc[vc.get_source(link_ix)].clone();
         let mut low_node = vc[vc.get_target(link_ix)].clone();
         if high_node.depth > low_node.depth {
