@@ -693,11 +693,26 @@ impl<'a> Executor<'a> for Simulator {
     }
 }
 
+#[inline]
+fn hash_vm_pair(f: &Flow) -> usize {
+    let vsrc_id: usize = f.vsrc.as_ref().unwrap()
+            .strip_prefix("host_")
+            .unwrap()
+            .parse()
+            .unwrap();
+    let vdst_id: usize = f.vsrc.as_ref().unwrap()
+            .strip_prefix("host_")
+            .unwrap()
+            .parse()
+            .unwrap();
+    (vsrc_id << 32) | vdst_id
+}
+
 #[derive(Debug)]
 pub(crate) enum FlowSet {
     Flat(Vec<FlowStateRef>),
     // src, dst -> vector of flows
-    GroupByVmPair(HashMap<(String, String), Vec<FlowStateRef>>),
+    GroupByVmPair(HashMap<usize, Vec<FlowStateRef>>),
     GroupByTenant(HashMap<TenantId, Vec<FlowStateRef>>),
 }
 
@@ -716,10 +731,7 @@ impl FlowSet {
             Self::GroupByVmPair(m) => {
                 // we can just unwrap here because it must have valid vsrc and vdst fields,
                 // otherwise, it does not make sense to use PerVmPairMaxMin
-                let key = (
-                    fs.borrow().flow.vsrc.clone().unwrap(),
-                    fs.borrow().flow.vdst.clone().unwrap(),
-                );
+                let key = hash_vm_pair(&fs.borrow().flow);
                 m.entry(key).or_insert_with(Vec::new).push(fs);
             }
             Self::GroupByTenant(m) => {
@@ -795,7 +807,7 @@ impl FlowSet {
 pub(crate) enum FlowSetIter<'a> {
     FlatIter(std::slice::Iter<'a, FlowStateRef>),
     GroupByVmPairIter(
-        HashMapValues<'a, (String, String), Vec<FlowStateRef>>,
+        HashMapValues<'a, usize, Vec<FlowStateRef>>,
         Option<std::slice::Iter<'a, FlowStateRef>>,
     ),
     GroupByTenantIter(
@@ -807,7 +819,7 @@ pub(crate) enum FlowSetIter<'a> {
 enum FlowSetIterMut<'a> {
     FlatIter(std::slice::IterMut<'a, FlowStateRef>),
     GroupByVmPairIter(
-        HashMapValuesMut<'a, (String, String), Vec<FlowStateRef>>,
+        HashMapValuesMut<'a, usize, Vec<FlowStateRef>>,
         Option<std::slice::IterMut<'a, FlowStateRef>>,
     ),
     GroupByTenantIter(

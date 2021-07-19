@@ -28,7 +28,7 @@ placement_strategy = { type = "Compact" }
 seed = 1
 
 # Output path of for the simulation results
-directory = "/tmp/allreduce_result_for_paper/standard3"
+directory = "/tmp/allreduce_result_for_paper/standard3_pervm"
 
 # Number of repeats for each batch of experiments
 batch_repeat = 5
@@ -57,7 +57,8 @@ sample_interval_ns = 100_000_000 # 100ms
 loopback_speed = 400
 # possible values of fairness model are "PerFlowMaxMin", "PerVmPairMaxMin", and "TenantFlowMaxMin"
 # fairness = "TenantFlowMaxMin"
-fairness = "PerFlowMaxMin"
+# fairness = "PerFlowMaxMin"
+fairness = "PerVmPairMaxMin"
 
 background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 5 }
 # background_flow_hard = { enable = false }
