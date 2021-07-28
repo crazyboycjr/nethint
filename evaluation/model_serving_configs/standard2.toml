@@ -11,10 +11,10 @@ job_size_distribution = [[50, 8], [50, 16]]
 buffer_size = 12582912
 
 # Number of iterations for all jobs
-num_iterations = 1000
+num_iterations = 4000
 
-# Lambda of the poisson arrival, 12582912 * 8 / 50G * 1000 = 2s
-poisson_lambda = 1_000_000_000.0
+# Lambda of the poisson arrival, 12582912 * 8 / 50G * 4000 = 8s
+poisson_lambda = 8_000_000_000.0
 
 partially_sync = false
 
@@ -30,7 +30,7 @@ seed = 1
 directory = "/tmp/model_serving_result_for_paper/standard2"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 5
+batch_repeat = 1
 
 [[batch]]
 policy = "Random"
@@ -47,7 +47,7 @@ nethint_level = 0
 policy = "RAT"
 probe = { enable = true, round_ms = 100 }
 nethint_level = 2
-auto_tune = 1000
+auto_tune = 4000
 
 [[batch]]
 policy = "RAT"
@@ -64,7 +64,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 1.0, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

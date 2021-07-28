@@ -2,7 +2,7 @@
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
-ncases = 10
+ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
 job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
@@ -60,7 +60,7 @@ fairness = "TenantFlowMaxMin"
 # fairness = "PerFlowMaxMin"
 # fairness = "PerVmPairMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 60_000_000_000, probability = 1.0, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 1.0, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

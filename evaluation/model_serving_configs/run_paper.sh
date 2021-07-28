@@ -5,6 +5,7 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 configs=(
 standard2.toml
 nonnegligible_computing_overhead.toml
+coarse_grained_workloads.toml
 )
 
 for conf in ${configs[@]}; do
