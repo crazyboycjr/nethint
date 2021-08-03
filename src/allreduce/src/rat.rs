@@ -1,68 +1,26 @@
-use std::collections::HashMap;
-
 use crate::AllReduceAlgorithm;
 use nethint::{
-    bandwidth::BandwidthTrait,
-    cluster::{helpers::*, Link, LinkIx, Topology},
+    cluster::{helpers::*, Topology},
     Flow,
 };
 
-use rat_solver::{CachedSolver, RatSolver, Solver};
+use rat_solver::{CachedSolver, RatSolver, Solver, TopologyWrapper};
+use std::rc::Rc;
 use utils::algo::*;
 
-#[derive(Debug, Default)]
-pub struct RatAllReduce {
-    // cache the result, if nethint hasn't been changed, no need to run LP again
+#[derive(Default)]
+pub struct RatAllReduce<S, I, O> {
     num_trees: usize,
-    last_size: Option<u64>,
-    last_hint: Option<HashMap<LinkIx, Link>>,
-    last_result: Vec<Flow>,
+    // cache the result, if nethint hasn't been changed, no need to run LP again
+    rat_solver: Option<CachedSolver<S, I, O>>,
 }
 
-impl RatAllReduce {
+impl<S, I, O> RatAllReduce<S, I, O> {
     pub fn new(num_trees: usize) -> Self {
         RatAllReduce {
             num_trees,
-            ..Default::default()
+            rat_solver: None,
         }
-    }
-
-    fn dump_vcluster(vcluster: &dyn Topology) -> HashMap<LinkIx, Link> {
-        vcluster
-            .all_links()
-            .map(|link_ix| (link_ix, vcluster[link_ix].clone()))
-            .collect()
-    }
-
-    pub fn check_cache(&self, (size, vcluster): (u64, &dyn Topology)) -> bool {
-        if self.last_size.is_none() || self.last_hint.is_none() {
-            return false;
-        }
-
-        if self.last_size.unwrap() != size {
-            return false;
-        }
-
-        let last_hint = self.last_hint.as_ref().unwrap();
-        vcluster.all_links().all(|link_ix| {
-            let l1 = vcluster[link_ix].clone();
-            if let Some(l2) = last_hint.get(&link_ix) {
-                let f = l1.bandwidth + 1.gbps() >= l2.bandwidth
-                    && l2.bandwidth + 1.gbps() >= l1.bandwidth;
-                if !f {
-                    log::debug!("l1: {}, l2: {}", l1, l2);
-                }
-                f
-            } else {
-                false
-            }
-        })
-    }
-
-    pub fn update_cache(&mut self, (size, vcluster): (u64, &dyn Topology), flows: Vec<Flow>) {
-        self.last_size.replace(size);
-        self.last_hint.replace(Self::dump_vcluster(vcluster));
-        self.last_result = flows;
     }
 }
 
@@ -281,7 +239,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[test]
     fn test_lp() {
         let n = 16;
@@ -395,20 +352,26 @@ mod tests {
     }
 }
 
-impl AllReduceAlgorithm for RatAllReduce {
-    fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+type AllreduceInput = (u64, TopologyWrapper);
+
+impl AllReduceAlgorithm for RatAllReduce<RatSolver<AllreduceInput>, AllreduceInput, Vec<Flow>> {
+    fn allreduce(&mut self, size: u64, vcluster: Rc<dyn Topology>) -> Vec<Flow> {
         let generate_func = || -> Vec<Tree> {
             vec![
-                generate_embeddings(vcluster, self.num_trees, construct_rat_offset),
-                generate_embeddings(vcluster, self.num_trees, construct_ps_offset),
+                generate_embeddings(&*vcluster, self.num_trees, construct_rat_offset),
+                generate_embeddings(&*vcluster, self.num_trees, construct_ps_offset),
                 // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
             ]
             .concat()
         };
 
-        let mut rat_solver: CachedSolver<RatSolver<_, _>, _, _> = CachedSolver::new(generate_func);
+        let embeddings = generate_func();
+
         // NOTE(cjr): use non-cached solver when testing controller overhead
         // let mut rat_solver = RatSolver::new(generate_func);
-        rat_solver.solve(&(size, vcluster))
+        let rat_solver = self
+            .rat_solver
+            .get_or_insert_with(|| CachedSolver::new(embeddings));
+        rat_solver.solve(&(size, TopologyWrapper::new(vcluster)))
     }
 }

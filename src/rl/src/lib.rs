@@ -11,6 +11,7 @@ pub mod topology_aware;
 
 pub mod config;
 
+use std::rc::Rc;
 use nethint::{cluster::Topology, Flow};
 
 #[derive(Debug, Clone)]
@@ -52,6 +53,6 @@ pub trait RLAlgorithm {
         root_index: usize,
         group: Option<Vec<usize>>, // worker group
         size: u64,
-        vcluster: &dyn Topology,
+        vcluster: Rc<dyn Topology>,
     ) -> Vec<Flow>;
 }

@@ -39,6 +39,7 @@ pub struct RLApp {
     in_probing: bool,
     probing_start_time: Timestamp,
     background_flow_app: Option<BackgroundFlowApp<Option<Duration>>>,
+    rl_algorithm: Option<Box<dyn RLAlgorithm>>,
     // partially sync
     partially_sync: bool,
     group_rng: Option<StdRng>,
@@ -81,6 +82,7 @@ impl RLApp {
             in_probing: false,
             probing_start_time: 0,
             background_flow_app: None,
+            rl_algorithm: None,
             partially_sync,
             group_rng: if partially_sync {
                 Some(SeedableRng::seed_from_u64(seed))
@@ -98,12 +100,14 @@ impl RLApp {
     pub fn rl_traffic(&mut self, start_time: Timestamp) {
         let mut trace = Trace::new();
 
-        let mut rl_algorithm: Box<dyn RLAlgorithm> = match self.rl_policy {
-            RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
-            RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
-            RLPolicy::Contraction => panic!("do not use Contraction algorithm"),
-            RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
-        };
+        if self.rl_algorithm.is_none() {
+            self.rl_algorithm = Some(match self.rl_policy {
+                RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
+                RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
+                RLPolicy::Contraction => panic!("do not use Contraction algorithm"),
+                RLPolicy::RAT => Box::new(RatTree::new()),
+            });
+        }
 
         let group = if self.partially_sync {
             // generate group members of (n-1)/2+1
@@ -120,11 +124,11 @@ impl RLApp {
             None
         };
 
-        let flows = rl_algorithm.run_rl_traffic(
+        let flows = self.rl_algorithm.as_mut().unwrap().run_rl_traffic(
             self.job_spec.root_index,
             group,
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(self.cluster.as_ref().unwrap()),
         );
 
         for flow in flows {
@@ -177,13 +181,10 @@ impl RLApp {
     }
 
     fn adjust_root_index(&mut self, vc: Rc<dyn Topology>) {
+        use nethint::cluster::helpers::get_up_bw;
         if !self.root_index_modifed {
             let max_node = (0..vc.num_hosts())
-                .map(|i| {
-                    let hostname = format!("host_{}", i);
-                    let host_ix = vc.get_node_index(&hostname);
-                    (i, vc[vc.get_uplink(host_ix)].bandwidth)
-                })
+                .map(|i| (i, get_up_bw(&*vc, i)))
                 .max_by_key(|x| x.1);
             let orig = self.job_spec.root_index;
             if let Some(max_node) = max_node {
@@ -191,9 +192,10 @@ impl RLApp {
             }
             self.root_index_modifed = true;
             log::info!(
-                "root_index original: {}, modified to: {}",
+                "root_index original: {}, modified to: {}, outbound_bw: {}",
                 orig,
-                self.job_spec.root_index
+                self.job_spec.root_index,
+                get_up_bw(&*vc, self.job_spec.root_index),
             );
         }
     }

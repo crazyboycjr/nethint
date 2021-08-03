@@ -4,29 +4,58 @@ use nethint::{
     cluster::{helpers::*, Topology},
     Flow,
 };
-use rat_solver::{CachedSolver, RatSolver, Solver};
+use rat_solver::{CachedSolver, RatSolver, Solver, TopologyWrapper};
+use std::rc::Rc;
 use utils::algo::*;
 
-#[derive(Debug, Default)]
-pub struct RatTree {
-    seed: u64,
+#[derive(Default)]
+pub struct RatTree<S, I, O> {
+    rat_solver: Option<CachedSolver<S, I, O>>,
 }
 
-impl RatTree {
-    pub fn new(seed: u64) -> Self {
-        RatTree { seed }
+impl<S, I, O> RatTree<S, I, O> {
+    pub fn new() -> Self {
+        RatTree { rat_solver: None }
     }
 }
 
-impl RLAlgorithm for RatTree {
+type RlInput = (u64, TopologyWrapper, usize, std::option::Option<Vec<usize>>);
+
+impl RLAlgorithm for RatTree<RatSolver<RlInput>, RlInput, Vec<Flow>> {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
-        group: Option<Vec<usize>>,
+        mut group: Option<Vec<usize>>,
         size: u64,
-        vcluster: &dyn Topology,
+        vc: Rc<dyn Topology>,
     ) -> Vec<Flow> {
-        self.run_rl_traffic(root_index, group, size, vcluster)
+        if group.is_some() {
+            group.as_mut().unwrap().sort();
+            group.as_mut().unwrap().insert(0, root_index);
+        }
+
+        let generate_func = || -> Vec<Tree> {
+            vec![
+                // generate_embeddings(vc, root_index, &group, vc.num_hosts(), construct_rat_offset),
+                generate_embeddings2(
+                    &*vc,
+                    root_index,
+                    &group,
+                    vc.num_hosts(),
+                    construct_rat_offset,
+                ),
+            ]
+            .concat()
+        };
+
+        let embeddings = generate_func();
+
+        let rat_solver = self
+            .rat_solver
+            .get_or_insert_with(|| CachedSolver::new(embeddings));
+
+        // let mut rat_solver = RatSolver::new(generate_func);
+        rat_solver.solve(&(size, TopologyWrapper::new(vc), root_index, group))
     }
 }
 
@@ -230,31 +259,4 @@ where
     }
 
     tree_set
-}
-
-impl RatTree {
-    fn run_rl_traffic(
-        &mut self,
-        root_index: usize,
-        mut group: Option<Vec<usize>>,
-        size: u64,
-        vc: &dyn Topology,
-    ) -> Vec<Flow> {
-        if group.is_some() {
-            group.as_mut().unwrap().sort();
-            group.as_mut().unwrap().insert(0, root_index);
-        }
-
-        let generate_func = || -> Vec<Tree> {
-            vec![
-                // generate_embeddings(vc, root_index, &group, vc.num_hosts(), construct_rat_offset),
-                generate_embeddings2(vc, root_index, &group, vc.num_hosts(), construct_rat_offset),
-            ]
-            .concat()
-        };
-
-        // let mut rat_solver = RatSolver::new(generate_func);
-        let mut rat_solver: CachedSolver<RatSolver<_, _>, _, _> = CachedSolver::new(generate_func);
-        rat_solver.solve(&(size, vc, root_index, &group))
-    }
 }

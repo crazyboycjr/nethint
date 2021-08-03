@@ -10,8 +10,7 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::{
-    config::ProbeConfig,
-    random_ring::RandomRingAllReduce, rat::RatAllReduce,
+    config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
 };
 
@@ -113,7 +112,7 @@ impl<'c> AllReduceApp<'c> {
 
         let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(self.cluster.as_ref().unwrap()),
         );
 
         for flow in flows {

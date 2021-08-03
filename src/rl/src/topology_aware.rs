@@ -1,5 +1,6 @@
 use crate::RLAlgorithm;
 use nethint::{cluster::Topology, Flow};
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct TopologyAwareTree {
@@ -19,7 +20,7 @@ impl RLAlgorithm for TopologyAwareTree {
         root_index: usize,
         group: Option<Vec<usize>>,
         size: u64,
-        vcluster: &dyn Topology,
+        vcluster: Rc<dyn Topology>,
     ) -> Vec<Flow> {
         use rand::prelude::SliceRandom;
         use rand::{rngs::StdRng, SeedableRng};

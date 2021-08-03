@@ -75,7 +75,6 @@ impl PartialEq for &dyn Topology {
     }
 }
 
-
 pub trait TopologyClone: Topology {
     fn into_box(&self) -> Box<dyn TopologyClone + '_>;
 }

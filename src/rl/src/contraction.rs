@@ -2,6 +2,7 @@ use crate::RLAlgorithm;
 use nethint::{cluster::{Topology, helpers::*}, Flow, bandwidth::Bandwidth};
 use std::collections::HashMap;
 use utils::algo::group_by_key;
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct Contraction {
@@ -24,9 +25,9 @@ impl RLAlgorithm for Contraction {
         root_index: usize,
         _group: Option<Vec<usize>>,
         size: u64,
-        vcluster: &dyn Topology,
+        vcluster: Rc<dyn Topology>,
     ) -> Vec<Flow> {
-        self.run_rl_traffic(root_index, size, vcluster)
+        self.run_rl_traffic(root_index, size, &*vcluster)
     }
 }
 

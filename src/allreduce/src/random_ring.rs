@@ -3,6 +3,7 @@ use nethint::{
     Flow,
 };
 use crate::{AllReduceAlgorithm};
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct RandomRingAllReduce {
@@ -20,7 +21,7 @@ impl RandomRingAllReduce {
 }
 
 impl AllReduceAlgorithm for RandomRingAllReduce {
-    fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+    fn allreduce(&mut self, size: u64, vcluster: Rc<dyn Topology>) -> Vec<Flow> {
         let n = vcluster.num_hosts();
 
         use rand::prelude::SliceRandom;
