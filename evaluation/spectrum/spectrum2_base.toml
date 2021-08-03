@@ -1,22 +1,17 @@
-# Specifiation of a Allreduce application experiment
-
 # Number of jobs
-ncases = 50
+ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
-# job_size_distribution = [[40, 64], [40, 32]]
-job_size_distribution = [[40, 64]]
+job_size_distribution = [[80, 16], [80, 32]]
 
-# Images in a ML serving batch request, batch size = 64, each image has 3 channels, crop to 256x256
-buffer_size = 12582912
+# Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
+buffer_size = 100_000_000
 
 # Number of iterations for all jobs
-num_iterations = 1000
+num_iterations = 100
 
-partially_sync = false
-
-# Lambda of the poisson arrival, 12582912 * 8 / 50G * 1000 = 2s
-poisson_lambda = 1_000_000_000.0
+# Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
+poisson_lambda = 24_00_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -37,23 +32,6 @@ policy = "Random"
 probe = { enable = false }
 nethint_level = 2
 
-# [[batch]]
-# policy = "TopologyAware" # which is ring
-# probe = { enable = true, round_ms = 100 }
-# nethint_level = 1
-# 
-# [[batch]]
-# policy = "TopologyAware" # which is ring
-# probe = { enable = false }
-# nethint_level = 1
-
-# [[batch]]
-# policy = "RAT"
-# probe = { enable = true, round_ms = 100 }
-# nethint_level = 2
-# # Auto tune after some iterations. default is disabled
-# auto_tune = 1000
-
 [[batch]]
 policy = "TopologyAware" # which is ring
 probe = { enable = false }
@@ -64,7 +42,7 @@ policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 100
+auto_tune = 10
 
 [simulator]
 nethint = true
