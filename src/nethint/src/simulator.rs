@@ -542,7 +542,9 @@ impl Simulator {
             if ts_inc == 0 {
                 // the next event should be the timer event
                 if let Some(timer) = self.timers.peek() {
-                    assert_eq!(timer.next_alert(), self.ts);
+                    if timer.next_alert() != self.ts {
+                        log::warn!("ts_inc = 0, while next alert ts: {}, self.ts: {}", timer.next_alert(), self.ts);
+                    }
                     if timer.kind() == TimerKind::Once {
                         let timer = self.timers.pop().unwrap();
                         let once_timer = timer.as_any().downcast_ref::<OnceTimer>().unwrap();
