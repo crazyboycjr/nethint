@@ -1,8 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- import Control.Monad.Trans.Except
+import Control.Concurrent (threadDelay)
 import Control.Exception
 import Control.Monad
+import Control.Monad.Loops (iterateWhile)
 import Control.Monad.Extra (unlessM, whenM)
 import Data.Char (isSpace)
 import Data.Functor ((<&>))
@@ -13,6 +15,7 @@ import System.Exit
 import System.FilePath
 import System.Process
 import Text.Printf (printf)
+
 
 -- | This module prepares a set of helper functions and data
 -- to help manipulate VMs in batch on different danyang servers simutaneously.
@@ -135,6 +138,19 @@ getDomIfAddr dom = do
         ExitSuccess      -> return $ dropWhileEnd isSpace out
         ExitFailure code -> die $ printf "stdout: %s\nstderr: %s\n" out err
 
+waitDomIfAddr :: Dom -> IO String
+waitDomIfAddr dom = do
+    iterateWhile null $ do
+        threadDelay 1000000 -- sleep for 1s
+        printf "Querying IP address of %s...\n" dom
+        getDomIfAddr dom
+
+waitDomOnline :: Dom -> IO ()
+waitDomOnline = void . waitDomIfAddr
+
+waitDomOnlineAll :: [Dom] -> IO ()
+waitDomOnlineAll = mapM_ waitDomOnline
+
 deployRdmaConfig :: Dom -> String -> IO ()
 deployRdmaConfig dom ipCIDR = do
     -- call set_rdma_intf.conf.sh <cidr> > /tmp/set_rdma_intf.sh
@@ -181,7 +197,7 @@ oneClickSetup n = do
     cpus <- take n <$> cpuVirtualMachines
     rdmaAddrs <- take n <$> cpuRdmaCIDR
     startVirtualMachineAll cpus
-    callCommand "sleep 10"
+    waitDomOnlineAll cpus
     deployRdmaConfigAll cpus rdmaAddrs
     sshAndExecuteAll cpus "ip a"
 
@@ -197,7 +213,6 @@ psrecord name interval duration = do
             name
     callCommand cmd
 
-
 {-
 import Control.Concurrent
 
@@ -212,6 +227,12 @@ myScp = do
     forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/rplaunch"   "/tmp/"
     forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/controller" "/tmp/"
     forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/worker"     "/tmp/"
+
+import Control.Concurrent.Async (mapConcurrently)
+myScp = do
+    let prefix = "/nfs/cjr/Developing/nethint-rs/target/release/"
+        targets = ["scheduler", "rplaunch", "controller", "worker"]
+    void $ mapConcurrently (flip (scpAll cpus) "/tmp/") $ map (prefix ++) targets
 :}
 
 :m -Control.Concurrent
