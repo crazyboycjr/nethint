@@ -43,9 +43,14 @@ modprobe vfio-pci
 
 for ((i=0;i<$num_vfs;i++)); do
 	vf_pci_addr=$(basename `readlink /sys/class/net/$pf/device/virtfn$i`)
-	echo $vf_pci_addr > /sys/bus/pci/devices/$vf_pci_addr/driver/unbind
-	numeric_id=`lspci -s $vf_pci_addr -n | cut -d " " -f3 | tr ':' ' '`
-	echo $numeric_id > /sys/bus/pci/drivers/vfio-pci/new_id
+	current_driver=$(basename `readlink /sys/bus/pci/devices/$vf_pci_addr/driver`)
+	if [ "x$current_driver" != "xvfio-pci" ]; then
+		# unbind current driver
+		echo $vf_pci_addr > /sys/bus/pci/devices/$vf_pci_addr/driver/unbind
+		numeric_id=`lspci -s $vf_pci_addr -n | cut -d " " -f3 | tr ':' ' '`
+		# bind to vfio-pci
+		echo $numeric_id > /sys/bus/pci/drivers/vfio-pci/new_id
+	fi
 	# show results
 	lspci -k -s $vf_pci_addr
 done

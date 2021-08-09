@@ -126,3 +126,40 @@ impl std::ops::SubAssign for CounterUnitData {
         self.num_competitors -= rhs.num_competitors;
     }
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AvgCounterUnitData {
+    pub bytes: u64,
+    pub num_competitors: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AvgCounterUnit {
+    pub vnodename: String,
+    pub data: [AvgCounterUnitData; 4],
+}
+
+impl AvgCounterUnit {
+    pub fn new(vnodename: &str) -> Self {
+        AvgCounterUnit {
+            vnodename: vnodename.to_owned(),
+            data: [AvgCounterUnitData::default(); 4],
+        }
+    }
+
+    pub fn clear_bytes(&mut self) {
+        for i in 0..4 {
+            self.data[i].bytes = 0;
+        }
+    }
+
+    pub fn merge_counter(&mut self, other: &CounterUnit) {
+        // make sure we are merge the same vnode
+        assert_eq!(self.vnodename, other.vnodename);
+        for i in 0..4 {
+            self.data[i].bytes += other.data[i].bytes;
+            self.data[i].num_competitors =
+                self.data[i].num_competitors * 0.875 + other.data[i].num_competitors as f64 * 0.125;
+        }
+    }
+}

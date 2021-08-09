@@ -10,7 +10,7 @@ pub struct Opts {
     pub interval_ms: u64,
 
     /// The listening port of the sampler
-    #[structopt(short = "p", long = "p", default_value = "5555")]
+    #[structopt(short = "p", long, default_value = "5555")]
     pub sampler_listen_port: u16,
 
     /// Specify the topology for testbed
@@ -31,4 +31,8 @@ pub struct Opts {
     /// Disable HetHint v2, and only run NetHint v1.
     #[structopt(short, long)]
     pub disable_v2: bool,
+
+    /// Physical interface name for the BPF program
+    #[structopt(long)]
+    pub iface: Option<String>
 }
