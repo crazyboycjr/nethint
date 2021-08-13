@@ -1,6 +1,7 @@
 use nethint::architecture::TopoArgs;
 use nethint::background_flow_hard::BackgroundFlowHard;
 use structopt::StructOpt;
+use std::net::SocketAddr;
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "nhagent", about = "NetHint Agent")]
@@ -10,7 +11,7 @@ pub struct Opts {
     pub interval_ms: u64,
 
     /// The listening port of the sampler
-    #[structopt(short = "p", long, default_value = "5555")]
+    #[structopt(short = "p", long, default_value = "6343")]
     pub sampler_listen_port: u16,
 
     /// Specify the topology for testbed
@@ -32,7 +33,12 @@ pub struct Opts {
     #[structopt(short, long)]
     pub disable_v2: bool,
 
+    // the two fields below are used by the BPF userspace program
     /// Physical interface name for the BPF program
     #[structopt(long)]
-    pub iface: Option<String>
+    pub iface: Option<String>,
+
+    /// Rack leader address (ip:port)
+    #[structopt(long)]
+    pub rack_leader: Option<SocketAddr>,
 }

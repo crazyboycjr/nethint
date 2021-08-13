@@ -36,4 +36,5 @@ DIR=$(dirname `realpath $0`)
 source "$DIR"/utils.sh
 rack_agent_ip=`get_rack_agent_ip`
 echo 'rack agent IP: ' $rack_agent_ip
-./setup_sflow.sh $rack_agent_ip
+# do not setup sFlow, use BPF agent instead
+# ./setup_sflow.sh $rack_agent_ip

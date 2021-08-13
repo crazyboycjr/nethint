@@ -214,7 +214,7 @@ psrecord name interval duration = do
     callCommand cmd
 
 {-
-import Control.Concurrent
+import Control.Concurrent.Async (mapConcurrently)
 
 :{
 
@@ -223,17 +223,10 @@ myPkill = do
     sshAndExecuteAll cpus "pkill -f controller"
 
 myScp = do
-    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/scheduler"  "/tmp/"
-    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/rplaunch"   "/tmp/"
-    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/controller" "/tmp/"
-    forkIO $ scpAll cpus "/nfs/cjr/Developing/nethint-rs/target/release/worker"     "/tmp/"
-
-import Control.Concurrent.Async (mapConcurrently)
-myScp = do
     let prefix = "/nfs/cjr/Developing/nethint-rs/target/release/"
         targets = ["scheduler", "rplaunch", "controller", "worker"]
     void $ mapConcurrently (flip (scpAll cpus) "/tmp/") $ map (prefix ++) targets
 :}
 
-:m -Control.Concurrent
+:m -Control.Concurrent.Async
 -}

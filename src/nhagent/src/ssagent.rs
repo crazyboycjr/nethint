@@ -26,18 +26,14 @@ fn now() -> std::time::Instant {
 
 fn get_default_target() -> SocketAddr {
     let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
-    let last_field: u8 = my_ip.split('.').last().unwrap().parse().unwrap();
+    let last_field = my_ip.octets()[3];
     // the conversion is hard coded
     // 3,4,5,6 -> 2, 35... -> 34
     let target_num = (last_field / 32 * 32 + 2).to_string();
-    let numbers: Vec<&str> = my_ip
-        .split('.')
-        .take(3)
-        .chain(std::iter::once(target_num.as_str()))
-        .collect();
+    let numbers = my_ip.octets();
     let addr = format!(
         "{}.{}.{}.{}:{}",
-        numbers[0], numbers[1], numbers[2], numbers[3], 5555
+        numbers[0], numbers[1], numbers[2], target_num, 5555
     );
     addr.parse().unwrap_or_else(|_| panic!("addr: {}", addr))
 }

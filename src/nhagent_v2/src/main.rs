@@ -44,8 +44,10 @@ fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel();
 
     // create the sampler instance
+    // let mut sampler =
+    //     nhagent_v2::sampler::SFlowSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
     let mut sampler =
-        nhagent_v2::sampler::SFlowSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
+        nhagent_v2::sampler::TcSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
 
     if !opt.disable_v2 {
         sampler.run();
@@ -131,7 +133,7 @@ fn main_loop(
 
         // poll data from sampler thread
         for chunks in rx.try_iter() {
-            log::info!("counterunit: {:?}", chunks);
+            log::trace!("counterunit: {:?}", chunks);
 
             // TODO(cjr): update chunk here
             handler.receive_server_chunks(chunks);
@@ -718,7 +720,7 @@ impl Handler {
                         }
                         // we need to do some modifications to traffic_on_link
                         // because it contains all traffic from all tenants
-                        // the traffic from the requestor itself must be subtracted
+                        // the traffic from the requestor (i.e., the app) itself must be subtracted
                         for vlink_ix in vc.all_links() {
                             if !traffic.contains_key(&vlink_ix) {
                                 continue;

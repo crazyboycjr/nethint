@@ -33,7 +33,7 @@ pub fn same_rack(ip1: &IpAddr, ip2: &IpAddr) -> bool {
 
 pub fn get_local_ip_table() -> anyhow::Result<HashMap<IpAddr, String>> {
     let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
-    get_server_ip_table(&my_ip)
+    get_server_ip_table(&my_ip.to_string())
 }
 
 pub fn get_server_ip_table(ip: &str) -> anyhow::Result<HashMap<IpAddr, String>> {
@@ -56,14 +56,25 @@ pub fn get_server_ip_table(ip: &str) -> anyhow::Result<HashMap<IpAddr, String>> 
     Ok(server_ip_table)
 }
 
+pub fn get_rack_leader_ipv4() -> Ipv4Addr {
+    let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
+    let ds = my_ip.octets();
+    let rack_base_ip_last_digit = ds[3] / 128 * 128 + 2;
+    Ipv4Addr::new(ds[0], ds[1], ds[2], rack_base_ip_last_digit)
+}
+
 pub fn get_rack_ip_table() -> anyhow::Result<HashMap<IpAddr, LinkIx>> {
     let mut rack_ip_table = HashMap::default(); // map eth to node name
+    // let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
+    // let mut ds: Vec<u8> = my_ip.split('.').map(|x| x.parse().unwrap()).collect();
+    // // the rank of the server in its rack
+    // let rack_base_ip_last_digit = ds[3] / 128 * 128 + 2;
+    // let my_server_offset = (ds[3] - rack_base_ip_last_digit) as usize / 32;
+    // ds[3] = rack_base_ip_last_digit;
+
     let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
-    let mut ds: Vec<u8> = my_ip.split('.').map(|x| x.parse().unwrap()).collect();
-    // the rank of the server in its rack
-    let rack_base_ip_last_digit = ds[3] / 32 * 32 + 2;
-    let my_server_id = (ds[3] - rack_base_ip_last_digit) as usize;
-    ds[3] = rack_base_ip_last_digit;
+    let mut ds = get_rack_leader_ipv4().octets(); // array implements copy
+    let my_server_offset = (my_ip.octets()[3] - ds[3]) as usize / 32;
 
     // derive the ip addresses from the ip of the host
     let pcluster = CLUSTER.lock().unwrap();
@@ -77,7 +88,7 @@ pub fn get_rack_ip_table() -> anyhow::Result<HashMap<IpAddr, LinkIx>> {
             .parse()
             .unwrap()
     };
-    let start_server_id = get_host_id(pcluster.inner(), my_node_ix) - my_server_id;
+    let start_server_id = get_host_id(pcluster.inner(), my_node_ix) - my_server_offset;
     let rack_size = TOPO.rack_size();
     for server_id in start_server_id..start_server_id + rack_size {
         let name = format!("danyang-{:02}", server_id);

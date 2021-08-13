@@ -303,7 +303,7 @@ impl RLApp {
         match self.setting.rl_policy {
             RLPolicy::Random => Box::new(RandomTree::new(self.seed, num_trees)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, num_trees)),
-            RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
+            RLPolicy::RAT => Box::new(RatTree::new()),
             RLPolicy::Contraction => panic!("do not use Contraction algorithm")
         }
     }
@@ -348,7 +348,7 @@ impl RLApp {
             self.job_spec.root_index,
             group,
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(&self.cluster.as_ref().unwrap()),
         );
 
         let end = std::time::Instant::now();

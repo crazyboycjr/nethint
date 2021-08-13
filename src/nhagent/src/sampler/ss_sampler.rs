@@ -349,7 +349,7 @@ impl SsSampler {
 pub fn get_local_ip_table() -> anyhow::Result<HashMap<IpAddr, String>> {
     let mut local_ip_table = HashMap::default(); // map eth to node name
     let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
-    let ds: Vec<u8> = my_ip.split('.').map(|x| x.parse().unwrap()).collect();
+    let ds = my_ip.octets();
 
     // derive the ip addresses from the ip of the host
     for i in 1..30 {

@@ -32,5 +32,10 @@ for ((i=0; i<$scale; i++)); do
 		# --disable-v2 \
 done
 
-wait
+# DIR=$(dirname `realpath $0`)
+# nix develop $DIR/../nethint-bpf -c \
+# 	sudo -E NH_LOG=info RUST_BACKTRACE=1 \
+# 	$DIR/../nethint-bpf/target/debug/nethint-user \
+# 	arbitrary $num_racks 3 10 10
 
+wait

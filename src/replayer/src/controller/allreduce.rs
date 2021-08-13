@@ -327,7 +327,7 @@ impl AllreduceApp {
         log::debug!("hint: {}", self.cluster.as_ref().unwrap().to_dot());
         let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(self.cluster.as_ref().unwrap()),
         );
 
         let end = std::time::Instant::now();
