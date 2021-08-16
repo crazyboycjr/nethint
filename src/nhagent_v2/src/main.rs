@@ -121,12 +121,12 @@ fn main_loop(
         let now = std::time::Instant::now();
         if now >= last_tp + interval && comm.bcast_done() && !opt.disable_v2 {
             // it's not very explicit why this is is correct or not, need more thinking on this
+            handler.send_rack_chunk(comm)?;
+
             handler.reset_traffic();
 
             // peroidically call the function to check if update is needed, if yes, then do it
             handler.update_background_flow_hard(comm)?;
-
-            handler.send_rack_chunk(comm)?;
 
             last_tp = now;
         }
@@ -445,11 +445,12 @@ impl Handler {
         // flush to traffic buf
         let links: Vec<LinkIx> = self.traffic.keys().copied().collect();
         self.update_traffic_buf_iter(links.iter());
-        for (&k, v) in &mut self.committed_traffic {
-            self.traffic
-                .entry(k)
-                .and_modify(|e| Self::commit_chunk(e, v));
-        }
+        self.traffic.clear();
+        // for (&k, v) in &mut self.committed_traffic {
+        //     self.traffic
+        //         .entry(k)
+        //         .and_modify(|e| Self::commit_chunk(e, v));
+        // }
     }
 
     fn merge_traffic(
@@ -556,8 +557,8 @@ impl Handler {
             }
             comm.send_to(i, &msg)?;
         }
-        // 3. commit the sent traffic. actually
-        Self::merge_traffic(&mut self.committed_traffic, my_rack_traffic);
+        // 3. commit the sent traffic.
+        // Self::merge_traffic(&mut self.committed_traffic, my_rack_traffic);
         Ok(())
     }
 

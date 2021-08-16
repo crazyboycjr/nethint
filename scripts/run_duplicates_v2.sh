@@ -20,7 +20,7 @@ for ((i=0; i<$scale; i++)); do
 	sampler_port=`expr 6343 + $i`
 
 	RUST_BACKTRACE=full \
-	NH_CONTROLLER_URI=192.168.211.2:9000 \
+	NH_CONTROLLER_URI=danyang-01.cs.duke.edu:9000 \
 	NH_NUM_RACKS=$num_racks \
 		target/release/nhagent_v2 \
 		--shadow-id $i \

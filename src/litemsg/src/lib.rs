@@ -50,8 +50,15 @@ pub fn accept_peers(
     controller_uri: &str,
     num_workers: usize,
 ) -> anyhow::Result<(TcpListener, HashMap<Node, TcpStream>, HashMap<String, Node>)> {
-    log::debug!("binding to controller_uri: {}", controller_uri);
-    let listener = std::net::TcpListener::bind(controller_uri.clone()).expect(&controller_uri);
+    let controller_port: u16 = controller_uri
+        .split(':')
+        .last()
+        .unwrap()
+        .parse()
+        .expect("parse u16 failed");
+    log::debug!("binding to port: {}", controller_port);
+    let listener =
+        std::net::TcpListener::bind(format!("0.0.0.0:{}", controller_port)).expect(&controller_uri);
 
     let mut workers: HashMap<Node, std::net::TcpStream> = Default::default();
     let mut hostname_to_node: HashMap<String, Node> = Default::default();
@@ -216,7 +223,10 @@ pub fn connect_peers(
                                 addr: node.addr,
                                 port: 0,
                             };
-                            passive_peers.insert(renamed_node, stream).ok_or(()).unwrap_err();
+                            passive_peers
+                                .insert(renamed_node, stream)
+                                .ok_or(())
+                                .unwrap_err();
                         } else {
                             passive_peers.insert(node, stream).ok_or(()).unwrap_err();
                         }
@@ -233,7 +243,10 @@ pub fn connect_peers(
 
         utils::send_cmd_sync(&mut peer, &command::Command::AddNodePeer(my_node.clone()))?;
 
-        active_peers.insert(node.clone(), peer).ok_or(()).unwrap_err();
+        active_peers
+            .insert(node.clone(), peer)
+            .ok_or(())
+            .unwrap_err();
 
         // everyone also connects to itself
         if node == my_node {

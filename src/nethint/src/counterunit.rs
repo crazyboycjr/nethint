@@ -15,30 +15,37 @@ impl CounterType {
     }
 }
 
-impl std::ops::Index<CounterType> for [CounterUnitData; 4] {
-    type Output = CounterUnitData;
-    fn index(&self, index: CounterType) -> &Self::Output {
-        use CounterType::*;
-        match index {
-            Tx => self.get(0).unwrap(),
-            TxIn => self.get(1).unwrap(),
-            Rx => self.get(2).unwrap(),
-            RxIn => self.get(3).unwrap(),
+macro_rules! impl_index_for_counter {
+    ($type:ty) => {
+        impl std::ops::Index<CounterType> for [$type; 4] {
+            type Output = $type;
+            fn index(&self, index: CounterType) -> &Self::Output {
+                use CounterType::*;
+                match index {
+                    Tx => self.get(0).unwrap(),
+                    TxIn => self.get(1).unwrap(),
+                    Rx => self.get(2).unwrap(),
+                    RxIn => self.get(3).unwrap(),
+                }
+            }
+        }
+
+        impl std::ops::IndexMut<CounterType> for [$type; 4] {
+            fn index_mut(&mut self, index: CounterType) -> &mut Self::Output {
+                use CounterType::*;
+                match index {
+                    Tx => self.get_mut(0).unwrap(),
+                    TxIn => self.get_mut(1).unwrap(),
+                    Rx => self.get_mut(2).unwrap(),
+                    RxIn => self.get_mut(3).unwrap(),
+                }
+            }
         }
     }
 }
 
-impl std::ops::IndexMut<CounterType> for [CounterUnitData; 4] {
-    fn index_mut(&mut self, index: CounterType) -> &mut Self::Output {
-        use CounterType::*;
-        match index {
-            Tx => self.get_mut(0).unwrap(),
-            TxIn => self.get_mut(1).unwrap(),
-            Rx => self.get_mut(2).unwrap(),
-            RxIn => self.get_mut(3).unwrap(),
-        }
-    }
-}
+impl_index_for_counter!(CounterUnitData);
+impl_index_for_counter!(AvgCounterUnitData);
 
 /// The information annotated on a virtual link.
 #[derive(Clone, Serialize, Deserialize)]
@@ -166,7 +173,7 @@ pub struct AvgCounterUnitData {
     pub num_competitors: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AvgCounterUnit {
     pub vnodename: String,
     pub data: [AvgCounterUnitData; 4],
@@ -178,6 +185,10 @@ impl AvgCounterUnit {
             vnodename: vnodename.to_owned(),
             data: [AvgCounterUnitData::default(); 4],
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data[0].bytes + self.data[1].bytes + self.data[2].bytes + self.data[3].bytes == 0
     }
 
     pub fn clear_bytes(&mut self) {
@@ -207,6 +218,23 @@ impl From<AvgCounterUnitData> for CounterUnitData {
             c.num_competitors = 1;
         }
         c
+    }
+}
+
+impl std::fmt::Debug for AvgCounterUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use CounterType::*;
+        let mut s = f.debug_struct("ACunit");
+        s.field("vname", &self.vnodename);
+        if self.is_empty() {
+            s.finish_non_exhaustive()
+        } else {
+            s.field("Tx", &self.data[Tx])
+             .field("TxIn", &self.data[TxIn])
+             .field("Rx", &self.data[Rx])
+             .field("RxIn", &self.data[RxIn])
+             .finish()
+        }
     }
 }
 
