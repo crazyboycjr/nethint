@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::controller::background_flow::{BackgroundFlowApp, BackgroundFlowPattern};
 use rl::{
-    config::ProbeConfig, random_ring::RandomTree, rat::RatTree,
+    config::ProbeConfig, random_ring::RandomChain, rat::RatTree,
     topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
@@ -65,7 +65,7 @@ impl RLAppBuilder {
     }
 
     pub fn get_job_spec(setting: &RLSetting) -> JobSpec {
-        let mut rng = StdRng::seed_from_u64(setting.seed_base);
+        let mut rng = StdRng::seed_from_u64(setting.seed_base - setting.job_id as u64);
         let mut t = 0;
         let mut jobs = Vec::new();
         for i in 0..setting.job_id + 1 {
@@ -301,7 +301,7 @@ impl RLApp {
     fn new_rl_algorithm(&self) -> Box<dyn RLAlgorithm> {
         let num_trees = self.setting.num_trees.unwrap_or(1);
         match self.setting.rl_policy {
-            RLPolicy::Random => Box::new(RandomTree::new(self.seed, num_trees)),
+            RLPolicy::Random => Box::new(RandomChain::new(self.seed, num_trees)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, num_trees)),
             RLPolicy::RAT => Box::new(RatTree::new()),
             RLPolicy::Contraction => panic!("do not use Contraction algorithm")

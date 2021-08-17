@@ -63,7 +63,7 @@ impl AllreduceAppBuilder {
     }
 
     fn get_job_spec(setting: &AllreduceSetting) -> JobSpec {
-        let mut rng = StdRng::seed_from_u64(setting.seed_base);
+        let mut rng = StdRng::seed_from_u64(setting.seed_base - setting.job_id as u64);
         let mut t = 0;
         let mut jobs = Vec::new();
         for i in 0..setting.job_id + 1 {

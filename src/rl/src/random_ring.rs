@@ -1,20 +1,27 @@
 use crate::RLAlgorithm;
 use nethint::{cluster::Topology, Flow};
+use rand::prelude::SliceRandom;
+use rand::{rngs::StdRng, SeedableRng};
 use std::rc::Rc;
 
-#[derive(Debug, Default)]
-pub struct RandomTree {
+#[derive(Debug)]
+pub struct RandomChain {
     seed: u64,
     num_trees: usize,
+    rng: StdRng,
 }
 
-impl RandomTree {
+impl RandomChain {
     pub fn new(seed: u64, num_trees: usize) -> Self {
-        RandomTree { seed, num_trees }
+        RandomChain {
+            seed,
+            num_trees,
+            rng: StdRng::seed_from_u64(seed),
+        }
     }
 }
 
-impl RLAlgorithm for RandomTree {
+impl RLAlgorithm for RandomChain {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
@@ -22,10 +29,6 @@ impl RLAlgorithm for RandomTree {
         size: u64,
         vcluster: Rc<dyn Topology>,
     ) -> Vec<Flow> {
-        use rand::prelude::SliceRandom;
-        use rand::{rngs::StdRng, SeedableRng};
-        let mut rng = StdRng::seed_from_u64(self.seed);
-
         let mut flows = Vec::new();
 
         for _ in 0..self.num_trees {
@@ -37,7 +40,7 @@ impl RLAlgorithm for RandomTree {
             } else {
                 group.clone().unwrap()
             };
-            alloced_hosts.shuffle(&mut rng);
+            alloced_hosts.shuffle(&mut self.rng);
 
             alloced_hosts.insert(0, root_index);
 

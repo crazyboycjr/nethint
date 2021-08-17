@@ -273,6 +273,10 @@ impl Brain {
         }
     }
 
+    pub fn clear_background_flow_update_cnt(&mut self) {
+        self.background_flow_update_cnt = 0;
+    }
+
     pub fn update_background_flow_hard(
         &mut self,
         probability: f64,

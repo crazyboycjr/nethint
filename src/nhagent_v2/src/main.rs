@@ -11,8 +11,7 @@ use nhagent_v2::{
     argument::Opts,
     cluster::{self, hostname, CLUSTER},
     communicator::Communicator,
-    message,
-    Role,
+    message, Role,
 };
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -269,8 +268,11 @@ impl Handler {
             traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
             committed_traffic: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
             traffic_buf: HashMap::<LinkIx, Vec<CounterUnit>>::new(),
-            rank_hostname: std::iter::once((comm.my_rank(), nhagent_v2::cluster::hostname().clone()))
-                .collect(),
+            rank_hostname: std::iter::once((
+                comm.my_rank(),
+                nhagent_v2::cluster::hostname().clone(),
+            ))
+            .collect(),
             brain,
             interval_ms,
             provision_req_queue: VecDeque::new(),
@@ -340,7 +342,7 @@ impl Handler {
                     //     .find_map(|(k, v)| if *v == phys_hostname { Some(*k) } else { None })
                     //     .unwrap();
                     if &phys_hostname == cluster::hostname() {
-                    // if dst_rank == comm.my_rank() {
+                        // if dst_rank == comm.my_rank() {
                         let mut cmd = Command::new("mlnx_qos");
                         cmd.args(&["-i", "rdma0", "-r", &format!("{},0,0,0,0,0,0,0", bw)]);
                         self.cmd_tx.send(CommandOp::Task(cmd)).unwrap();
@@ -349,10 +351,7 @@ impl Handler {
                         // let hostname = &self.rank_hostname[&dst_rank];
                         let mut ssh_cmd = Command::new("ssh");
                         let cmd_str = format!("mlnx_qos -i rdma0 -r {},0,0,0,0,0,0,0", bw);
-                        ssh_cmd.args(&[
-                            &phys_hostname,
-                            &cmd_str,
-                        ]);
+                        ssh_cmd.args(&[&phys_hostname, &cmd_str]);
                         self.cmd_tx.send(CommandOp::Task(ssh_cmd)).unwrap();
                     }
                 } else if n1.depth > n2.depth && n1.depth == 2 {
@@ -488,10 +487,7 @@ impl Handler {
         // also update time_list_buf
     }
 
-    fn receive_server_chunks(
-        &mut self,
-        chunks: HashMap<LinkIx, Vec<CounterUnit>>,
-    ) {
+    fn receive_server_chunks(&mut self, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
         // 1. parse chunk, aggregate, and send aggregated information to other racks
         let pcluster = CLUSTER.lock().unwrap();
         let rack_ix = pcluster.get_my_rack_ix();
@@ -517,10 +513,7 @@ impl Handler {
     }
 
     // Assume LinkIx from different agents are compatible with each other
-    fn receive_rack_chunk(
-        &mut self,
-        chunks: HashMap<LinkIx, Vec<CounterUnit>>,
-    ) {
+    fn receive_rack_chunk(&mut self, chunks: HashMap<LinkIx, Vec<CounterUnit>>) {
         Self::merge_traffic(&mut self.traffic, chunks);
     }
 
@@ -788,6 +781,15 @@ impl Handler {
                         comm.send_to(sender_rank, &msg)?;
                     }
                 }
+            }
+            BatchDoneNotification => {
+                // if one batch is finished, we need to reset the background traffic
+                // reset bfh_last_ts
+                self.bfh_last_ts = std::time::Instant::now()
+                    - std::time::Duration::from_nanos(self.background_flow_hard.frequency_ns);
+                // reset background_flow_update_cnt to 0
+                self.brain.borrow_mut().clear_background_flow_update_cnt();
+                self.update_background_flow_hard(comm)?;
             }
             SyncRequest(_)
             | SyncResponse(_)

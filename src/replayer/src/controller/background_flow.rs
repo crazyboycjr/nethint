@@ -105,6 +105,7 @@ impl BackgroundFlowApp {
         for (i, j) in (0..n).step_by(2).zip((1..n).step_by(2)) {
             let sname = &vnames[i];
             let dname = &vnames[j];
+            // log::info!("nhosts: {}, n: {}, sname: {}", self.nhosts, n, sname);
             let src_hostname = &self.vname_to_hostname[sname];
             let dst_hostname = &self.vname_to_hostname[dname];
             let src_node = &self.hostname_to_node[src_hostname];

@@ -51,4 +51,7 @@ pub enum Message {
     NetHintResponseV1(TenantId, NetHintV1Real),
     /// send by rack/global leader, processed by app
     NetHintResponseV2(TenantId, NetHintV2Real),
+
+    /// send by the scheduler
+    BatchDoneNotification,
 }

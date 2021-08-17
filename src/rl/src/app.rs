@@ -10,7 +10,7 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::{
-    config::ProbeConfig, random_ring::RandomTree, rat::RatTree, topology_aware::TopologyAwareTree,
+    config::ProbeConfig, random_ring::RandomChain, rat::RatTree, topology_aware::TopologyAwareTree,
     JobSpec, RLAlgorithm, RLPolicy,
 };
 
@@ -102,7 +102,7 @@ impl RLApp {
 
         if self.rl_algorithm.is_none() {
             self.rl_algorithm = Some(match self.rl_policy {
-                RLPolicy::Random => Box::new(RandomTree::new(self.seed, 1)),
+                RLPolicy::Random => Box::new(RandomChain::new(self.seed, 1)),
                 RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
                 RLPolicy::Contraction => panic!("do not use Contraction algorithm"),
                 RLPolicy::RAT => Box::new(RatTree::new()),
