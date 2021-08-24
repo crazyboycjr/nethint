@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use rand::{rngs::StdRng, SeedableRng};
+use rand::Rng;
+
 use serde::{Deserialize, Serialize};
 // use fnv::FnvHashMap as HashMap;
 use fnv::FnvBuildHasher;
@@ -594,17 +597,22 @@ impl Estimator for SimpleEstimator {
         let mut vcluster = (*self.brain.borrow().vclusters[&tenant_id].borrow()).clone();
         log::info!("estimate_v2: {}", vcluster.to_dot());
 
+        let mut rng = StdRng::seed_from_u64(222 as u64);
+
         let brain = self.brain.borrow();
         for link_ix in vcluster.all_links() {
             let phys_link = get_phys_link(&*brain, tenant_id, link_ix);
 
             let num_new_objects = self.calc_num_new_objects(&vcluster, link_ix, app_hint, fairness);
 
+            let mut factor = rng.gen_range(0.1..1.9);
+            println!("Factor: {}", factor);
+
             let bw = self.compute_fair_share(
                 tenant_id,
                 phys_link,
                 brain.cluster()[phys_link].bandwidth,
-                brain.cluster()[phys_link].bandwidth,
+                brain.cluster()[phys_link].bandwidth*factor,
                 fairness,
                 link_flows,
                 num_new_objects,

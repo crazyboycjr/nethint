@@ -1,5 +1,5 @@
 # Number of jobs
-ncases = 30
+ncases = 1
 
 # Job size distributions [(percentage, number of workers)]
 job_size_distribution = [[80, 16], [80, 32]]
@@ -25,7 +25,7 @@ seed = 1
 directory = "/tmp/spectrum1/spectrum1_1"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 5
+batch_repeat = 1
 
 [[batch]]
 policy = "Random"
@@ -52,7 +52,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 2_00_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 1.0, amplitude = 5, average_load = 0.1 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 
