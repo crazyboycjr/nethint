@@ -606,8 +606,7 @@ impl Estimator for SimpleEstimator {
             let num_new_objects = self.calc_num_new_objects(&vcluster, link_ix, app_hint, fairness);
 
             let mut factor = rng.gen_range(0.1..1.9);
-            println!("Factor: {}", factor);
-
+            
             let bw = self.compute_fair_share(
                 tenant_id,
                 phys_link,
