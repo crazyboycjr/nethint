@@ -257,6 +257,7 @@ impl Handler {
             topology: opts.topo,
             background_flow_high_freq: Default::default(),
             gc_period: 100,
+            inaccuracy: None,
         };
         let brain = Brain::build_cloud(brain_setting);
         let (tx, rx) = mpsc::channel();

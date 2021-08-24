@@ -605,13 +605,19 @@ impl Estimator for SimpleEstimator {
 
             let num_new_objects = self.calc_num_new_objects(&vcluster, link_ix, app_hint, fairness);
 
-            let factor = self.rng.gen_range(0.1..1.9);
-            
+
+            let factor = if let Some(inaccuracy) = brain.setting().inaccuracy {
+                assert!((0.0..1.0).contains(&inaccuracy));
+                self.rng.gen_range(1.0 - inaccuracy .. 1.0 + inaccuracy)
+            } else {
+                1.0
+            };
+
             let bw = self.compute_fair_share(
                 tenant_id,
                 phys_link,
                 brain.cluster()[phys_link].bandwidth,
-                brain.cluster()[phys_link].bandwidth*factor,
+                brain.cluster()[phys_link].bandwidth * factor,
                 fairness,
                 link_flows,
                 num_new_objects,

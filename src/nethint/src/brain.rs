@@ -61,6 +61,9 @@ pub struct BrainSetting {
     pub background_flow_high_freq: BackgroundFlowHighFreq,
     /// GC period
     pub gc_period: usize,
+
+    /// bandwidth inaccuracy
+    pub inaccuracy: Option<f64>,
 }
 
 /// can only send by replicating (deep copy) the object, user should be very careful about this
