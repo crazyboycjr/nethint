@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use rand::{rngs::StdRng, SeedableRng};
+use rand::Rng;
+
 use serde::{Deserialize, Serialize};
 // use fnv::FnvHashMap as HashMap;
 use fnv::FnvBuildHasher;
@@ -184,7 +187,7 @@ pub(crate) trait Estimator {
     // link flows tells which flows are on each link, and it also groups flows with the same fairness property together,
     // which will be useful for estimating available bandwidth.
     fn estimate_v2(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         fairness: FairnessModel,
         link_flows: &HashMap<LinkIx, FlowSet>,
@@ -197,6 +200,7 @@ pub struct SimpleEstimator {
     sample_interval_ns: Duration,
     sampler: HashMap<TenantId, Sampler>,
     brain: Rc<RefCell<Brain>>,
+    rng: StdRng,
 }
 
 impl SimpleEstimator {
@@ -205,6 +209,7 @@ impl SimpleEstimator {
             sample_interval_ns,
             sampler: HashMap::default(),
             brain,
+            rng: StdRng::seed_from_u64(222 as u64),
         }
     }
 }
@@ -585,7 +590,7 @@ impl Estimator for SimpleEstimator {
     }
 
     fn estimate_v2(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         fairness: FairnessModel,
         link_flows: &HashMap<LinkIx, FlowSet>,
@@ -600,11 +605,13 @@ impl Estimator for SimpleEstimator {
 
             let num_new_objects = self.calc_num_new_objects(&vcluster, link_ix, app_hint, fairness);
 
+            let factor = self.rng.gen_range(0.1..1.9);
+            
             let bw = self.compute_fair_share(
                 tenant_id,
                 phys_link,
                 brain.cluster()[phys_link].bandwidth,
-                brain.cluster()[phys_link].bandwidth,
+                brain.cluster()[phys_link].bandwidth*factor,
                 fairness,
                 link_flows,
                 num_new_objects,
