@@ -646,7 +646,7 @@ impl<'a> Executor<'a> for Simulator {
                                 NetHintVersion::V1 => {
                                     self.estimator.as_ref().unwrap().estimate_v1(tenant_id)
                                 }
-                                NetHintVersion::V2 => self.estimator.as_ref().unwrap().estimate_v2(
+                                NetHintVersion::V2 =>  self.estimator.as_mut().unwrap().estimate_v2(
                                     tenant_id,
                                     self.setting.fairness,
                                     &self.state.link_flows,
