@@ -608,7 +608,11 @@ impl Estimator for SimpleEstimator {
 
             let factor = if let Some(inaccuracy) = brain.setting().inaccuracy {
                 assert!((0.0..1.0).contains(&inaccuracy));
-                self.rng.gen_range(1.0 - inaccuracy .. 1.0 + inaccuracy)
+                if inaccuracy > 0.0 {
+                    self.rng.gen_range(1.0 - inaccuracy .. 1.0 + inaccuracy)
+                } else {
+                    1.0
+                }
             } else {
                 1.0
             };

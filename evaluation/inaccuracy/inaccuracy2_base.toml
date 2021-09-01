@@ -1,17 +1,19 @@
 # Number of jobs
-ncases = 30
+ncases = 1
 
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[80, 16], [80, 32]]
+job_size_distribution = [[50, 8], [50, 16]]
 
-# Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
-buffer_size = 100_000_000
+# Images in a ML serving batch request, batch size = 64, each image has 3 channels, crop to 256x256
+buffer_size = 12582912
 
 # Number of iterations for all jobs
-num_iterations = 100
+num_iterations = 1000
 
-# Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 3.2s
+# Lambda of the poisson arrival, 12582912 * 8 / 50G * 4000 = 2s
 poisson_lambda = 2_400_000_000.0
+
+partially_sync = false
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -22,10 +24,10 @@ placement_strategy = { type = "Compact" }
 seed = 1
 
 # Output path of for the simulation results
-directory = "/tmp/inaccuracy/inaccuracy_base"
+directory = "/tmp/inaccuracy2/inaccuracy2_base"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 5
+batch_repeat = 1
 
 [[batch]]
 policy = "Random"
