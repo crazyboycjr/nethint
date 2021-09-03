@@ -18,6 +18,12 @@ pub struct BatchConfig {
     pub probe: ProbeConfig,
     /// Nethint level.
     pub nethint_level: usize,
+    /// automatically choose which solution to use, BW or TO
+    #[serde(default)]
+    pub auto_fallback: Option<bool>,
+    /// the alpha, details in paper
+    #[serde(default)]
+    pub alpha: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

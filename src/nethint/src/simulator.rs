@@ -154,9 +154,12 @@ impl SimulatorBuilder {
 
         let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
         if self.setting.background_flow_hard.enable {
+            // This is a dirty hack to let the simulated apps can get background_flow changing period easily
+            let freq = self.setting.background_flow_hard.frequency_ns;
+            std::env::set_var("NETHINT_BACKGROUND_FLOW_PERIOD", freq.to_string());
             timers.push(Box::new(PoissonTimer::new(
-                self.setting.background_flow_hard.frequency_ns,
-                self.setting.background_flow_hard.frequency_ns as f64,
+                freq,
+                freq as f64,
             )));
         }
 

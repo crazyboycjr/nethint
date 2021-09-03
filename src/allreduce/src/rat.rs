@@ -24,6 +24,26 @@ impl<S, I, O> RatAllReduce<S, I, O> {
     }
 }
 
+impl RatAllReduce<RatSolver<AllreduceInput>, AllreduceInput, Vec<Flow>> {
+    pub fn estimate_iter(&self, size: u64, vcluster: Rc<dyn Topology>) -> f64 {
+        let generate_func = || -> Vec<Tree> {
+            vec![
+                generate_embeddings(&*vcluster, self.num_trees, construct_rat_offset),
+                generate_embeddings(&*vcluster, self.num_trees, construct_ps_offset),
+                // generate_embeddings(vcluster, self.num_trees, construct_chain_offset),
+            ]
+            .concat()
+        };
+
+        let embeddings = generate_func();
+
+        // this estimate_iter will only be called one-time for each job.
+        let mut rat_solver = RatSolver::new(embeddings);
+
+        rat_solver.estimate_iter(&(size, TopologyWrapper::new(vcluster)))
+    }
+}
+
 #[allow(dead_code)]
 fn construct_rat_full_set(groups: &mut Vec<Vec<usize>>, mut offset: usize) -> Tree {
     let mut m = groups.iter().map(|x| x.len()).product::<usize>();

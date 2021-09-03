@@ -35,6 +35,8 @@ pub struct RLApp {
     overhead_collector: OverheadCollector,
     // dynamic probing
     probe: ProbeConfig,
+    auto_fallback: bool,
+    alpha: Option<f64>,
     nhosts_to_acquire: usize,
     in_probing: bool,
     probing_start_time: Timestamp,
@@ -60,6 +62,8 @@ impl RLApp {
         nethint_level: usize,
         autotune: Option<usize>,
         probe: ProbeConfig,
+        auto_fallback: bool,
+        alpha: Option<f64>,
         nhosts_to_acquire: usize,
         partially_sync: bool,
     ) -> Self {
@@ -78,6 +82,8 @@ impl RLApp {
             autotune,
             overhead_collector: Default::default(),
             probe,
+            auto_fallback,
+            alpha,
             nhosts_to_acquire,
             in_probing: false,
             probing_start_time: 0,
@@ -97,17 +103,31 @@ impl RLApp {
         self.rl_traffic(0);
     }
 
+    fn estimate_iter(&self, group: Option<Vec<usize>>) -> f64 {
+        let mut algorithm = RatTree::new();
+        algorithm.estimate_iter(
+            self.job_spec.root_index,
+            group,
+            self.job_spec.buffer_size as u64,
+            Rc::clone(self.cluster.as_ref().unwrap()),
+        )
+    }
+
+    fn estimate_adapt(&self) -> f64 {
+        let n = self.job_spec.num_workers;
+        if n <= 16 {
+            1.0 * 1e-3
+        } else if n <= 32 {
+            10.0 * 1e-3
+        } else if n <= 64 {
+            30.0 * 1e-3
+        } else {
+            50.0 * 1e-3
+        }
+    }
+
     pub fn rl_traffic(&mut self, start_time: Timestamp) {
         let mut trace = Trace::new();
-
-        if self.rl_algorithm.is_none() {
-            self.rl_algorithm = Some(match self.rl_policy {
-                RLPolicy::Random => Box::new(RandomChain::new(self.seed, 1)),
-                RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
-                RLPolicy::Contraction => panic!("do not use Contraction algorithm"),
-                RLPolicy::RAT => Box::new(RatTree::new()),
-            });
-        }
 
         let group = if self.partially_sync {
             // generate group members of (n-1)/2+1
@@ -123,6 +143,41 @@ impl RLApp {
         } else {
             None
         };
+
+        if self.rl_algorithm.is_none() {
+            self.rl_algorithm = Some(match self.rl_policy {
+                RLPolicy::Random => Box::new(RandomChain::new(self.seed, 1)),
+                RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, 1)),
+                RLPolicy::Contraction => panic!("do not use Contraction algorithm"),
+                RLPolicy::RAT => {
+                    if self.auto_fallback {
+                        let t_background = std::env::var("NETHINT_BACKGROUND_FLOW_PERIOD")
+                            .expect("it should be set in simulator.rs, something is wrong")
+                            .parse::<u64>()
+                            .unwrap() as f64
+                            / 1e9;
+                        let alpha = self.alpha.unwrap();
+                        let t_iter = self.estimate_iter(group.clone());
+                        let t_adapt = self.estimate_adapt();
+                        // let p = 0.1;
+                        // let k = (t_adapt as f64 * (1.0 - p) / p / t_iter as f64).ceil();
+                        let k = self.autotune.unwrap();
+                        let t_period = t_adapt + k as f64 * t_iter;
+                        log::error!(
+                            "num_workers:{}, t_adapt: {}, t_iter: {}, k: {}, alpha: {}, t_background: {}",
+                            self.job_spec.num_workers, t_adapt, t_iter, k, alpha, t_background
+                        );
+                        if t_period < alpha * t_background {
+                            Box::new(RatTree::new())
+                        } else {
+                            Box::new(TopologyAwareTree::new(self.seed, 1))
+                        }
+                    } else {
+                        Box::new(RatTree::new())
+                    }
+                }
+            });
+        }
 
         let flows = self.rl_algorithm.as_mut().unwrap().run_rl_traffic(
             self.job_spec.root_index,

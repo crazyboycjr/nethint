@@ -11,7 +11,7 @@ num_reduce = 1
 enable_computation_time = false
 
 # Multiply the traffic size by a number
-traffic_scale = 100.0
+traffic_scale = 10.0
 
 # Mapper placement policy
 mapper_policy = { type = "Greedy" }
@@ -25,7 +25,7 @@ directory = "/tmp/spectrum6/spectrum6_1"
 collocate = true
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 reducer_policy = "Random"
@@ -43,6 +43,14 @@ reducer_policy = "HierarchicalGreedyPaper" # please use this
 # reducer_policy = "HierarchicalGreedy"
 probe = { enable = false }
 nethint_level = 2
+
+[[batch]]
+reducer_policy = "HierarchicalGreedyPaper" # please use this
+# reducer_policy = "HierarchicalGreedy"
+probe = { enable = false }
+nethint_level = 2
+auto_fallback = true
+alpha = 0.5
 
 [simulator]
 nethint = true
@@ -87,5 +95,5 @@ rack_size = 18      # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
 rack_bw = 600       # bandwidth of a ToR switch, in Gbps
 
-# [envs]
-# KEY = "value"
+[envs]
+NETHINT_SHOW_DECISION = "/tmp/spectrum6/spectrum6_1/decision.txt"

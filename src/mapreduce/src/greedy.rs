@@ -527,6 +527,41 @@ impl GreedyReducerSchedulerPaper {
 
         (est, cross)
     }
+
+    pub fn estimate_jct(
+        &mut self,
+        cluster: &dyn Topology,
+        job_spec: &JobSpec,
+        mapper: &Placement,
+        shuffle_pairs: &Shuffle,
+        collocate: bool,
+    ) -> f64 {
+        let reducers = self.place(cluster, job_spec, mapper, shuffle_pairs, collocate);
+        let mut traffic: HashMap<LinkIx, usize> = Default::default();
+
+        for (mi, m) in mapper.0.iter().enumerate() {
+            let m_ix = cluster.get_node_index(m);
+            for (ri, r) in reducers.0.iter().enumerate() {
+                let s = shuffle_pairs.0[mi][ri];
+                let r_ix = cluster.get_node_index(r);
+                if m_ix != r_ix {
+                    let route = cluster.resolve_route(m, r, &RouteHint::default(), None);
+                    for link_ix in route.path {
+                        *traffic.entry(link_ix).or_insert(0) += s;
+                    }
+                }
+            }
+        }
+
+        let mut est: f64 = 0.0;
+        for (&link_ix, &tr) in traffic.iter() {
+            let bw = cluster[link_ix].bandwidth;
+            est = est.max(tr as f64 * 8.0 / bw.val() as f64);
+        }
+
+        // unit in seconds
+        est
+    }
 }
 
 use std::sync::atomic::AtomicBool;

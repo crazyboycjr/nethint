@@ -26,6 +26,12 @@ pub struct BatchConfig {
     /// Number of broadcast trees
     #[serde(default)]
     pub num_trees: Option<usize>,
+    /// automatically choose which solution to use, BW or TO
+    #[serde(default)]
+    pub auto_fallback: Option<bool>,
+    /// the alpha, details in paper
+    #[serde(default)]
+    pub alpha: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

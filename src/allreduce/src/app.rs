@@ -33,6 +33,8 @@ pub struct AllReduceApp<'c> {
     overhead_collector: OverheadCollector,
     // dynamic probing
     probe: ProbeConfig,
+    auto_fallback: bool,
+    alpha: Option<f64>,
     nhosts_to_acquire: usize,
     in_probing: bool,
     probing_start_time: Timestamp,
@@ -55,6 +57,8 @@ impl<'c> AllReduceApp<'c> {
         nethint_level: usize,
         autotune: Option<usize>,
         probe: ProbeConfig,
+        auto_fallback: bool,
+        alpha: Option<f64>,
         nhosts_to_acquire: usize,
     ) -> Self {
         let trace = Trace::new();
@@ -76,6 +80,8 @@ impl<'c> AllReduceApp<'c> {
             allreduce_algorithm: None,
             overhead_collector: Default::default(),
             probe,
+            auto_fallback,
+            alpha,
             nhosts_to_acquire,
             in_probing: false,
             probing_start_time: 0,
@@ -91,13 +97,62 @@ impl<'c> AllReduceApp<'c> {
         self.allreduce(0);
     }
 
+    fn estimate_iter(&self) -> f64 {
+        let n = self.job_spec.num_workers;
+        // 2 * (n - 1) / n * m / avg_bw
+        let algorithm = RatAllReduce::new(n);
+        algorithm.estimate_iter(
+            self.job_spec.buffer_size as u64,
+            Rc::clone(self.cluster.as_ref().unwrap()),
+        )
+    }
+
+    fn estimate_adapt(&self) -> f64 {
+        let n = self.job_spec.num_workers;
+        if n <= 16 {
+            1.0 * 1e-3
+        } else if n <= 32 {
+            10.0 * 1e-3
+        } else if n <= 64 {
+            30.0 * 1e-3
+        } else {
+            50.0 * 1e-3
+        }
+    }
+
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         match self.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, 1)),
             AllReducePolicy::TopologyAware => {
                 Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
             }
-            AllReducePolicy::RAT => Box::new(RatAllReduce::new(self.job_spec.num_workers)),
+            AllReducePolicy::RAT => {
+                if self.auto_fallback {
+                    let t_background = std::env::var("NETHINT_BACKGROUND_FLOW_PERIOD")
+                        .expect("it should be set in simulator.rs, something is wrong")
+                        .parse::<u64>()
+                        .unwrap() as f64
+                        / 1e9;
+                    let alpha = self.alpha.unwrap();
+                    let t_iter = self.estimate_iter();
+                    let t_adapt = self.estimate_adapt();
+                    // let p = 0.1;
+                    // let k = (t_adapt as f64 * (1.0 - p) / p / t_iter as f64).ceil();
+                    let k = self.autotune.unwrap();
+                    let t_period = t_adapt + k as f64 * t_iter;
+                    log::error!(
+                        "num_workers:{}, t_adapt: {}, t_iter: {}, k: {}, alpha: {}, t_background: {}",
+                        self.job_spec.num_workers, t_adapt, t_iter, k, alpha, t_background
+                    );
+                    if t_period < alpha * t_background {
+                        Box::new(RatAllReduce::new(self.job_spec.num_workers))
+                    } else {
+                        Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
+                    }
+                } else {
+                    Box::new(RatAllReduce::new(self.job_spec.num_workers))
+                }
+            }
         }
     }
 

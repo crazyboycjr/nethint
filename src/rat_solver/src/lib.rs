@@ -110,6 +110,20 @@ where
     }
 }
 
+impl<I> RatSolver<I>
+where
+    I: RatInput,
+{
+    pub fn estimate_iter(&mut self, input: &I) -> f64 {
+        let tree_set = self.embeddings.clone();
+
+        let weights = Self::linear_programming(input.vcluster(), &tree_set, input.size());
+
+        // bytes to bits
+        weights.last().unwrap() * 8.0
+    }
+}
+
 impl<I> RatSolver<I> {
     fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
         let mut lp = lpsolve::Problem::new(0, tree_set.len() as i32 + 1).unwrap();

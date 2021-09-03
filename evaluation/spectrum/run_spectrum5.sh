@@ -3,9 +3,9 @@
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 background_flow_freqs=(
-# 25_000_000
-# 50_000_000
-# 1_00_000_000
+25_000_000
+50_000_000
+1_00_000_000
 2_00_000_000
 4_00_000_000
 8_00_000_000

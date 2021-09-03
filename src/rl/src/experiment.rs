@@ -141,6 +141,8 @@ fn run_batch(
             batch.nethint_level,
             batch.auto_tune,
             batch.probe,
+            batch.auto_fallback.unwrap_or_default(),
+            batch.alpha,
             nhosts_to_acquire,
             config.partially_sync,
         ));

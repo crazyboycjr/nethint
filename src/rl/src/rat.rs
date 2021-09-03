@@ -59,6 +59,40 @@ impl RLAlgorithm for RatTree<RatSolver<RlInput>, RlInput, Vec<Flow>> {
     }
 }
 
+impl RatTree<RatSolver<RlInput>, RlInput, Vec<Flow>> {
+    pub fn estimate_iter(
+        &mut self,
+        root_index: usize,
+        mut group: Option<Vec<usize>>,
+        size: u64,
+        vc: Rc<dyn Topology>,
+    ) -> f64 {
+        if group.is_some() {
+            group.as_mut().unwrap().sort();
+            group.as_mut().unwrap().insert(0, root_index);
+        }
+
+        let generate_func = || -> Vec<Tree> {
+            vec![
+                generate_embeddings2(
+                    &*vc,
+                    root_index,
+                    &group,
+                    vc.num_hosts(),
+                    construct_rat_offset,
+                ),
+            ]
+            .concat()
+        };
+
+        let embeddings = generate_func();
+
+        let mut rat_solver = RatSolver::new(embeddings);
+
+        rat_solver.estimate_iter(&(size, TopologyWrapper::new(vc), root_index, group))
+    }
+}
+
 #[inline]
 fn get_fwd_rate2(vc: &dyn Topology, host_id: usize) -> Bandwidth {
     let tx = get_up_bw(vc, host_id);
