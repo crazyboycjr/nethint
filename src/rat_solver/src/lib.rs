@@ -4,48 +4,127 @@ use nethint::{
     Flow,
 };
 use utils::algo::*;
+use std::marker::PhantomData;
+use std::rc::Rc;
 
 /// A solver with initial state `State` takes an input `I`, and returns an output `O`
 /// by calling `solve`.
-pub trait Solver<'a, State> {
+pub trait Solver {
+    type State;
     type Input;
     type Output;
-    fn new(init_state: State) -> Self;
-    fn solve(&'a mut self, input: &Self::Input) -> Self::Output;
+    fn new(init_state: Self::State) -> Self;
+    fn solve(&mut self, input: &Self::Input) -> Self::Output;
 }
 
-pub struct RatSolver<F> {
-    generate_embeddings: F,
+// allreduce's input
+pub trait RatInput {
+    fn size(&self) -> u64;
+    fn vcluster(&self) -> &dyn Topology;
 }
 
-impl<'a, F> Solver<'a, F> for RatSolver<F>
+#[derive(Clone)]
+pub struct TopologyWrapper(pub Rc<dyn Topology>);
+
+impl TopologyWrapper {
+    #[inline]
+    pub fn new(t: Rc<dyn Topology>) -> Self {
+        TopologyWrapper(t)
+    }
+}
+
+impl PartialEq for TopologyWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        &*self.0 == &*other.0
+    }
+}
+
+impl RatInput for (u64, TopologyWrapper) {
+    #[inline]
+    fn size(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn vcluster(&self) -> &dyn Topology {
+        &*self.1.0
+    }
+}
+
+// rl's input
+impl<T> RatInput for (u64, TopologyWrapper, T) {
+    #[inline]
+    fn size(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn vcluster(&self) -> &dyn Topology {
+        &*self.1.0
+    }
+}
+
+impl<T1, T2> RatInput for (u64, TopologyWrapper, T1, T2) {
+    #[inline]
+    fn size(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn vcluster(&self) -> &dyn Topology {
+        &*self.1.0
+    }
+}
+
+pub struct RatSolver<I> {
+    embeddings: Vec<Tree>,
+    _marker: PhantomData<I>,
+}
+
+impl<I> Solver for RatSolver<I>
 where
-    F: Fn() -> Vec<Tree>,
+    I: RatInput,
 {
-    type Input = (usize, u64, &'a dyn Topology);
+    type State = Vec<Tree>;
+    type Input = I;
     type Output = Vec<Flow>;
 
-    fn new(generate_embeddings: F) -> Self {
+    fn new(init_state: Self::State) -> Self {
         RatSolver {
-            generate_embeddings,
+            embeddings: init_state,
+            _marker: PhantomData,
         }
     }
 
-    fn solve(&mut self, &(_root_index, size, vcluster): &Self::Input) -> Self::Output {
+    fn solve(&mut self, input: &Self::Input) -> Self::Output {
         // 1. trees/embeddings generation
-        let tree_set = (self.generate_embeddings)();
+        let tree_set = self.embeddings.clone();
 
         // 2. run linear programming
-        let weights = Self::linear_programming(vcluster, &tree_set, size);
+        let weights = Self::linear_programming(input.vcluster(), &tree_set, input.size());
 
         // 3. construct flows
-        let flows = Self::construct_flows(&tree_set, &weights, size);
+        let flows = Self::construct_flows(&tree_set, &weights, input.size());
 
         flows
     }
 }
 
-impl<F> RatSolver<F> {
+impl<I> RatSolver<I>
+where
+    I: RatInput,
+{
+    pub fn estimate_iter(&mut self, input: &I) -> f64 {
+        let tree_set = self.embeddings.clone();
+
+        let weights = Self::linear_programming(input.vcluster(), &tree_set, input.size());
+
+        // bytes to bits
+        weights.last().unwrap() * 8.0
+    }
+}
+
+impl<I> RatSolver<I> {
     fn linear_programming(vcluster: &dyn Topology, tree_set: &[Tree], size: u64) -> Vec<f64> {
         let mut lp = lpsolve::Problem::new(0, tree_set.len() as i32 + 1).unwrap();
 
@@ -211,7 +290,7 @@ impl<I: Clone + PartialEq, O: Clone> Cached<I, O> for SingleEntryCache<I, O> {
     #[inline]
     fn update_cache(&mut self, input: &I, output: O) {
         self.last_input.replace(input.clone());
-        self.last_output.replace(output.clone());
+        self.last_output.replace(output);
     }
 
     #[inline]
@@ -225,23 +304,24 @@ pub struct CachedSolver<S, I, O> {
     cache: SingleEntryCache<I, O>,
 }
 
-impl<'a, State, S, I, O> Solver<'a, State> for CachedSolver<S, I, O>
+impl<State, S, I, O> Solver for CachedSolver<S, I, O>
 where
-    S: Solver<'a, State, Input = I, Output = O>,
-    I: Clone + PartialEq,
+    S: Solver<State = State, Input = I, Output = O>,
+    I: Clone + PartialEq, // TODO(cjr): change Clone to ToOwned
     O: Clone,
 {
+    type State = State;
     type Input = I;
     type Output = O;
 
-    fn new(init_state: State) -> Self {
+    fn new(init_state: Self::State) -> Self {
         CachedSolver {
             solver: S::new(init_state),
             cache: SingleEntryCache::new(),
         }
     }
 
-    fn solve(&'a mut self, input: &Self::Input) -> Self::Output {
+    fn solve(&mut self, input: &Self::Input) -> Self::Output {
         if self.cache.check_cache(input) {
             return self.cache.get(input);
         }

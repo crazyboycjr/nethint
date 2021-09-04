@@ -46,7 +46,8 @@ struct HostnameIpTable {
 
 lazy_static::lazy_static! {
     static ref HOSTNAME_IP_TABLE: HostnameIpTable = {
-        let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("cpu{}", x)).collect();
+        // let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("cpu{}", x)).collect();
+        let hostnames: Vec<String> = (0..24).map(|x| (x / 4) * 8 + x % 4).map(|x| format!("nixos{}", x)).collect();
         let ipaddrs: Vec<&str> = include!("./vm_ip_addrs.in");
         HostnameIpTable {
             table: hostnames.into_iter().zip(ipaddrs).map(|(k, v)| (k, v.to_string())).collect()
@@ -70,14 +71,14 @@ fn request_provision(
     nhosts_to_acquire: usize,
     allow_delay: bool,
 ) -> anyhow::Result<NetHintV1Real> {
-    use nhagent::message::Message;
+    use nhagent_v2::message::Message;
     let msg = Message::ProvisionRequest(this_tenant_id, nhosts_to_acquire, allow_delay);
     litemsg::utils::send_cmd_sync(brain, &msg)?;
     let reply: Message = litemsg::utils::recv_cmd_sync(brain)?;
     match reply {
         Message::ProvisionResponse(tenant_id, hintv1) => {
             assert_eq!(tenant_id, this_tenant_id);
-            return Ok(hintv1);
+            Ok(hintv1)
         }
         _ => {
             panic!("unexpected reply from brain: {:?}", reply);
@@ -85,9 +86,17 @@ fn request_provision(
     }
 }
 
+fn notify_batch_done(brain: &mut std::net::TcpStream) -> anyhow::Result<()> {
+    use nhagent_v2::message::Message;
+    let msg = Message::BatchDoneNotification;
+    litemsg::utils::send_cmd_sync(brain, &msg)?;
+    // no acknowlegement for this message
+    Ok(())
+}
+
 fn request_destroy(brain: &mut std::net::TcpStream, tenant_id: TenantId) -> anyhow::Result<()> {
     // send request to destroy VMs
-    use nhagent::message::Message;
+    use nhagent_v2::message::Message;
     let msg = Message::DestroyRequest(tenant_id);
     litemsg::utils::send_cmd_sync(brain, &msg)?;
     let reply: Message = litemsg::utils::recv_cmd_sync(brain)?;
@@ -244,6 +253,7 @@ mod sched_rl {
 
     pub fn submit_jobs(opt: &Opt) {
         let config: config::ExperimentConfig = config::read_config(&opt.configfile);
+        let mut brain = litemsg::utils::connect_retry(&opt.brain_uri, 5).unwrap();
 
         for batch_id in 0..config.batches.len() {
             let mut handles = Vec::new();
@@ -273,7 +283,8 @@ mod sched_rl {
                     buffer_size: config.buffer_size,
                     num_iterations: config.num_iterations,
                     poisson_lambda: config.poisson_lambda,
-                    seed_base: config.seed,
+                    partially_sync: config.partially_sync,
+                    seed_base: config.seed + i as u64,
                     traffic_scale: 1.0,
                     rl_policy: batch.policy,
                     probe: batch.probe.clone(),
@@ -305,6 +316,8 @@ mod sched_rl {
                 h.join()
                     .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
             }
+
+            notify_batch_done(&mut brain).unwrap();
         }
     }
 }
@@ -335,6 +348,7 @@ mod sched_allreduce {
 
     pub fn submit_jobs(opt: &Opt) {
         let config: config::ExperimentConfig = config::read_config(&opt.configfile);
+        let mut brain = litemsg::utils::connect_retry(&opt.brain_uri, 5).unwrap();
 
         for batch_id in 0..config.batches.len() {
             let mut handles = Vec::new();
@@ -364,7 +378,7 @@ mod sched_allreduce {
                     buffer_size: config.buffer_size,
                     num_iterations: config.num_iterations,
                     poisson_lambda: config.poisson_lambda,
-                    seed_base: config.seed,
+                    seed_base: config.seed + i as u64,
                     traffic_scale: 1.0,
                     allreduce_policy: batch.policy,
                     probe: batch.probe.clone(),
@@ -396,6 +410,8 @@ mod sched_allreduce {
                 h.join()
                     .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
             }
+
+            notify_batch_done(&mut brain).unwrap();
         }
     }
 }
@@ -403,8 +419,7 @@ mod sched_allreduce {
 mod sched_mapreduce {
     use super::*;
     use mapreduce::{config, JobSpec, ShufflePattern};
-    use replayer::controller::mapreduce::MapReduceAppBuilder;
-    use replayer::controller::mapreduce::MapReduceSetting;
+    use replayer::controller::mapreduce::{MapReduceAppBuilder, MapReduceSetting};
 
     fn is_job_trivial(job_spec: &JobSpec) -> bool {
         match job_spec.shuffle_pat {
@@ -425,6 +440,7 @@ mod sched_mapreduce {
 
     pub fn submit_jobs(opt: &Opt) {
         let config: config::ExperimentConfig = config::read_config(&opt.configfile);
+        let mut brain = litemsg::utils::connect_retry(&opt.brain_uri, 5).unwrap();
 
         for batch_id in 0..config.batches.len() {
             let mut handles = Vec::new();
@@ -510,6 +526,9 @@ mod sched_mapreduce {
                 h.join()
                     .unwrap_or_else(|e| panic!("Failed to join thread: {:?}", e));
             }
+
+            // After a batch of jobs is finsihed, we need to reset the background traffic for an apple-to-apple comparison
+            notify_batch_done(&mut brain).unwrap();
         }
     }
 }

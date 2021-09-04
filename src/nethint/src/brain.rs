@@ -61,6 +61,9 @@ pub struct BrainSetting {
     pub background_flow_high_freq: BackgroundFlowHighFreq,
     /// GC period
     pub gc_period: usize,
+
+    /// bandwidth inaccuracy
+    pub inaccuracy: Option<f64>,
 }
 
 /// can only send by replicating (deep copy) the object, user should be very careful about this
@@ -273,6 +276,10 @@ impl Brain {
         }
     }
 
+    pub fn clear_background_flow_update_cnt(&mut self) {
+        self.background_flow_update_cnt = 0;
+    }
+
     pub fn update_background_flow_hard(
         &mut self,
         probability: f64,
@@ -294,9 +301,9 @@ impl Brain {
 
         for link_ix in cluster.all_links() {
             if rng.gen_range(0.0..1.0) < probability {
-                if link_ix.index() % 2 == 0 {
-                    continue;
-                }
+                // if link_ix.index() % 2 == 0 {
+                //     continue;
+                // }
 
                 // integer overflow will only be checked in debug mode, so I should have detected an error here.
                 let current_tenants = self.plink_to_vlinks.entry(link_ix).or_default().len();

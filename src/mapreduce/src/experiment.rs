@@ -192,6 +192,8 @@ fn run_batch(
             mapper_policy.clone(),
             batch.reducer_policy,
             batch.nethint_level,
+            batch.auto_fallback.unwrap_or_default(),
+            batch.alpha,
             config.collocate,
             config.brain.topology.clone().host_bw(),
             config.enable_computation_time,

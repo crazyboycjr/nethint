@@ -10,7 +10,7 @@ use replayer::message;
 use replayer::Node;
 
 use structopt::StructOpt;
-use nhagent::timing;
+// use nhagent::timing;
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "Controller", about = "Controller of the distributed replayer.")]
@@ -148,7 +148,7 @@ fn io_loop(
             };
             if event.readiness().is_writable() {
                 if rank == token_table.len() {
-                    match ep.on_send_ready::<nhagent::message::Message>() {
+                    match ep.on_send_ready::<nhagent_v2::message::Message>() {
                         Ok(..) => {}
                         Err(endpoint::Error::NothingToSend) => {}
                         Err(endpoint::Error::WouldBlock) => {}
@@ -166,7 +166,7 @@ fn io_loop(
             if event.readiness().is_readable() {
                 // warp nhagent msg into Command and ignore attachment
                 let res = if rank == token_table.len() {
-                    ep.on_recv_ready::<nhagent::message::Message>()
+                    ep.on_recv_ready::<nhagent_v2::message::Message>()
                         .map(|x| message::Command::BrainResponse(x.0))
                 } else {
                     ep.on_recv_ready::<message::Command>().map(|x| x.0)
@@ -209,10 +209,10 @@ impl Handler {
 
     fn handle_brain_response(
         &mut self,
-        msg: nhagent::message::Message,
+        msg: nhagent_v2::message::Message,
         app: &mut Box<dyn Application>,
     ) -> anyhow::Result<bool> {
-        use nhagent::message::Message::*;
+        use nhagent_v2::message::Message::*;
         // let my_tenant_id = app.tenant_id();
         match msg {
             // r @ ProvisionResponse(..) => {
@@ -257,14 +257,14 @@ impl Handler {
                 }
             }
             BrainResponse(msg) => {
-                if let Some(path) = self.timing.as_ref() {
+                if let Some(_path) = self.timing.as_ref() {
                     match &msg {
-                        nhagent::message::Message::NetHintResponseV2(_tenant_id, _hintv2, time_list) => {
-                            let mut time_list = time_list.clone();
-                            time_list.push_now(timing::ON_TENANT_RECV_RES);
-                            use std::io::Write;
-                            let mut f = utils::fs::open_with_create_append(path);
-                            writeln!(f, "{}", time_list)?;
+                        nhagent_v2::message::Message::NetHintResponseV2(_tenant_id, _hintv2) => {
+                            // let mut time_list = time_list.clone();
+                            // time_list.push_now(timing::ON_TENANT_RECV_RES);
+                            // use std::io::Write;
+                            // let mut f = utils::fs::open_with_create_append(path);
+                            // writeln!(f, "{}", time_list)?;
                         }
                         _ => {
                             // do nothing

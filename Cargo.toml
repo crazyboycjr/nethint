@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/nethint", "src/logging", "src/mapreduce", "src/allreduce", "src/rl", "src/litemsg", "src/replayer", "src/nhagent", "src/utils", "src/rat_solver"]
+members = ["src/nethint", "src/logging", "src/mapreduce", "src/allreduce", "src/rl", "src/litemsg", "src/replayer", "src/nhagent_v2", "src/nhagent", "src/utils", "src/rat_solver"]
 
 [profile.dev]
 panic = "unwind"

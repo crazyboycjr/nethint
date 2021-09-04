@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-for i in {0..6}; do
+for i in {1..6}; do
 	ssh danyang-0$i 'sudo mlnx_qos -i rdma0 -r 0,0,0,0,0,0,0,0'
 done
 

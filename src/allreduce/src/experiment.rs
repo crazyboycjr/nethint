@@ -17,7 +17,7 @@ use mapreduce::plink::PlinkApp;
 extern crate allreduce;
 use allreduce::{app::AllReduceApp, JobSpec};
 
-use allreduce::config::{self, ExperimentConfig, read_config};
+use allreduce::config::{self, read_config, ExperimentConfig};
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "Allreduce Experiment", about = "Allreduce Experiment")]
@@ -51,7 +51,10 @@ fn main() {
 
     // set rayon max concurrency
     log::info!("using {} threads", opt.parallel);
-    rayon::ThreadPoolBuilder::new().num_threads(opt.parallel).build_global().unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(opt.parallel)
+        .build_global()
+        .unwrap();
 
     let brain = Brain::build_cloud(config.brain.clone());
 
@@ -70,13 +73,6 @@ fn main() {
         std::fs::write(file, format!("{:#?}\n", config)).unwrap();
     };
 
-    // we don't have to be having the exact result as the last run
-    // since the results are relatively good, we can accept any seeds
-    // let seed = std::time::SystemTime::now()
-    //     .duration_since(std::time::UNIX_EPOCH)
-    //     .unwrap()
-    //     .as_secs();
-    // log::info!("seed = {}", seed);
     let seed = config.seed;
 
     // start to run batches
@@ -93,7 +89,13 @@ fn main() {
         (0..batch_repeat).into_par_iter().for_each(move |trial_id| {
             let mut brain_clone = brain_clone.replicate_for_multithread();
             brain_clone.set_seed(brain_clone.setting().seed + trial_id as u64);
-            run_batch(&config_clone, i, trial_id, seed, Rc::new(RefCell::new(brain_clone)));
+            run_batch(
+                &config_clone,
+                i,
+                trial_id,
+                seed,
+                Rc::new(RefCell::new(brain_clone)),
+            );
         });
     }
 }
@@ -135,6 +137,8 @@ fn run_batch(
         let tenant_id = i;
         let (start_ts, job_spec) = jobs.get(i).unwrap();
 
+        let nhosts_to_acquire = job_spec.num_workers;
+
         let allreduce_app = Box::new(AllReduceApp::new(
             job_spec,
             config.computation_speed,
@@ -143,22 +147,24 @@ fn run_batch(
             batch.policy,
             batch.nethint_level,
             batch.auto_tune,
+            batch.probe,
+            batch.auto_fallback.unwrap_or_default(),
+            batch.alpha,
+            nhosts_to_acquire,
         ));
 
-        let nhosts_to_acquire = job_spec.num_workers;
-
-        let app: Box<dyn Application<Output = _>> = if batch.probe.enable {
-            Box::new(PlinkApp::new(
-                nhosts_to_acquire,
-                batch.probe.round_ms,
-                allreduce_app,
-            ))
-        } else {
-            allreduce_app
-        };
+        // let app: Box<dyn Application<Output = _>> = if batch.probe.enable {
+        //     Box::new(PlinkApp::new(
+        //         nhosts_to_acquire,
+        //         batch.probe.round_ms,
+        //         allreduce_app,
+        //     ))
+        // } else {
+        //     allreduce_app
+        // };
 
         let virtualized_app = Box::new(Tenant::new(
-            app,
+            allreduce_app,
             tenant_id,
             nhosts_to_acquire,
             Rc::clone(&brain),
@@ -183,7 +189,7 @@ fn run_batch(
         .iter()
         .map(|(i, jct)| (*i, jobs[*i].0, jct.unwrap()))
         .collect();
-    
+
     println!("{:?}", app_stats);
 
     // save result to config.directory

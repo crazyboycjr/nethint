@@ -26,6 +26,12 @@ pub struct BatchConfig {
     /// Whether to constructs multiple ring to max utilize cpu
     #[serde(default)]
     pub num_rings: Option<usize>,
+    /// automatically choose which solution to use, BW or TO
+    #[serde(default)]
+    pub auto_fallback: Option<bool>,
+    /// the alpha, details in paper
+    #[serde(default)]
+    pub alpha: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

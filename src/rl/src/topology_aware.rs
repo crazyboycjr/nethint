@@ -1,5 +1,6 @@
 use crate::RLAlgorithm;
 use nethint::{cluster::Topology, Flow};
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct TopologyAwareTree {
@@ -17,16 +18,15 @@ impl RLAlgorithm for TopologyAwareTree {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
+        group: Option<Vec<usize>>,
         size: u64,
-        vcluster: &dyn Topology,
+        vcluster: Rc<dyn Topology>,
     ) -> Vec<Flow> {
         use rand::prelude::SliceRandom;
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(self.seed);
 
         let mut flows = Vec::new();
-
-        let n = vcluster.num_hosts();
 
         for _ in 0..self.num_trees {
             let mut ring = Vec::new();
@@ -61,7 +61,14 @@ impl RLAlgorithm for TopologyAwareTree {
                 }
             }
 
+            // filter all nodes in the communication group
+            if group.is_some() {
+                let g = group.clone().unwrap();
+                ring.retain(|x| *x == root_index || g.contains(x));
+            }
+
             let pos = ring.iter().position(|x| *x == root_index).unwrap();
+            let n = ring.len();
 
             // log::error!("pos {} n {}", pos, n);
             // log::error!("{}",root_index);

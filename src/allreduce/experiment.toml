@@ -5,25 +5,25 @@ ncases = 10
 
 # Job size distributions [(percentage, number of workers)]
 # job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
-# job_size_distribution = [[40, 2], [40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
-job_size_distribution = [[1, 2], [1, 4], [1, 8], [1, 16], [1, 32], [1, 64]]
+job_size_distribution = [[40, 2], [40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
+# job_size_distribution = [[1, 2], [1, 4], [1, 8], [1, 16], [1, 32], [1, 64]]
 # job_size_distribution = [[1, 64]]
 # job_size_distribution = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]]
 # job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
 # job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
-buffer_size = 1_000_000
+buffer_size = 100_000_000
 
 # computation_speed is used to present the relationship between buffer_size and computation time
 # computation_time = buffer_size*computation_speed
 # computation_speed = 0.1
 
 # Number of iterations for all jobs
-num_iterations = 1
+num_iterations = 100
 
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
-poisson_lambda = 24_00_000_000.0
+poisson_lambda = 2_400_000_000.0
 
 placement_strategy = { type = "Compact" }
 # placement_strategy = { type = "CompactLoadBalanced" }
@@ -37,12 +37,12 @@ seed = 2
 directory = "/tmp/allreduce_result"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 5
+batch_repeat = 1
 
-# [[batch]]
-# policy = "Random"
-# probe = { enable = false }
-# nethint_level = 0
+[[batch]]
+policy = "Random"
+probe = { enable = false }
+nethint_level = 0
 # 
 # [[batch]]
 # policy = "TopologyAware" # which is ring
@@ -61,10 +61,24 @@ batch_repeat = 5
 
 [[batch]]
 policy = "RAT"
+probe = { enable = true, round_ms = 100 }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 1
+
+[[batch]]
+policy = "RAT"
+probe = { enable = true, round_ms = 100 }
+nethint_level = 2
+# Auto tune after some iterations. default is disabled
+auto_tune = 100
+
+[[batch]]
+policy = "RAT"
 probe = { enable = false }
 nethint_level = 2
 # Auto tune after some iterations. default is disabled
-auto_tune = 10
+auto_tune = 1
 
 [simulator]
 nethint = true
@@ -74,7 +88,7 @@ loopback_speed = 400
 # fairness = "TenantFlowMaxMin"
 fairness = "PerFlowMaxMin"
 
-background_flow_hard = { enable = true, frequency_ns = 1000_000_000_000, probability = 0.5, amplitude = 5 }
+background_flow_hard = { enable = true, frequency_ns = 10_000_000_000, probability = 0.5, amplitude = 5 }
 # background_flow_hard = { enable = false }
 # nethint_delay_ms = 100
 

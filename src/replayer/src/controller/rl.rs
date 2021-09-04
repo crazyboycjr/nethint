@@ -1,14 +1,14 @@
 use crate::controller::app::Application;
-use crate::controller::plink::PlinkApp;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::Rng;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, SeedableRng, seq::SliceRandom};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::controller::background_flow::{BackgroundFlowApp, BackgroundFlowPattern};
 use rl::{
-    config::ProbeConfig, contraction::Contraction, random_ring::RandomTree, rat::RatTree,
+    config::ProbeConfig, random_ring::RandomChain, rat::RatTree,
     topology_aware::TopologyAwareTree, JobSpec, RLAlgorithm, RLPolicy,
 };
 
@@ -30,6 +30,7 @@ pub struct RLSetting {
     pub buffer_size: usize,
     pub num_iterations: usize,
     pub poisson_lambda: f64,
+    pub partially_sync: bool,
     pub seed_base: u64,
     pub traffic_scale: f64,
     pub rl_policy: RLPolicy,
@@ -64,7 +65,7 @@ impl RLAppBuilder {
     }
 
     pub fn get_job_spec(setting: &RLSetting) -> JobSpec {
-        let mut rng = StdRng::seed_from_u64(setting.seed_base);
+        let mut rng = StdRng::seed_from_u64(setting.seed_base - setting.job_id as u64);
         let mut t = 0;
         let mut jobs = Vec::new();
         for i in 0..setting.job_id + 1 {
@@ -95,7 +96,7 @@ impl RLAppBuilder {
         if job_spec.num_workers == 2 {
             setting.auto_tune = None;
         }
-        let mut app: Box<dyn Application> = Box::new(RLApp {
+        let app: Box<dyn Application> = Box::new(RLApp {
             workers: self.workers,
             brain: self.brain,
             hostname_to_node: self.hostname_to_node,
@@ -108,15 +109,22 @@ impl RLAppBuilder {
             vname_to_hostname: Default::default(),
             cluster: None,
             flow_iters: Default::default(),
+            in_probing: false,
+            background_flow_app: None,
+            group_rng: if setting.partially_sync {
+                Some(SeedableRng::seed_from_u64(seed))
+            } else {
+                None
+            }
         });
 
-        if setting.probe.enable {
-            app = Box::new(PlinkApp::new(
-                job_spec.num_workers,
-                setting.probe.round_ms,
-                app,
-            ));
-        }
+        // if setting.probe.enable {
+        //     app = Box::new(PlinkApp::new(
+        //         job_spec.num_workers,
+        //         setting.probe.round_ms,
+        //         app,
+        //     ));
+        // }
 
         app
     }
@@ -137,15 +145,28 @@ pub struct RLApp {
     vname_to_hostname: HashMap<String, String>,
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
     flow_iters: HashMap<(Node, Node), usize>,
+    // dynamic probe
+    in_probing: bool,
+    background_flow_app: Option<BackgroundFlowApp>,
+    // partially sync
+    group_rng: Option<StdRng>,
 }
 
 impl Application for RLApp {
     fn workers(&self) -> &HashMap<Node, Endpoint> {
-        &self.workers
+        if self.in_probing {
+            self.background_flow_app.as_ref().unwrap().workers()
+        } else {
+            &self.workers
+        }
     }
 
     fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
-        &mut self.workers
+        if self.in_probing {
+            self.background_flow_app.as_mut().unwrap().workers_mut()
+        } else {
+            &mut self.workers
+        }
     }
 
     fn brain(&self) -> &Endpoint {
@@ -167,12 +188,31 @@ impl Application for RLApp {
     fn start(&mut self) -> anyhow::Result<()> {
         self.remaining_iterations = self.job_spec.num_iterations;
         self.rl_algorithm = Some(self.new_rl_algorithm());
+
         self.rl_traffic()?;
 
         Ok(())
     }
 
     fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
+        if self.in_probing {
+            // forward the cmd to background_flow_app
+            let fin = self.background_flow_app.as_mut().unwrap().on_event(cmd)?;
+            if fin {
+                self.in_probing = false;
+                let mut temp: HashMap<Node, Endpoint> = HashMap::new();
+                std::mem::swap(
+                    &mut temp,
+                    self.background_flow_app.as_mut().unwrap().workers_mut(),
+                );
+                std::mem::swap(self.workers_mut(), &mut temp);
+                self.background_flow_app = None;
+
+                self.rl_traffic()?;
+            }
+            return Ok(false);
+        }
+
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
@@ -231,13 +271,40 @@ impl Application for RLApp {
 }
 
 impl RLApp {
+    fn start_probe(&mut self) -> anyhow::Result<()> {
+        assert!(self.setting.probe.enable);
+        assert!(!self.in_probing);
+
+        let nhosts = self.job_spec.num_workers;
+        let round_ms = self.setting.probe.round_ms;
+
+        let dur_ms = (nhosts as u64 * round_ms) as _;
+        self.background_flow_app = Some(BackgroundFlowApp::new(
+            std::mem::take(self.workers_mut()),
+            self.brain().clone(),
+            self.hostname_to_node().clone(),
+            self.tenant_id(),
+            nhosts,
+            dur_ms,
+            BackgroundFlowPattern::PlinkProbe,
+            Some(10_000_000), // 8ms on 10G
+        ));
+
+        self.in_probing = true;
+
+        self.background_flow_app.as_mut().unwrap().vname_to_hostname = self.vname_to_hostname.clone();
+        self.background_flow_app.as_mut().unwrap().start()?;
+
+        Ok(())
+    }
+
     fn new_rl_algorithm(&self) -> Box<dyn RLAlgorithm> {
         let num_trees = self.setting.num_trees.unwrap_or(1);
         match self.setting.rl_policy {
-            RLPolicy::Random => Box::new(RandomTree::new(self.seed, num_trees)),
+            RLPolicy::Random => Box::new(RandomChain::new(self.seed, num_trees)),
             RLPolicy::TopologyAware => Box::new(TopologyAwareTree::new(self.seed, num_trees)),
-            RLPolicy::RAT => Box::new(RatTree::new(self.seed)),
-            RLPolicy::Contraction => Box::new(Contraction::new(self.seed)),
+            RLPolicy::RAT => Box::new(RatTree::new()),
+            RLPolicy::Contraction => panic!("do not use Contraction algorithm")
         }
     }
 
@@ -261,11 +328,27 @@ impl RLApp {
             self.rl_algorithm = Some(self.new_rl_algorithm());
         }
 
+        let group = if self.setting.partially_sync {
+            // generate group members of (n-1)/2+1
+            let n = self.job_spec.num_workers;
+            let mut members: Vec<usize> = (0..n).collect();
+            members.remove(self.job_spec.root_index);
+
+            let (group, _) =
+                members.partial_shuffle(self.group_rng.as_mut().unwrap(), (n - 1) / 2 + 1);
+            let g: Vec<usize> = group.into();
+            log::debug!("group members: {:?}", g);
+            Some(g)
+        } else {
+            None
+        };
+
         log::debug!("hint: {}", self.cluster.as_ref().unwrap().to_dot());
         let flows = self.rl_algorithm.as_mut().unwrap().run_rl_traffic(
             self.job_spec.root_index,
+            group,
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(&self.cluster.as_ref().unwrap()),
         );
 
         let end = std::time::Instant::now();
@@ -384,14 +467,14 @@ impl RLApp {
         num_trees: usize,
     ) -> Bandwidth {
         // XXX(cjr): remember to subtract traffic from this tenant itself from all traffic
-        // assume it has already been subtracted from the return value
+        // assume it has already been subtracted from the return value, see nhagent/src/main.rs
         let demand_sum = traffic.iter().map(|c| c.data[direction].bytes).sum::<u64>() as usize;
         let num_flows = traffic
             .iter()
             .map(|c| c.data[direction].num_competitors)
             .sum::<u32>() as usize;
 
-        // num_nwe_flows will depend on the app
+        // num_new_flows will depend on the app
         let mut high_node = vc[vc.get_source(link_ix)].clone();
         let mut low_node = vc[vc.get_target(link_ix)].clone();
         if high_node.depth > low_node.depth {
@@ -417,22 +500,30 @@ impl RLApp {
 
     pub fn handle_brain_response_event(
         &mut self,
-        msg: nhagent::message::Message,
+        msg: nhagent_v2::message::Message,
     ) -> anyhow::Result<()> {
-        use nhagent::message::Message::*;
+        use nhagent_v2::message::Message::*;
         let my_tenant_id = self.tenant_id();
         match msg {
             NetHintResponseV1(tenant_id, hintv1) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv1.vname_to_hostname;
                 self.cluster = Some(Rc::new(hintv1.vc));
-                self.rl_traffic()?;
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.rl_traffic()?;
+                }
             }
-            NetHintResponseV2(tenant_id, hintv2, _) => {
+            NetHintResponseV2(tenant_id, hintv2) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);
-                self.rl_traffic()?;
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.rl_traffic()?;
+                }
             }
             _ => {
                 panic!("unexpected brain response: {:?}", msg);

@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub mod argument;
 
@@ -12,10 +12,8 @@ pub mod rat;
 
 pub mod config;
 
-use nethint:: {
-  cluster::Topology,
-  Flow,
-};
+use nethint::{cluster::Topology, Flow};
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct JobSpec {
@@ -27,9 +25,9 @@ pub struct JobSpec {
 impl JobSpec {
     pub fn new(num_workers: usize, buffer_size: usize, num_iterations: usize) -> Self {
         JobSpec {
-          num_workers,
-          buffer_size,
-          num_iterations,
+            num_workers,
+            buffer_size,
+            num_iterations,
         }
     }
 }
@@ -43,9 +41,5 @@ pub enum AllReducePolicy {
 }
 
 pub trait AllReduceAlgorithm {
-  fn allreduce(
-      &mut self,
-      size: u64,
-      vcluster: &dyn Topology,
-  ) -> Vec<Flow>;
+    fn allreduce(&mut self, size: u64, vcluster: Rc<dyn Topology>) -> Vec<Flow>;
 }

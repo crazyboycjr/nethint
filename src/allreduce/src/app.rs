@@ -1,14 +1,16 @@
 use nethint::{
     app::{AppEvent, AppEventKind, Application, Replayer},
+    background_flow::{BackgroundFlowApp, BackgroundFlowPattern},
     cluster::Topology,
     hint::NetHintVersion,
     simulator::{Event, Events},
     Duration, Timestamp, Trace, TraceRecord,
 };
+use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::{
-    random_ring::RandomRingAllReduce, rat::RatAllReduce,
+    config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
 };
 
@@ -29,6 +31,14 @@ pub struct AllReduceApp<'c> {
     autotune: Option<usize>,
     allreduce_algorithm: Option<Box<dyn AllReduceAlgorithm>>,
     overhead_collector: OverheadCollector,
+    // dynamic probing
+    probe: ProbeConfig,
+    auto_fallback: bool,
+    alpha: Option<f64>,
+    nhosts_to_acquire: usize,
+    in_probing: bool,
+    probing_start_time: Timestamp,
+    background_flow_app: Option<BackgroundFlowApp<Option<Duration>>>,
 }
 
 impl<'c> std::fmt::Debug for AllReduceApp<'c> {
@@ -46,6 +56,10 @@ impl<'c> AllReduceApp<'c> {
         allreduce_policy: AllReducePolicy,
         nethint_level: usize,
         autotune: Option<usize>,
+        probe: ProbeConfig,
+        auto_fallback: bool,
+        alpha: Option<f64>,
+        nhosts_to_acquire: usize,
     ) -> Self {
         let trace = Trace::new();
         let computation_time =
@@ -65,6 +79,13 @@ impl<'c> AllReduceApp<'c> {
             autotune,
             allreduce_algorithm: None,
             overhead_collector: Default::default(),
+            probe,
+            auto_fallback,
+            alpha,
+            nhosts_to_acquire,
+            in_probing: false,
+            probing_start_time: 0,
+            background_flow_app: None,
         }
     }
 
@@ -76,13 +97,62 @@ impl<'c> AllReduceApp<'c> {
         self.allreduce(0);
     }
 
+    fn estimate_iter(&self) -> f64 {
+        let n = self.job_spec.num_workers;
+        // 2 * (n - 1) / n * m / avg_bw
+        let algorithm = RatAllReduce::new(n);
+        algorithm.estimate_iter(
+            self.job_spec.buffer_size as u64,
+            Rc::clone(self.cluster.as_ref().unwrap()),
+        )
+    }
+
+    fn estimate_adapt(&self) -> f64 {
+        let n = self.job_spec.num_workers;
+        if n <= 16 {
+            1.0 * 1e-3
+        } else if n <= 32 {
+            10.0 * 1e-3
+        } else if n <= 64 {
+            30.0 * 1e-3
+        } else {
+            50.0 * 1e-3
+        }
+    }
+
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         match self.allreduce_policy {
             AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, 1)),
             AllReducePolicy::TopologyAware => {
                 Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
             }
-            AllReducePolicy::RAT => Box::new(RatAllReduce::new(self.job_spec.num_workers)),
+            AllReducePolicy::RAT => {
+                if self.auto_fallback {
+                    let t_background = std::env::var("NETHINT_BACKGROUND_FLOW_PERIOD")
+                        .expect("it should be set in simulator.rs, something is wrong")
+                        .parse::<u64>()
+                        .unwrap() as f64
+                        / 1e9;
+                    let alpha = self.alpha.unwrap();
+                    let t_iter = self.estimate_iter();
+                    let t_adapt = self.estimate_adapt();
+                    // let p = 0.1;
+                    // let k = (t_adapt as f64 * (1.0 - p) / p / t_iter as f64).ceil();
+                    let k = self.autotune.unwrap();
+                    let t_period = t_adapt + k as f64 * t_iter;
+                    log::error!(
+                        "num_workers:{}, t_adapt: {}, t_iter: {}, k: {}, alpha: {}, t_background: {}",
+                        self.job_spec.num_workers, t_adapt, t_iter, k, alpha, t_background
+                    );
+                    if t_period < alpha * t_background {
+                        Box::new(RatAllReduce::new(self.job_spec.num_workers))
+                    } else {
+                        Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
+                    }
+                } else {
+                    Box::new(RatAllReduce::new(self.job_spec.num_workers))
+                }
+            }
         }
     }
 
@@ -97,7 +167,7 @@ impl<'c> AllReduceApp<'c> {
 
         let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(self.cluster.as_ref().unwrap()),
         );
 
         for flow in flows {
@@ -109,6 +179,32 @@ impl<'c> AllReduceApp<'c> {
         self.remaining_iterations -= 1;
 
         self.replayer = Replayer::new(trace);
+    }
+
+    fn start_probe(&mut self, now: Timestamp) -> Events {
+        assert!(self.probe.enable);
+        assert!(!self.in_probing);
+
+        self.in_probing = true;
+        self.probing_start_time = now;
+
+        let dur_ms = (self.nhosts_to_acquire as u64 * self.probe.round_ms) as _;
+        self.background_flow_app = Some(BackgroundFlowApp::new(
+            self.nhosts_to_acquire,
+            dur_ms,
+            BackgroundFlowPattern::PlinkProbe,
+            Some(100_000_000), // 8ms on 100G
+            None,
+        ));
+
+        let app_event = AppEvent {
+            ts: 0,
+            event: AppEventKind::AppStart,
+        };
+        self.background_flow_app
+            .as_mut()
+            .unwrap()
+            .on_event(app_event)
     }
 
     fn request_nethint(&self) -> Events {
@@ -132,12 +228,52 @@ fn calc_job_computation_time(buffer_size: usize, k: f64) -> u64 {
 impl<'c> Application for AllReduceApp<'c> {
     type Output = Option<Duration>;
     fn on_event(&mut self, event: AppEvent) -> Events {
+        if self.in_probing {
+            let mut event2 = event.clone();
+            event2.ts -= self.probing_start_time;
+
+            let events = self.background_flow_app.as_mut().unwrap().on_event(event2);
+            log::trace!("AllreduceApp, background flow events: {:?}", events);
+
+            let app_events: Events = events
+                .into_iter()
+                .flat_map(|sim_event| match sim_event {
+                    Event::AppFinish => {
+                        self.in_probing = false;
+                        self.probing_start_time = 0;
+                        Events::new()
+                    }
+                    Event::FlowArrive(mut flows) => {
+                        for f in &mut flows {
+                            f.ts += self.probing_start_time;
+                        }
+                        Event::FlowArrive(flows).into()
+                    }
+                    Event::NetHintRequest(..) | Event::UserRegisterTimer(..) => sim_event.into(),
+                    Event::AdapterRegisterTimer(..) => panic!("now allowed"),
+                })
+                .collect();
+
+            if !self.in_probing {
+                assert!(app_events.is_empty());
+                // request nethint
+                self.cluster = None;
+                return self.request_nethint();
+            } else {
+                return app_events;
+            }
+        }
+
         if self.cluster.is_none() {
             // ask simulator for the NetHint
             match event.event {
                 AppEventKind::AppStart => {
                     // app_id should be tagged by AppGroup, so leave 0 here
-                    return self.request_nethint();
+                    if self.probe.enable {
+                        return self.start_probe(event.ts);
+                    } else {
+                        return self.request_nethint();
+                    }
                 }
                 AppEventKind::NetHintResponse(_, _tenant_id, ref vc) => {
                     self.cluster = Some(Rc::new(vc.clone()));
@@ -152,16 +288,28 @@ impl<'c> Application for AllReduceApp<'c> {
                     let start = std::time::Instant::now();
                     self.allreduce(start_time);
                     let end = std::time::Instant::now();
-                    let overhead = end - start;
+                    let computing_delay = end - start;
                     // print controller overhead to job scale
-                    self.overhead_collector.collect(overhead, self.job_spec.num_workers);
+                    self.overhead_collector
+                        .collect(computing_delay, self.job_spec.num_workers);
 
-                    return self
-                        .replayer
-                        .on_event(AppEvent::new(start_time, AppEventKind::AppStart));
+                    log::info!("computing_delay: {:?}", computing_delay);
+                    return Event::UserRegisterTimer(
+                        computing_delay.as_nanos().try_into().unwrap(),
+                        None,
+                    )
+                    .into();
                 }
                 _ => unreachable!(),
             }
+        }
+
+        if let AppEventKind::UserNotification(ref token) = &event.event {
+            assert!(token.is_none());
+
+            return self
+                .replayer
+                .on_event(AppEvent::new(event.ts, AppEventKind::AppStart));
         }
 
         if let AppEventKind::FlowComplete(ref flows) = &event.event {
@@ -175,8 +323,12 @@ impl<'c> Application for AllReduceApp<'c> {
                     && self.autotune.unwrap() > 0
                     && self.remaining_iterations % self.autotune.unwrap() == 0
                 {
-                    self.cluster = None;
-                    return self.request_nethint();
+                    if self.probe.enable {
+                        return self.start_probe(event.ts);
+                    } else {
+                        self.cluster = None;
+                        return self.request_nethint();
+                    }
                 }
                 self.allreduce(
                     self.iteration_start

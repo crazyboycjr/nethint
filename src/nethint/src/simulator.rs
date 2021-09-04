@@ -20,8 +20,8 @@ use crate::{
     timer::{OnceTimer, PoissonTimer, RepeatTimer, Timer, TimerKind},
 };
 use crate::{
-    Duration, FairnessModel, Flow, SharingMode, Timestamp, ToStdDuration, Token, Trace, TraceRecord,
-    TIMER_ID,
+    Duration, FairnessModel, Flow, SharingMode, Timestamp, ToStdDuration, Token, Trace,
+    TraceRecord, TIMER_ID,
 };
 
 type HashMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
@@ -154,9 +154,12 @@ impl SimulatorBuilder {
 
         let mut timers = BinaryHeap::<Box<dyn Timer>>::new();
         if self.setting.background_flow_hard.enable {
+            // This is a dirty hack to let the simulated apps can get background_flow changing period easily
+            let freq = self.setting.background_flow_hard.frequency_ns;
+            std::env::set_var("NETHINT_BACKGROUND_FLOW_PERIOD", freq.to_string());
             timers.push(Box::new(PoissonTimer::new(
-                self.setting.background_flow_hard.frequency_ns,
-                self.setting.background_flow_hard.frequency_ns as f64,
+                freq,
+                freq as f64,
             )));
         }
 
@@ -214,6 +217,58 @@ pub struct Simulator {
     estimator: Option<Box<dyn Estimator>>,
 }
 
+macro_rules! calc_delta_on_group {
+    ($total_bw:expr, $m:expr) => {{
+        let mut consumed_bw = 0.0;
+        let mut num_active_objects = 0;
+        let mut num_active_flows = Vec::new();
+        let mut min_inc_to_max_rate = f64::MAX;
+        for fs in $m.values() {
+            let mut active_flows_per_object = 0;
+            for f in fs {
+                let f = f.borrow();
+                consumed_bw += f.speed;
+                if !f.converged {
+                    active_flows_per_object += 1;
+                    assert!(f.speed < f.max_rate.val() as f64 + 10.0, "flow: {:?}", f);
+                    min_inc_to_max_rate =
+                        min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
+                }
+            }
+
+            num_active_objects += (active_flows_per_object > 0) as usize;
+            num_active_flows.push(active_flows_per_object);
+        }
+
+        assert_ne!(num_active_objects, 0);
+
+        let bw_inc_per_object = if $total_bw < (consumed_bw / 1e9).gbps() {
+            0.gbps()
+        } else {
+            ($total_bw - (consumed_bw / 1e9).gbps()) / num_active_objects as f64
+        };
+
+        let mut min_inc = bw_inc_per_object.min((min_inc_to_max_rate / 1e9).gbps());
+
+        // set when a flow will converge
+        for (i, fs) in $m.values_mut().enumerate() {
+            if num_active_flows[i] == 0 {
+                continue;
+            }
+            let speed_inc_per_object = bw_inc_per_object / num_active_flows[i] as f64;
+            min_inc = min_inc.min(speed_inc_per_object);
+
+            let speed_inc_per_object_f64 = speed_inc_per_object.val() as f64;
+            for f in fs {
+                let mut f = f.borrow_mut();
+                f.speed_bound = f.speed_bound.min(f.speed + speed_inc_per_object_f64);
+            }
+        }
+
+        min_inc
+    }};
+}
+
 impl Simulator {
     pub fn new(cluster: Cluster) -> Self {
         Simulator {
@@ -255,7 +310,12 @@ impl Simulator {
         unimplemented!();
     }
 
-    fn register_once(&mut self, next_ready: Timestamp, token: Option<Token>, timer_id: Option<TimerId>) {
+    fn register_once(
+        &mut self,
+        next_ready: Timestamp,
+        token: Option<Token>,
+        timer_id: Option<TimerId>,
+    ) {
         self.timers
             .push(Box::new(OnceTimer::new(next_ready, token, timer_id)));
     }
@@ -293,59 +353,15 @@ impl Simulator {
     }
 
     #[inline]
-    fn calc_delta_tenant_flow(l: &Link, fs: &mut FlowSet) -> Bandwidth {
-        // first per tenant, than per flow
-        // find the tenant having most active flows on this link
-        if let FlowSet::Groupped(m) = fs {
-            let mut consumed_bw = 0.0;
-            let mut num_active_tenants = 0;
-            let mut num_active_flows = Vec::new();
-            let mut min_inc_to_max_rate = f64::MAX;
-            for fs in m.values() {
-                let mut tenant_active_flows = 0;
-                for f in fs {
-                    let f = f.borrow();
-                    consumed_bw += f.speed;
-                    if !f.converged {
-                        tenant_active_flows += 1;
-                        assert!(f.speed < f.max_rate.val() as f64 + 10.0, "flow: {:?}", f);
-                        min_inc_to_max_rate =
-                            min_inc_to_max_rate.min(f.max_rate.val() as f64 - f.speed);
-                    }
-                }
-
-                num_active_tenants += (tenant_active_flows > 0) as usize;
-                num_active_flows.push(tenant_active_flows);
+    fn calc_delta_groupped(total_bw: Bandwidth, fs: &mut FlowSet) -> Bandwidth {
+        match fs {
+            FlowSet::GroupByVmPair(m) => {
+                calc_delta_on_group!(total_bw, m)
             }
-
-            assert_ne!(num_active_tenants, 0);
-
-            let bw_inc_tenant = if l.bandwidth < (consumed_bw / 1e9).gbps() {
-                0.gbps()
-            } else {
-                (l.bandwidth - (consumed_bw / 1e9).gbps()) / num_active_tenants as f64
-            };
-
-            let mut min_inc = bw_inc_tenant.min((min_inc_to_max_rate / 1e9).gbps());
-
-            // set when a flow will converge
-            for (i, fs) in m.values_mut().enumerate() {
-                if num_active_flows[i] == 0 {
-                    continue;
-                }
-                let tenant_speed_inc = bw_inc_tenant / num_active_flows[i] as f64;
-                min_inc = min_inc.min(tenant_speed_inc);
-
-                let tenant_speed_inc_f64 = tenant_speed_inc.val() as f64;
-                for f in fs {
-                    let mut f = f.borrow_mut();
-                    f.speed_bound = f.speed_bound.min(f.speed + tenant_speed_inc_f64);
-                }
+            FlowSet::GroupByTenant(m) => {
+                calc_delta_on_group!(total_bw, m)
             }
-
-            min_inc
-        } else {
-            unreachable!();
+            _ => panic!("flows must be groupped by some label"),
         }
     }
 
@@ -353,8 +369,8 @@ impl Simulator {
     fn calc_delta(fairness: FairnessModel, l: &Link, fs: &mut FlowSet) -> Bandwidth {
         match fairness {
             FairnessModel::PerFlowMaxMin => Self::calc_delta_per_flow(l.bandwidth, fs),
-            FairnessModel::PerVmPairMaxMin => unimplemented!(),
-            FairnessModel::TenantFlowMaxMin => Self::calc_delta_tenant_flow(l, fs),
+            FairnessModel::PerVmPairMaxMin => Self::calc_delta_groupped(l.bandwidth, fs),
+            FairnessModel::TenantFlowMaxMin => Self::calc_delta_groupped(l.bandwidth, fs),
         }
     }
 
@@ -529,11 +545,13 @@ impl Simulator {
             if ts_inc == 0 {
                 // the next event should be the timer event
                 if let Some(timer) = self.timers.peek() {
-                    assert_eq!(timer.next_alert(), self.ts);
+                    if timer.next_alert() != self.ts {
+                        log::warn!("ts_inc = 0, while next alert ts: {}, self.ts: {}", timer.next_alert(), self.ts);
+                    }
                     if timer.kind() == TimerKind::Once {
                         let timer = self.timers.pop().unwrap();
                         let once_timer = timer.as_any().downcast_ref::<OnceTimer>().unwrap();
-                        debug!("{:?}", once_timer);
+                        log::trace!("{:?}", once_timer);
                         let token = once_timer.token;
                         let timer_id = once_timer.timer_id;
                         if timer_id.is_some() {
@@ -631,7 +649,7 @@ impl<'a> Executor<'a> for Simulator {
                                 NetHintVersion::V1 => {
                                     self.estimator.as_ref().unwrap().estimate_v1(tenant_id)
                                 }
-                                NetHintVersion::V2 => self.estimator.as_ref().unwrap().estimate_v2(
+                                NetHintVersion::V2 => self.estimator.as_mut().unwrap().estimate_v2(
                                     tenant_id,
                                     self.setting.fairness,
                                     &self.state.link_flows,
@@ -645,8 +663,8 @@ impl<'a> Executor<'a> for Simulator {
                         self.register_once(self.ts + after_dura, token, Some(timer_id));
                     }
                     Event::UserRegisterTimer(after_dura, token) => {
-                        // panic!("currently we do not support user app directly register this 
-                        //         kind of timer, considering save and restore the token 
+                        // panic!("currently we do not support user app directly register this
+                        //         kind of timer, considering save and restore the token
                         //         just like stored_flow_token");
                         self.register_once(self.ts + after_dura, token, None);
                     }
@@ -680,25 +698,48 @@ impl<'a> Executor<'a> for Simulator {
     }
 }
 
+#[inline]
+fn hash_vm_pair(f: &Flow) -> usize {
+    let vsrc_id: usize = f.vsrc.as_ref().unwrap()
+            .strip_prefix("host_")
+            .unwrap()
+            .parse()
+            .unwrap();
+    let vdst_id: usize = f.vsrc.as_ref().unwrap()
+            .strip_prefix("host_")
+            .unwrap()
+            .parse()
+            .unwrap();
+    (vsrc_id << 32) | vdst_id
+}
+
 #[derive(Debug)]
 pub(crate) enum FlowSet {
     Flat(Vec<FlowStateRef>),
-    Groupped(HashMap<TenantId, Vec<FlowStateRef>>),
+    // src, dst -> vector of flows
+    GroupByVmPair(HashMap<usize, Vec<FlowStateRef>>),
+    GroupByTenant(HashMap<TenantId, Vec<FlowStateRef>>),
 }
 
 impl FlowSet {
     fn new(fairness: FairnessModel) -> FlowSet {
         match fairness {
             FairnessModel::PerFlowMaxMin => FlowSet::Flat(Vec::new()),
-            FairnessModel::PerVmPairMaxMin => unimplemented!(),
-            FairnessModel::TenantFlowMaxMin => FlowSet::Groupped(HashMap::default()),
+            FairnessModel::PerVmPairMaxMin => FlowSet::GroupByVmPair(HashMap::default()),
+            FairnessModel::TenantFlowMaxMin => FlowSet::GroupByTenant(HashMap::default()),
         }
     }
 
     fn push(&mut self, fs: FlowStateRef) {
         match self {
             Self::Flat(v) => v.push(fs),
-            Self::Groupped(m) => {
+            Self::GroupByVmPair(m) => {
+                // we can just unwrap here because it must have valid vsrc and vdst fields,
+                // otherwise, it does not make sense to use PerVmPairMaxMin
+                let key = hash_vm_pair(&fs.borrow().flow);
+                m.entry(key).or_insert_with(Vec::new).push(fs);
+            }
+            Self::GroupByTenant(m) => {
                 let key = fs
                     .borrow()
                     .flow
@@ -712,7 +753,8 @@ impl FlowSet {
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Self::Flat(v) => v.is_empty(),
-            Self::Groupped(m) => m.is_empty(),
+            Self::GroupByVmPair(m) => m.is_empty(),
+            Self::GroupByTenant(m) => m.is_empty(),
         }
     }
 
@@ -722,7 +764,11 @@ impl FlowSet {
     {
         match self {
             Self::Flat(v) => v.retain(f),
-            Self::Groupped(m) => {
+            Self::GroupByVmPair(m) => {
+                m.values_mut().for_each(|v| v.retain(f.clone()));
+                m.retain(|_, v| !v.is_empty());
+            }
+            Self::GroupByTenant(m) => {
                 m.values_mut().for_each(|v| v.retain(f.clone()));
                 m.retain(|_, v| !v.is_empty());
             }
@@ -732,10 +778,15 @@ impl FlowSet {
     pub(crate) fn iter(&self) -> FlowSetIter {
         match self {
             Self::Flat(v) => FlowSetIter::FlatIter(v.iter()),
-            Self::Groupped(m) => {
+            Self::GroupByVmPair(m) => {
                 let mut iter1 = m.values();
                 let iter2 = iter1.next().map(|v| v.iter());
-                FlowSetIter::GrouppedIter(iter1, iter2)
+                FlowSetIter::GroupByVmPairIter(iter1, iter2)
+            }
+            Self::GroupByTenant(m) => {
+                let mut iter1 = m.values();
+                let iter2 = iter1.next().map(|v| v.iter());
+                FlowSetIter::GroupByTenantIter(iter1, iter2)
             }
         }
     }
@@ -743,10 +794,15 @@ impl FlowSet {
     fn iter_mut(&mut self) -> FlowSetIterMut {
         match self {
             Self::Flat(v) => FlowSetIterMut::FlatIter(v.iter_mut()),
-            Self::Groupped(m) => {
+            Self::GroupByVmPair(m) => {
                 let mut iter1 = m.values_mut();
                 let iter2 = iter1.next().map(|v| v.iter_mut());
-                FlowSetIterMut::GrouppedIter(iter1, iter2)
+                FlowSetIterMut::GroupByVmPairIter(iter1, iter2)
+            }
+            Self::GroupByTenant(m) => {
+                let mut iter1 = m.values_mut();
+                let iter2 = iter1.next().map(|v| v.iter_mut());
+                FlowSetIterMut::GroupByTenantIter(iter1, iter2)
             }
         }
     }
@@ -755,7 +811,11 @@ impl FlowSet {
 #[derive(Debug)]
 pub(crate) enum FlowSetIter<'a> {
     FlatIter(std::slice::Iter<'a, FlowStateRef>),
-    GrouppedIter(
+    GroupByVmPairIter(
+        HashMapValues<'a, usize, Vec<FlowStateRef>>,
+        Option<std::slice::Iter<'a, FlowStateRef>>,
+    ),
+    GroupByTenantIter(
         HashMapValues<'a, TenantId, Vec<FlowStateRef>>,
         Option<std::slice::Iter<'a, FlowStateRef>>,
     ),
@@ -763,35 +823,50 @@ pub(crate) enum FlowSetIter<'a> {
 
 enum FlowSetIterMut<'a> {
     FlatIter(std::slice::IterMut<'a, FlowStateRef>),
-    GrouppedIter(
+    GroupByVmPairIter(
+        HashMapValuesMut<'a, usize, Vec<FlowStateRef>>,
+        Option<std::slice::IterMut<'a, FlowStateRef>>,
+    ),
+    GroupByTenantIter(
         HashMapValuesMut<'a, TenantId, Vec<FlowStateRef>>,
         Option<std::slice::IterMut<'a, FlowStateRef>>,
     ),
 }
 
+macro_rules! impl_groupped_iter {
+    ($iter1:expr, $iter2:expr, $iter_func:ident) => {
+        if $iter2.is_none() {
+            None
+        } else {
+            match $iter2.as_mut().unwrap().next() {
+                Some(ret) => Some(ret),
+                None => {
+                    *$iter2 = $iter1.next().map(|v| v.$iter_func());
+                    if $iter2.is_none() {
+                        None
+                    } else {
+                        $iter2.as_mut().unwrap().next()
+                    }
+                }
+            }
+        }
+    };
+}
+
 macro_rules! impl_iter_for {
-    ($name: ident, $item:ty, $iter_func:ident) => {
+    ($name:ident, $item:ty, $iter_func:ident) => {
         impl<'a> Iterator for $name<'a> {
             type Item = $item;
             fn next(&mut self) -> Option<Self::Item> {
                 match self {
                     Self::FlatIter(iter) => iter.next(),
-                    Self::GrouppedIter(iter1, iter2) => {
-                        if iter2.is_none() {
-                            None
-                        } else {
-                            match iter2.as_mut().unwrap().next() {
-                                Some(ret) => Some(ret),
-                                None => {
-                                    *iter2 = iter1.next().map(|v| v.$iter_func());
-                                    if iter2.is_none() {
-                                        None
-                                    } else {
-                                        iter2.as_mut().unwrap().next()
-                                    }
-                                }
-                            }
-                        }
+
+                    Self::GroupByVmPairIter(iter1, iter2) => {
+                        impl_groupped_iter!(iter1, iter2, $iter_func)
+                    }
+
+                    Self::GroupByTenantIter(iter1, iter2) => {
+                        impl_groupped_iter!(iter1, iter2, $iter_func)
                     }
                 }
             }
@@ -837,7 +912,7 @@ impl NetState {
                     let vsrc = fs.borrow().flow.vsrc.as_ref().unwrap().clone();
                     let vdst = fs.borrow().flow.vdst.as_ref().unwrap().clone();
                     self.vm_flows[0]
-                        .entry((tenant_id, vsrc.clone()))
+                        .entry((tenant_id, vsrc))
                         .or_insert_with(|| FlowSet::new(FairnessModel::PerFlowMaxMin))
                         .push(Rc::clone(&fs));
                     self.vm_flows[1]
@@ -1018,7 +1093,7 @@ pub(crate) struct FlowState {
     /// flow start time, could be greater than sim_ts, read only
     ts: Timestamp,
     /// read only flow property
-    flow: Flow,
+    pub(crate) flow: Flow,
     /// maximal rate of this flow. Some flows are rate limited while others are limited by the host's speed
     max_rate: Bandwidth,
     /// below are states, mutated by the simulator
@@ -1061,7 +1136,8 @@ impl FlowState {
     #[inline]
     fn completed(&self) -> bool {
         // TODO(cjr): check the precision of this condition
-        self.bytes_sent >= self.flow.bytes
+        // self.bytes_sent >= self.flow.bytes
+        self.bytes_sent >= self.flow.bytes || self.time_to_complete() == 0
     }
 
     #[inline]

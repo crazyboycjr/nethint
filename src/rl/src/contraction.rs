@@ -2,12 +2,17 @@ use crate::RLAlgorithm;
 use nethint::{cluster::{Topology, helpers::*}, Flow, bandwidth::Bandwidth};
 use std::collections::HashMap;
 use utils::algo::group_by_key;
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct Contraction {
     seed: u64,
 }
 
+#[deprecated(
+    since = "0.1.0",
+    note = "Group broadcast not supported, please do not use it."
+)]
 impl Contraction {
     pub fn new(seed: u64) -> Self {
         Contraction { seed }
@@ -18,10 +23,11 @@ impl RLAlgorithm for Contraction {
     fn run_rl_traffic(
         &mut self,
         root_index: usize,
+        _group: Option<Vec<usize>>,
         size: u64,
-        vcluster: &dyn Topology,
+        vcluster: Rc<dyn Topology>,
     ) -> Vec<Flow> {
-        self.run_rl_traffic(root_index, size, vcluster)
+        self.run_rl_traffic(root_index, size, &*vcluster)
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::AllReduceAlgorithm;
 use nethint::{cluster::Topology, Flow};
+use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct TopologyAwareRingAllReduce {
@@ -14,7 +15,7 @@ impl TopologyAwareRingAllReduce {
 }
 
 impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
-    fn allreduce(&mut self, size: u64, vcluster: &dyn Topology) -> Vec<Flow> {
+    fn allreduce(&mut self, size: u64, vcluster: Rc<dyn Topology>) -> Vec<Flow> {
         use rand::prelude::SliceRandom;
         use rand::{rngs::StdRng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(self.seed);

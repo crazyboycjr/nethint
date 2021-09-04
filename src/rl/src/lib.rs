@@ -1,20 +1,18 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub mod argument;
 
 pub mod app;
 
-pub mod random_ring;
-pub mod topology_aware;
-pub mod rat;
 pub mod contraction;
+pub mod random_ring;
+pub mod rat;
+pub mod topology_aware;
 
 pub mod config;
 
-use nethint:: {
-  cluster::Topology,
-  Flow,
-};
+use std::rc::Rc;
+use nethint::{cluster::Topology, Flow};
 
 #[derive(Debug, Clone)]
 pub struct JobSpec {
@@ -25,12 +23,17 @@ pub struct JobSpec {
 }
 
 impl JobSpec {
-    pub fn new(num_workers: usize, buffer_size: usize, num_iterations: usize, root_index: usize) -> Self {
+    pub fn new(
+        num_workers: usize,
+        buffer_size: usize,
+        num_iterations: usize,
+        root_index: usize,
+    ) -> Self {
         JobSpec {
-          num_workers,
-          buffer_size,
-          num_iterations,
-          root_index,
+            num_workers,
+            buffer_size,
+            num_iterations,
+            root_index,
         }
     }
 }
@@ -45,10 +48,11 @@ pub enum RLPolicy {
 }
 
 pub trait RLAlgorithm {
-  fn run_rl_traffic(
-      &mut self,
-      root_index : usize,
-      size: u64,
-      vcluster: &dyn Topology,
-  ) -> Vec<Flow>;
+    fn run_rl_traffic(
+        &mut self,
+        root_index: usize,
+        group: Option<Vec<usize>>, // worker group
+        size: u64,
+        vcluster: Rc<dyn Topology>,
+    ) -> Vec<Flow>;
 }

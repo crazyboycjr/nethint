@@ -11,8 +11,8 @@ sudo ./cpu_vm_stage1.sh
 
 To install and use the VM, use libvirt. First copy the `cpu_vm_base.img` to 
 `/var/lib/libvirt/images/cpu_vm_base.img`. Then run virt-install. The
-example below create a AWS `m4.xlarge` like CPU machine, except that the
-network uses RDMA SR-IOV. Remove the `--print-xml` to actually install
+example below create an AWS `m4.xlarge` like CPU machine, except that the
+network uses RDMA SR-IOV. Remember to remove the `--print-xml` to really install
 the profile to libvirt.
 ```bash
 # you may finish the install without graphics
@@ -23,14 +23,14 @@ virt-install --virt-type kvm --name cpubase --vcpus 4 --ram 16384 --boot hd --di
 ```
 
 
-To simply the configuration, I use default network created by libvirt to
-allow internet access (SNAT). But this would now allow the VMs to reach
-each other. To allow this, configure correct IP addresses for the rdma
+To simplify the configuration, I use the default network created by libvirt to
+allow the internet access (SNAT). But that would not allow the VMs to reach
+each other. To allow this, I configure a correct IP address for the rdma
 interface and use that for interconnection. The switch has already been
-configuration to support this.
+configured to support this.
 
 
-A bunch of things I decide to setup later after all VMs have been booted are that
+A bunch of things I decide to setup later after all VMs have been booted are
 1. add many sshkeys to these VMs
 2. generate a script for each VM to bring up and set different IP 
    address for the rdma interface.
@@ -52,11 +52,11 @@ server (aka what is not persistent).
 
 The order is important.
 
-To clear ovs setings.
+To clear ovs setings
 1. `ovs-vsctl del-br ovs-sriov`
 1. `ovs-dpctl show`
 
-To disable eswtich and recovery the configuation.
+To disable eswtich and recovery the configuation
 1. `echo legacy | sudo tee /sys/class/net/rdma0/compat/devlink/mode`
 2. `enable_sriov.sh`
 3. `echo 0 | sudo tee /sys/class/net/rdma0/device/sriov_numvfs` (optionally)

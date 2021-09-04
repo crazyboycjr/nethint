@@ -1,11 +1,11 @@
 use crate::controller::app::Application;
-use crate::controller::plink::PlinkApp;
 use crate::{message, Flow, Node};
 use litemsg::endpoint::Endpoint;
 use rand::{rngs::StdRng, SeedableRng};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::controller::background_flow::{BackgroundFlowApp, BackgroundFlowPattern};
 use allreduce::{
     config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
@@ -63,7 +63,7 @@ impl AllreduceAppBuilder {
     }
 
     fn get_job_spec(setting: &AllreduceSetting) -> JobSpec {
-        let mut rng = StdRng::seed_from_u64(setting.seed_base);
+        let mut rng = StdRng::seed_from_u64(setting.seed_base - setting.job_id as u64);
         let mut t = 0;
         let mut jobs = Vec::new();
         for i in 0..setting.job_id + 1 {
@@ -90,7 +90,7 @@ impl AllreduceAppBuilder {
         if job_spec.num_workers == 2 {
             setting.auto_tune = None;
         }
-        let mut app: Box<dyn Application> = Box::new(AllreduceApp {
+        let app: Box<dyn Application> = Box::new(AllreduceApp {
             workers: self.workers,
             brain: self.brain,
             hostname_to_node: self.hostname_to_node,
@@ -103,15 +103,17 @@ impl AllreduceAppBuilder {
             vname_to_hostname: Default::default(),
             cluster: None,
             flow_iters: Default::default(),
+            in_probing: false,
+            background_flow_app: None,
         });
 
-        if setting.probe.enable {
-            app = Box::new(PlinkApp::new(
-                job_spec.num_workers,
-                setting.probe.round_ms,
-                app,
-            ));
-        }
+        // if setting.probe.enable {
+        //     app = Box::new(PlinkApp::new(
+        //         job_spec.num_workers,
+        //         setting.probe.round_ms,
+        //         app,
+        //     ));
+        // }
 
         app
     }
@@ -133,15 +135,26 @@ pub struct AllreduceApp {
     cluster: Option<Rc<dyn Topology>>, // use Rc so we don't have deal with ugly lifetime specifiers
     flow_iters: HashMap<(Node, Node), usize>,
     // flow_iters: HashMap<Token, usize>,
+    // dynamic probe
+    in_probing: bool,
+    background_flow_app: Option<BackgroundFlowApp>,
 }
 
 impl Application for AllreduceApp {
     fn workers(&self) -> &HashMap<Node, Endpoint> {
-        &self.workers
+        if self.in_probing {
+            self.background_flow_app.as_ref().unwrap().workers()
+        } else {
+            &self.workers
+        }
     }
 
     fn workers_mut(&mut self) -> &mut HashMap<Node, Endpoint> {
-        &mut self.workers
+        if self.in_probing {
+            self.background_flow_app.as_mut().unwrap().workers_mut()
+        } else {
+            &mut self.workers
+        }
     }
 
     fn brain(&self) -> &Endpoint {
@@ -169,6 +182,28 @@ impl Application for AllreduceApp {
     }
 
     fn on_event(&mut self, cmd: message::Command) -> anyhow::Result<bool> {
+        if self.in_probing {
+            log::info!("AllreduceApp on_event, in_probing, cmd: {:?}", cmd);
+
+            // forward the cmd to background_flow_app
+            let fin = self.background_flow_app.as_mut().unwrap().on_event(cmd)?;
+            if fin {
+                self.in_probing = false;
+                let mut temp: HashMap<Node, Endpoint> = HashMap::new();
+                std::mem::swap(
+                    &mut temp,
+                    self.background_flow_app.as_mut().unwrap().workers_mut(),
+                );
+                std::mem::swap(self.workers_mut(), &mut temp);
+                self.background_flow_app = None;
+
+                log::info!("worker_mut.len: {}", self.workers_mut().len());
+
+                self.allreduce()?;
+            }
+            return Ok(false);
+        }
+
         // wait for all flows to finish
         use message::Command::*;
         match cmd {
@@ -227,6 +262,34 @@ impl Application for AllreduceApp {
 }
 
 impl AllreduceApp {
+    fn start_probe(&mut self) -> anyhow::Result<()> {
+        log::info!("start probe");
+        assert!(self.setting.probe.enable);
+        assert!(!self.in_probing);
+
+        let nhosts = self.job_spec.num_workers;
+        let round_ms = self.setting.probe.round_ms;
+
+        let dur_ms = (nhosts as u64 * round_ms) as _;
+        self.background_flow_app = Some(BackgroundFlowApp::new(
+            std::mem::take(self.workers_mut()),
+            self.brain().clone(),
+            self.hostname_to_node().clone(),
+            self.tenant_id(),
+            nhosts,
+            dur_ms,
+            BackgroundFlowPattern::PlinkProbe,
+            Some(10_000_000), // 8ms on 10G
+        ));
+
+        self.in_probing = true;
+
+        self.background_flow_app.as_mut().unwrap().vname_to_hostname = self.vname_to_hostname.clone();
+        self.background_flow_app.as_mut().unwrap().start()?;
+
+        Ok(())
+    }
+
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         let num_rings = self.setting.num_rings.unwrap_or(1);
         let num_trees = self.setting.num_rings.unwrap_or(self.job_spec.num_workers);
@@ -240,6 +303,8 @@ impl AllreduceApp {
     }
 
     pub fn allreduce(&mut self) -> anyhow::Result<()> {
+        log::info!("allreduce");
+
         if self.cluster.is_none() {
             // self.request_provision()?;
             let version = match self.setting.nethint_level {
@@ -262,7 +327,7 @@ impl AllreduceApp {
         log::debug!("hint: {}", self.cluster.as_ref().unwrap().to_dot());
         let flows = self.allreduce_algorithm.as_mut().unwrap().allreduce(
             self.job_spec.buffer_size as u64,
-            &**self.cluster.as_ref().unwrap(),
+            Rc::clone(self.cluster.as_ref().unwrap()),
         );
 
         let end = std::time::Instant::now();
@@ -287,9 +352,10 @@ impl AllreduceApp {
         let niters = self
             .setting
             .auto_tune
-            .unwrap_or(self.job_spec.num_iterations).min(self.remaining_iterations);
+            .unwrap_or(self.job_spec.num_iterations)
+            .min(self.remaining_iterations);
         for (k, size) in matrix {
-        // for flow in flows {
+            // for flow in flows {
             // let size = flow.bytes;
             // let src_hostname = &self.vname_to_hostname[&flow.src];
             // let dst_hostname = &self.vname_to_hostname[&flow.dst];
@@ -404,7 +470,8 @@ impl AllreduceApp {
             let b = vc.get_downlinks(vc.get_node_index(&high_node.name)).count();
             a + n + n * (b - 1) / b
         };
-        let mut demand_sum_bw = (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
+        let mut demand_sum_bw =
+            (8.0 * demand_sum as f64 / (interval_ms as f64 / 1000.0) / 1e9).gbps();
         if demand_sum_bw > plink_capacity {
             demand_sum_bw = plink_capacity;
         }
@@ -416,22 +483,31 @@ impl AllreduceApp {
 
     pub fn handle_brain_response_event(
         &mut self,
-        msg: nhagent::message::Message,
+        msg: nhagent_v2::message::Message,
     ) -> anyhow::Result<()> {
-        use nhagent::message::Message::*;
+        use nhagent_v2::message::Message::*;
         let my_tenant_id = self.tenant_id();
         match msg {
             NetHintResponseV1(tenant_id, hintv1) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv1.vname_to_hostname;
                 self.cluster = Some(Rc::new(hintv1.vc));
-                self.allreduce()?;
+
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.allreduce()?;
+                }
             }
-            NetHintResponseV2(tenant_id, hintv2, _) => {
+            NetHintResponseV2(tenant_id, hintv2) => {
                 assert_eq!(my_tenant_id, tenant_id);
                 self.vname_to_hostname = hintv2.hintv1.vname_to_hostname.clone();
                 self.estimate_hintv2(hintv2);
-                self.allreduce()?;
+                if self.setting.probe.enable {
+                    self.start_probe()?;
+                } else {
+                    self.allreduce()?;
+                }
             }
             _ => {
                 panic!("unexpected brain response: {:?}", msg);

@@ -47,7 +47,7 @@ nethint_level = 1
 
 [[batch]]
 reducer_policy = "HierarchicalGreedyPaper"
-probe = { enable = true, round_ms = 10 }
+probe = { enable = true, round_ms = 100 }
 nethint_level = 2
 
 [[batch]]

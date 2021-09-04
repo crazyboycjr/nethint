@@ -47,6 +47,7 @@ fn main() {
         background_flow_high_freq: Default::default(),
         guaranteed_bandwidth: Some(25.0),
         gc_period: 100,
+        inaccuracy: None,
     });
 
     info!("cluster:\n{}", brain.borrow().cluster().to_dot());
