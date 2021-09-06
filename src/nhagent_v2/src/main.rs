@@ -43,8 +43,7 @@ fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel();
 
     // create the sampler instance
-    // let mut sampler =
-    //     nhagent_v2::sampler::SFlowSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
+    // should be called collector here instead. sampler is the BPF userspace program.
     let mut sampler =
         nhagent_v2::sampler::TcSampler::new(opt.interval_ms, opt.sampler_listen_port, tx);
 

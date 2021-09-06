@@ -65,12 +65,6 @@ pub fn get_rack_leader_ipv4() -> Ipv4Addr {
 
 pub fn get_rack_ip_table() -> anyhow::Result<HashMap<IpAddr, LinkIx>> {
     let mut rack_ip_table = HashMap::default(); // map eth to node name
-    // let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
-    // let mut ds: Vec<u8> = my_ip.split('.').map(|x| x.parse().unwrap()).collect();
-    // // the rank of the server in its rack
-    // let rack_base_ip_last_digit = ds[3] / 128 * 128 + 2;
-    // let my_server_offset = (ds[3] - rack_base_ip_last_digit) as usize / 32;
-    // ds[3] = rack_base_ip_last_digit;
 
     let my_ip = utils::net::get_primary_ipv4("rdma0").unwrap();
     let mut ds = get_rack_leader_ipv4().octets(); // array implements copy
