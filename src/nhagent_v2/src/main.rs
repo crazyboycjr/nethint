@@ -236,6 +236,7 @@ struct Handler {
     provision_req_queue: VecDeque<(usize, TenantId, usize)>,
     // background flow hard
     background_flow_hard: BackgroundFlowHard,
+    emulation: bool,
     bfh_last_ts: std::time::Instant,
     // command executor thread to avoid blocking of main thread
     cmd_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
@@ -277,6 +278,7 @@ impl Handler {
             interval_ms,
             provision_req_queue: VecDeque::new(),
             background_flow_hard: opts.background_flow_hard,
+            emulation: opts.shadow_id.is_some(),
             bfh_last_ts,
             cmd_handle,
             cmd_tx: tx,
@@ -289,6 +291,9 @@ impl Handler {
     }
 
     fn update_background_flow_hard(&mut self, comm: &mut Communicator) -> anyhow::Result<()> {
+        if self.emulation {
+            return Ok(());
+        }
         if !self.background_flow_hard.enable || comm.my_role() != Role::GlobalLeader {
             return Ok(());
         }

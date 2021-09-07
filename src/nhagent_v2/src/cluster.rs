@@ -36,7 +36,7 @@ lazy_static! {
             .trim()
             .to_owned();
         let orig_id: usize = orig_hostname.strip_prefix("danyang-").unwrap().parse().unwrap();
-        let new_id = orig_id + 6 * shadow_id;
+        let new_id = (orig_id + 6 * shadow_id - 1) * opts.topo.rack_size() + 1;
         format!("danyang-{:02}", new_id)
     };
 }
