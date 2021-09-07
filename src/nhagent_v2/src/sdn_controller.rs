@@ -22,11 +22,12 @@ fn get_emulated_ipv4() -> Ipv4Addr {
         .unwrap()
         .parse()
         .unwrap();
+    let rack_id = (id - 1) / TOPO.rack_size();
     Ipv4Addr::new(
         192,
         168,
-        ((id - 1) / m + 1) as u8,
-        NUM_IP_PER_RACK * ((id - 1) % m) as u8 + 2,
+        (rack_id / m + 1) as u8,
+        NUM_IP_PER_RACK * (rack_id % m) as u8 + 2,
     )
 }
 

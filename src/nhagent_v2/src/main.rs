@@ -114,9 +114,15 @@ fn main_loop(
 
     // to ensure poll call won't block forever
     let timeout = std::time::Duration::from_millis(1);
+    let first_ts = last_tp;
 
     while !TERMINATE.load(SeqCst) {
         let now = std::time::Instant::now();
+        // early stop for debugging
+        // if now > first_ts + std::time::Duration::from_secs(35) {
+        //     nhagent_v2::sampler::bpf_sampler::TERMINATE.store(true, SeqCst);
+        //     TERMINATE.store(true, SeqCst);
+        // }
         if now >= last_tp + interval && comm.bcast_done() && !opt.disable_v2 {
             // it's not very explicit why this is is correct or not, need more thinking on this
             handler.send_rack_chunk(comm)?;
@@ -141,7 +147,7 @@ fn main_loop(
 
         for event in events.iter() {
             let rank = event.token().0;
-            // log::debug!("handle event from rank: {}", rank);
+            log::debug!("handle event from rank: {}", rank);
 
             if rank == comm.world_size() {
                 // it must be the controller listener wants to accept new connections
@@ -160,9 +166,9 @@ fn main_loop(
             };
 
             if event.readiness().is_writable() {
-                // log::debug!("handle write event for rank: {}", rank);
+                log::debug!("handle write event for rank: {}", rank);
                 match ep.on_send_ready::<nhagent_v2::message::Message>() {
-                    Ok((_cmd, attachment)) => {
+                    Ok((_, attachment)) => {
                         handler.on_send_complete(attachment)?;
                     }
                     Err(endpoint::Error::NothingToSend) => {
@@ -181,7 +187,7 @@ fn main_loop(
                 }
             }
             if event.readiness().is_readable() {
-                // klog::debug!("handle read event for rank: {}", rank);
+                log::debug!("handle read event for rank: {}", rank);
                 match ep.on_recv_ready() {
                     Ok((cmd, _)) => {
                         handler.on_recv_complete(cmd, rank, comm)?;
@@ -548,7 +554,7 @@ impl Handler {
             )
             .ok_or(())
             .unwrap_err();
-        let msg = message::Message::RackChunk(my_rack_traffic.clone());
+        let msg = message::Message::RackChunk(my_rack_traffic);
         for i in 0..comm.world_size() {
             if i == comm.my_rank() {
                 continue;

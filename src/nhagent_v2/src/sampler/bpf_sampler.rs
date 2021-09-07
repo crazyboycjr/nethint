@@ -8,6 +8,11 @@ use std::sync::mpsc;
 use nethint::cluster::LinkIx;
 use nethint::counterunit::{CounterType, CounterUnit};
 
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::SeqCst;
+
+pub static TERMINATE: AtomicBool = AtomicBool::new(false);
+
 pub struct TcSampler {
     interval_ms: u64,
     listen_port: u16,
@@ -81,9 +86,14 @@ impl TcSampler {
         self.handle = Some(std::thread::spawn(move || loop {
             let now = std::time::Instant::now();
             if now >= last_ts + interval {
+                if TERMINATE.load(SeqCst) {
+                    break;
+                }
+
                 if opts.shadow_id.is_some() {
                     // if we are in emulation
                     Self::send_synthetic_data(&rack_ip_table, &tx);
+                    last_ts = now;
                     continue;
                 }
 
@@ -91,9 +101,11 @@ impl TcSampler {
                 last_ts = now;
             }
 
-                if opts.shadow_id.is_some() {
+            if opts.shadow_id.is_some() {
                 // we are in emulation, sock is not initialized, just sleep until next interval
-                std::thread::sleep(last_ts + interval - now);
+                if last_ts + interval > now {
+                    std::thread::sleep(last_ts + interval - now);
+                }
                 continue;
             }
 
