@@ -17,16 +17,20 @@ lazy_static::lazy_static! {
 fn get_emulated_ipv4() -> Ipv4Addr {
     let m = 256 / NUM_IP_PER_RACK as usize;
     // id in [1, 240]
+    // id in [1, 1000]
     let id: usize = hostname()
         .strip_prefix("danyang-")
         .unwrap()
         .parse()
         .unwrap();
     let rack_id = (id - 1) / TOPO.rack_size();
+    // 192.168.1.xx - 192.168.255.xx
+    // 192.169.1.xx - 192.169.255.xx, it doesn't matter because we won't really communicate with those IPs
+    // 192.170.1.xx ...
     Ipv4Addr::new(
         192,
-        168,
-        (rack_id / m + 1) as u8,
+        (168 + (rack_id / m) / 255) as u8,
+        (rack_id / m % 255 + 1) as u8,
         NUM_IP_PER_RACK * (rack_id % m) as u8 + 2,
     )
 }

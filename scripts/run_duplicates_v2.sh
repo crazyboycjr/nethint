@@ -30,21 +30,21 @@ if [ "x$scale" = "x1" -o "x$scale" = "x" ]; then
 		arbitrary $num_racks $rack_size 10 10
 
 else
-  sampler_port=6343
+  # sampler_port=6343
 
-  RUST_BACKTRACE=full \
-  NH_CONTROLLER_URI=danyang-01.cs.duke.edu:9000 \
-  NH_NUM_RACKS=$num_racks \
-      valgrind --leak-check=full --show-reachable=yes target/release/nhagent_v2 \
-      --shadow-id 0 \
-      -p $sampler_port \
-      -i 100 \
-      -b 10000000000:1:5:0.1 \
-      arbitrary $num_racks $rack_size 10 10 \
-      &
-      # --disable-v2 \
+  # RUST_BACKTRACE=full \
+  # NH_CONTROLLER_URI=danyang-01.cs.duke.edu:9000 \
+  # NH_NUM_RACKS=$num_racks \
+  #     valgrind --leak-check=full --show-reachable=yes target/release/nhagent_v2 \
+  #     --shadow-id 0 \
+  #     -p $sampler_port \
+  #     -i 100 \
+  #     -b 10000000000:1:5:0.1 \
+  #     arbitrary $num_racks $rack_size 10 10 \
+  #     &
+  #     # --disable-v2 \
 
-	for ((i=1; i<$scale; i++)); do
+	for ((i=0; i<$scale; i++)); do
 		sampler_port=`expr 6343 + $i`
 
 		RUST_BACKTRACE=full \
