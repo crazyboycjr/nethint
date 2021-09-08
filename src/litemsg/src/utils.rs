@@ -76,7 +76,7 @@ pub fn add_node(my_node: Node, controller: &mut TcpStream) -> anyhow::Result<()>
 }
 
 const BASE_PORT: u16 = 30000;
-const MAX_RETRY: u16 = 100;
+const MAX_RETRY: u16 = 1000;
 
 pub fn find_avail_port(hint: Option<u16>) -> anyhow::Result<u16> {
     let mut port = hint.unwrap_or(BASE_PORT);

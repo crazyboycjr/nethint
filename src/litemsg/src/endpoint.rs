@@ -111,6 +111,8 @@ pub struct Endpoint {
     tx_queue: VecDeque<SendState>,
     // receiving states
     recv_state: RecvState,
+    // statistics
+    // sent_bytes: usize,
 }
 
 impl Clone for Endpoint {
@@ -123,6 +125,7 @@ impl Clone for Endpoint {
             node: self.node.clone(),
             tx_queue: Default::default(),
             recv_state: RecvState::default(),
+            // sent_bytes: self.sent_bytes,
         }
     }
 }
@@ -200,6 +203,7 @@ impl Endpoint {
             node,
             tx_queue: Default::default(),
             recv_state: RecvState::default(),
+            // sent_bytes: 0,
         }
     }
 
@@ -230,6 +234,9 @@ impl Endpoint {
     ) -> anyhow::Result<()> {
         log::trace!("post a cmd: {:?}", cmd);
         let state = SendState::new(cmd, attachment)?;
+        // self.sent_bytes += state.attachment.as_ref().map(|a| a.get_remain_buffer().len()).unwrap_or(0);
+        // self.sent_bytes += state.meta.get_remain_buffer().len();
+        // self.sent_bytes += state.payload.get_remain_buffer().len();
         self.tx_queue.push_back(state);
         Ok(())
     }
@@ -237,6 +244,8 @@ impl Endpoint {
     // how about first return the attachment, more things to return can be added later
     pub fn on_send_ready<T: Serialize + DeserializeOwned + std::fmt::Debug>(&mut self) -> Result<(T, Option<Vec<u8>>)> {
         use SendStage::*;
+
+        // log::error!("on_send_ready stage 1: tx_queue.len(): {}, sent_bytes: {}", self.tx_queue.len(), self.sent_bytes);
 
         if let Some(mut state) = self.tx_queue.front_mut() {
             match state.stage {
@@ -257,6 +266,8 @@ impl Endpoint {
                 }
             }
         }
+
+        // log::error!("on_send_ready stage 2: tx_queue.len(): {}, sent_bytes: {}", self.tx_queue.len(), self.sent_bytes);
 
         if let Some(state) = self.tx_queue.pop_front() {
             let cmd = bincode::deserialize(state.payload.as_slice()).map_err(Error::Deserialize)?;

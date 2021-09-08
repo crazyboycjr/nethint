@@ -240,10 +240,7 @@ impl Cluster {
             let dst = self.get_target(link_ix);
             let dst_name = self.graph[dst].name.clone();
             log::debug!("dst_name: {}", dst_name);
-            node_map
-                .entry(dst_name)
-                .and_modify(|e| *e = dst)
-                .or_insert(dst);
+            *node_map.entry(dst_name).or_insert(dst) = dst;
         }
         self.node_map = node_map;
     }

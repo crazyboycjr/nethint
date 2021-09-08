@@ -13,29 +13,58 @@ fi
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 scale=$1
-num_workers=`expr 6 \* $scale`
-num_racks=`expr 2 \* $scale`
+rack_size=3 # you may want to change it to 20 in emulation
+num_racks=`expr 6 \* $scale`
+num_workers=`expr $num_racks \* $rack_size`
 
-for ((i=0; i<$scale; i++)); do
-	sampler_port=`expr 6343 + $i`
+if [ "x$scale" = "x1" -o "x$scale" = "x" ]; then
+	sampler_port=6343
 
 	RUST_BACKTRACE=full \
 	NH_CONTROLLER_URI=danyang-01.cs.duke.edu:9000 \
 	NH_NUM_RACKS=$num_racks \
 		target/release/nhagent_v2 \
-		--shadow-id $i \
 		-p $sampler_port \
 		-i 100 \
 		-b 10000000000:1:5:0.1 \
-		arbitrary $num_racks 3 10 10 \
-		&
-		# --disable-v2 \
-done
+		arbitrary $num_racks $rack_size 10 10
+
+else
+  # sampler_port=6343
+
+  # RUST_BACKTRACE=full \
+  # NH_CONTROLLER_URI=danyang-01.cs.duke.edu:9000 \
+  # NH_NUM_RACKS=$num_racks \
+  #     valgrind --leak-check=full --show-reachable=yes target/release/nhagent_v2 \
+  #     --shadow-id 0 \
+  #     -p $sampler_port \
+  #     -i 100 \
+  #     -b 10000000000:1:5:0.1 \
+  #     arbitrary $num_racks $rack_size 10 10 \
+  #     &
+  #     # --disable-v2 \
+
+	for ((i=0; i<$scale; i++)); do
+		sampler_port=`expr 6343 + $i`
+
+		RUST_BACKTRACE=full \
+		NH_CONTROLLER_URI=danyang-01.cs.duke.edu:9000 \
+		NH_NUM_RACKS=$num_racks \
+			target/release/nhagent_v2 \
+			--shadow-id $i \
+			-p $sampler_port \
+			-i 100 \
+			-b 10000000000:1:5:0.1 \
+			arbitrary $num_racks $rack_size 10 10 \
+			&
+			# --disable-v2 \
+	done
+
+	wait
+fi
 
 # DIR=$(dirname `realpath $0`)
 # nix develop $DIR/../nethint-bpf -c \
 # 	sudo -E NH_LOG=info RUST_BACKTRACE=1 \
 # 	$DIR/../nethint-bpf/target/debug/nethint-user \
 # 	arbitrary $num_racks 3 10 10
-
-wait
