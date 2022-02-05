@@ -1,5 +1,5 @@
 # Number of jobs
-ncases = 1
+ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
 job_size_distribution = [[50, 8], [50, 16]]
@@ -27,7 +27,7 @@ seed = 1
 directory = "/tmp/inaccuracy2/inaccuracy2_base"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
