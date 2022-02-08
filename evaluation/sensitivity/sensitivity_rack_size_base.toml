@@ -2,7 +2,7 @@
 ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[80, 16], [80, 32]]
+job_size_distribution = [[80, 8], [80, 12]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
 buffer_size = 100_000_000
