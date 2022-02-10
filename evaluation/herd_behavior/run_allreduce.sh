@@ -10,14 +10,14 @@ overlapped_jobs=(
 )
 
 rack_sizes=(
-8
+7
 15
 30
 40
 )
 
 rack_bws=(
-267
+233
 500
 1000
 1333

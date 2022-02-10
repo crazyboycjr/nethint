@@ -1,5 +1,4 @@
 #!/bin/bash
-# This last experiment can take 24 hours to run
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 
 overlapped_jobs=(
@@ -15,6 +14,13 @@ time_scales=(
 0.2
 0.1
 )
+
+# time_scales=(
+# 1
+# 0.1
+# 0.05
+# 0.01
+# )
 
 idx=0
 for f in ${overlapped_jobs[@]}; do
