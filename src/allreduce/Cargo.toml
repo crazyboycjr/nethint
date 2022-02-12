@@ -24,6 +24,7 @@ serde = { version = "1.0.122", features = ["derive"] }
 lazy_static = "1.4.0"
 rayon = "1.5.0"
 rat_solver = { path = "../rat_solver" }
+indicatif = "0.17.0-rc.4"
 
 [[bin]]
 name = "allreduce_experiment"
