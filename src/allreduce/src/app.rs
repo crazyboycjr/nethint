@@ -10,8 +10,6 @@ use std::convert::TryInto;
 use std::rc::Rc;
 use std::time::Instant;
 
-use indicatif::{ProgressBar, MultiProgress, ProgressStyle};
-
 use crate::{
     config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
     topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
@@ -42,18 +40,11 @@ pub struct AllReduceApp<'c> {
     in_probing: bool,
     probing_start_time: Timestamp,
     background_flow_app: Option<BackgroundFlowApp<Option<Duration>>>,
-    bar: ProgressBar,
 }
 
 impl<'c> std::fmt::Debug for AllReduceApp<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "AllReduceApp")
-    }
-}
-
-impl<'c> Drop for AllReduceApp<'c> {
-    fn drop(&mut self) {
-        self.bar.finish_and_clear();
     }
 }
 
@@ -70,18 +61,10 @@ impl<'c> AllReduceApp<'c> {
         auto_fallback: bool,
         alpha: Option<f64>,
         nhosts_to_acquire: usize,
-        multibar: &'c MultiProgress,
     ) -> Self {
         let trace = Trace::new();
         let computation_time =
             calc_job_computation_time(job_spec.buffer_size, computation_speed.unwrap_or(0.));
-        // initialize the progress bar
-        let sty = ProgressStyle::default_bar()
-            .template("[{elapsed_precise}<{eta_precise}]{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-            .progress_chars("##-");
-        let bar = ProgressBar::new(job_spec.num_iterations as _);
-        let bar = multibar.add(bar);
-        bar.set_style(sty);
         AllReduceApp {
             job_spec,
             cluster,
@@ -104,7 +87,6 @@ impl<'c> AllReduceApp<'c> {
             in_probing: false,
             probing_start_time: 0,
             background_flow_app: None,
-            bar,
         }
     }
 
@@ -197,7 +179,6 @@ impl<'c> AllReduceApp<'c> {
             self.remaining_flows += 1;
         }
 
-        self.bar.inc(1);
         // log::warn!(
         //     "{:?}, progress: {}/{}",
         //     self.allreduce_policy,

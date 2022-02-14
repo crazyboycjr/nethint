@@ -86,13 +86,11 @@ fn main() {
         let batch_repeat = config.batch_repeat;
         let config_clone = config.clone();
         let brain_clone = brain.borrow().replicate_for_multithread();
-        let multibar = &Arc::new(MultiProgress::new());
         (0..batch_repeat).into_par_iter().for_each(move |trial_id| {
             let mut brain_clone = brain_clone.replicate_for_multithread();
             brain_clone.set_seed(brain_clone.setting().seed + trial_id as u64);
-            run_batch(&config_clone, i, trial_id, seed, Rc::new(RefCell::new(brain_clone)), &multibar);
+            run_batch(&config_clone, i, trial_id, seed, Rc::new(RefCell::new(brain_clone)));
         });
-        multibar.clear().unwrap();
     }
 }
 
@@ -102,7 +100,6 @@ fn run_batch(
     trial_id: usize,
     seed: u64,
     brain: Rc<RefCell<Brain>>,
-    multibar: &MultiProgress,
 ) {
     // remember to garbage collect remaining jobs
     brain.borrow_mut().reset();
@@ -151,7 +148,6 @@ fn run_batch(
             batch.alpha,
             nhosts_to_acquire,
             config.partially_sync,
-            &multibar,
         ));
 
         // let app: Box<dyn Application<Output = _>> = if batch.probe.enable {

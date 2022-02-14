@@ -20,8 +20,6 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-
 pub struct RLApp {
     root_index_modifed: bool,
     job_spec: JobSpec,
@@ -47,7 +45,6 @@ pub struct RLApp {
     // partially sync
     partially_sync: bool,
     group_rng: Option<StdRng>,
-    bar: ProgressBar,
 }
 
 impl std::fmt::Debug for RLApp {
@@ -69,16 +66,8 @@ impl RLApp {
         alpha: Option<f64>,
         nhosts_to_acquire: usize,
         partially_sync: bool,
-        multibar: &MultiProgress,
     ) -> Self {
         let trace = Trace::new();
-        // initialize the progress bar
-        let sty = ProgressStyle::default_bar()
-            .template("[{elapsed_precise}<{eta_precise}]{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-            .progress_chars("##-");
-        let bar = ProgressBar::new(job_spec.num_iterations as _);
-        let bar = multibar.add(bar);
-        bar.set_style(sty);
         RLApp {
             root_index_modifed: false,
             job_spec: job_spec.clone(),
@@ -106,7 +95,6 @@ impl RLApp {
             } else {
                 None
             },
-            bar,
         }
     }
 
@@ -204,7 +192,6 @@ impl RLApp {
             self.remaining_flows += 1;
         }
 
-        self.bar.inc(1);
         // log::warn!(
         //     "{:?}, seed: {} remaining/total: {}/{}",
         //     self.rl_policy,

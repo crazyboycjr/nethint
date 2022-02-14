@@ -20,8 +20,6 @@ use allreduce::{app::AllReduceApp, JobSpec};
 
 use allreduce::config::{self, read_config, ExperimentConfig};
 
-use indicatif::MultiProgress;
-
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "Allreduce Experiment", about = "Allreduce Experiment")]
 pub struct Opt {
@@ -89,7 +87,6 @@ fn main() {
         let batch_repeat = config.batch_repeat;
         let config_clone = config.clone();
         let brain_clone = brain.borrow().replicate_for_multithread();
-        let multibar = &Arc::new(MultiProgress::new());
         (0..batch_repeat).into_par_iter().for_each(move |trial_id| {
             let mut brain_clone = brain_clone.replicate_for_multithread();
             brain_clone.set_seed(brain_clone.setting().seed + trial_id as u64);
@@ -99,10 +96,8 @@ fn main() {
                 trial_id,
                 seed,
                 Rc::new(RefCell::new(brain_clone)),
-                &multibar,
             );
         });
-        multibar.clear().unwrap();
     }
 }
 
@@ -112,7 +107,6 @@ fn run_batch(
     trial_id: usize,
     seed: u64,
     brain: Rc<RefCell<Brain>>,
-    multibar: &MultiProgress,
 ) {
     // remember to garbage collect remaining jobs
     brain.borrow_mut().reset();
@@ -158,7 +152,6 @@ fn run_batch(
             batch.auto_fallback.unwrap_or_default(),
             batch.alpha,
             nhosts_to_acquire,
-            &multibar,
         ));
 
         // let app: Box<dyn Application<Output = _>> = if batch.probe.enable {
