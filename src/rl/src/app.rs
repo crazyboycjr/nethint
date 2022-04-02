@@ -162,7 +162,7 @@ impl RLApp {
                         // let p = 0.1;
                         // let k = (t_adapt as f64 * (1.0 - p) / p / t_iter as f64).ceil();
                         let k = self.autotune.unwrap();
-                        let t_period = t_adapt + k as f64 * t_iter;
+                        let t_period = t_adapt + k as f64 * t_iter + 150.0 * 1e-3; // + 150ms
                         log::error!(
                             "num_workers:{}, t_adapt: {}, t_iter: {}, k: {}, alpha: {}, t_background: {}",
                             self.job_spec.num_workers, t_adapt, t_iter, k, alpha, t_background

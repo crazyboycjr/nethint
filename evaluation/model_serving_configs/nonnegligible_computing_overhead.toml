@@ -105,9 +105,9 @@ type = "Arbitrary"  # another possible value is "FatTree"
 
 [brain.topology.args]         # When type = "Arbitrary"
 nracks = 320        # the number of racks
-rack_size = 6      # the number of hosts under a rack
+rack_size = 18     # the number of hosts under a rack
 host_bw = 100       # bandwidth of a host, in Gbps
-rack_bw = 400       # bandwidth of a ToR switch, in Gbps
+rack_bw = 1200       # bandwidth of a ToR switch, in Gbps
 
 # [envs]
 # KEY = "value"

@@ -51,7 +51,7 @@ nethint_level = 2
 # Auto tune after some iterations. default is disabled
 auto_tune = 10
 auto_fallback = true
-alpha = 0.5
+alpha = 1.0
 
 [simulator]
 nethint = true

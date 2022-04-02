@@ -1,14 +1,10 @@
-# 3:1, jobsize = 4n, poisson = 24s, background: (60s, 0.5, 5), max_slots = 1
 # Specifiation of a Allreduce application experiment
 
 # Number of jobs
 ncases = 30
 
 # Job size distributions [(percentage, number of workers)]
-job_size_distribution = [[40, 4], [80, 8], [90, 16], [25, 32], [5, 64]]
-# job_size_distribution = [[40, 2], [80, 4], [90, 8], [25, 16], [5, 32]]
-# job_size_distribution = [[40, 6], [80, 12], [90, 24], [25, 48], [5, 96]]
-# job_size_distribution = [[80, 12], [90, 24], [25, 48], [5, 96]]
+job_size_distribution = [[40, 16], [40, 32]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
 buffer_size = 100_000_000

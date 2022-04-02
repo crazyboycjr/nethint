@@ -194,7 +194,7 @@ impl<'c> MapReduceApp<'c> {
                     let alpha = self.alpha.unwrap();
                     let t_jct = self.estimate_jct(mappers, shuffle);
                     let t_adapt = self.estimate_adapt();
-                    let t_period = t_adapt + t_jct;
+                    let t_period = t_adapt + t_jct + 150.0 * 1e-3; // + 150ms
 
                     let msg = format!("t_adapt: {}, t_jct: {}, alpha: {}, t_background: {}", t_adapt, t_jct, alpha, t_background);
                     if let Ok(path) = std::env::var("NETHINT_SHOW_DECISION") {
