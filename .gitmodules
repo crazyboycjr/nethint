@@ -1,0 +1,3 @@
+[submodule "nethint-bpf"]
+	path = nethint-bpf
+	url = https://github.com/crazyboycjr/nethint-bpf
