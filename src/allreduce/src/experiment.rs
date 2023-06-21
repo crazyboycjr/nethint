@@ -1,21 +1,17 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use rand::{rngs::StdRng, SeedableRng};
 use structopt::StructOpt;
 
 use nethint::{
-    app::{AppGroup, Application},
+    app::AppGroup,
     brain::Brain,
     cluster::Topology,
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
 };
 
-use mapreduce::plink::PlinkApp;
-
-extern crate allreduce;
 use allreduce::{app::AllReduceApp, JobSpec};
 
 use allreduce::config::{self, read_config, ExperimentConfig};

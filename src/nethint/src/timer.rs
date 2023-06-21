@@ -46,6 +46,7 @@ use rand::SeedableRng;
 pub(crate) struct PoissonTimer {
     kind: TimerKind,
     next_ready: Timestamp,
+    #[allow(unused)]
     lambda: f64,
     poi: Poisson<f64>,
     rng: rand::rngs::StdRng,

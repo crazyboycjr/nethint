@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct RandomRingAllReduce {
+    #[allow(unused)]
     seed: u64,
     num_rings: usize,
     rng: StdRng,

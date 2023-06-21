@@ -1,25 +1,21 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use rand::{Rng, rngs::StdRng, SeedableRng};
 use structopt::StructOpt;
 
 use nethint::{
-    app::{AppGroup, Application},
+    app::AppGroup,
     brain::Brain,
     cluster::Topology,
     multitenant::Tenant,
     simulator::{Executor, SimulatorBuilder},
 };
 
-use mapreduce::plink::PlinkApp;
-
-extern crate rl;
 use rl::{app::RLApp, JobSpec};
 use rl::config::{self, ExperimentConfig, read_config};
 
-use indicatif::MultiProgress;
+// use indicatif::MultiProgress;
 
 #[derive(Debug, Clone, StructOpt)]
 #[structopt(name = "RL Experiment", about = "RL Experiment")]

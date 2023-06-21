@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct RandomChain {
+    #[allow(unused)]
     seed: u64,
     num_trees: usize,
     rng: StdRng,

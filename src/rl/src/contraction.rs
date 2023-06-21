@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct Contraction {
+    #[allow(unused)]
     seed: u64,
 }
 

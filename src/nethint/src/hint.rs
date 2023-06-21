@@ -54,6 +54,7 @@ pub struct NetHintV2Real {
 /// Sample point
 #[derive(Debug, Clone)]
 struct Point<V: Copy> {
+    #[allow(unused)]
     ts: Timestamp,
     val: V,
 }

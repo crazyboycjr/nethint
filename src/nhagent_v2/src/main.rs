@@ -114,7 +114,7 @@ fn main_loop(
 
     // to ensure poll call won't block forever
     let timeout = std::time::Duration::from_millis(1);
-    let first_ts = last_tp;
+    // let first_ts = last_tp;
 
     while !TERMINATE.load(SeqCst) {
         let now = std::time::Instant::now();
@@ -232,6 +232,7 @@ fn cmd_executor(rx: mpsc::Receiver<CommandOp>) -> anyhow::Result<()> {
 struct Handler {
     traffic: HashMap<LinkIx, Vec<CounterUnit>>,
     // traffic that has been sent to other nodes
+    #[allow(unused)]
     committed_traffic: HashMap<LinkIx, Vec<CounterUnit>>,
     // traffic buffer for query use
     traffic_buf: HashMap<LinkIx, Vec<CounterUnit>>,
@@ -435,6 +436,7 @@ impl Handler {
         ret.into_values().collect()
     }
 
+    #[allow(dead_code)]
     fn commit_chunk(chunk1: &mut Vec<CounterUnit>, chunk2: &mut Vec<CounterUnit>) {
         use std::collections::BTreeMap;
         let mut chunk2_map: BTreeMap<String, CounterUnit> = chunk2

@@ -1,5 +1,3 @@
-#![feature(command_access)]
-
 pub mod cluster;
 pub mod sampler;
 pub mod message;
