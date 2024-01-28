@@ -55,6 +55,7 @@ lazy_static::lazy_static! {
 
 #[derive(Debug, Clone)]
 struct JobConfig {
+    #[allow(unused)]
     job_id: usize,
     output_dir: std::path::PathBuf,
     config_path: std::path::PathBuf,
