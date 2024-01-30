@@ -2,12 +2,14 @@
 #![feature(concat_idents)]
 
 use std::cell::RefCell;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use lazy_static::lazy_static;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use strum_macros::EnumString;
 
 const RAND_SEED: u64 = 0;
 thread_local! {
@@ -22,7 +24,6 @@ lazy_static! {
 pub mod bandwidth;
 
 pub mod cluster;
-use cluster::Route;
 
 pub mod app;
 
@@ -39,9 +40,9 @@ pub mod hint;
 
 pub mod background_flow;
 
-pub mod runtime_est;
-pub mod counterunit;
 pub mod background_flow_hard;
+pub mod counterunit;
+pub mod runtime_est;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FairnessModel {
@@ -149,6 +150,9 @@ pub struct Flow {
     /// inside the new header instead of replacing fields in place.
     vsrc: Option<String>,
     vdst: Option<String>,
+    /// Patched field. Used when combined with network load balancer to determine the path among
+    /// multiple network links.
+    pub udp_src_port: Option<u16>,
 }
 
 impl Flow {
@@ -163,6 +167,7 @@ impl Flow {
             token,
             vsrc: None,
             vdst: None,
+            udp_src_port: None,
         }
     }
 }
@@ -182,6 +187,62 @@ impl From<Token> for usize {
     }
 }
 
-pub trait LoadBalancer {
-    fn load_balance(&mut self, routes: &[Route]) -> Route;
+pub trait LoadBalancer: std::fmt::Debug + Send + Sync + 'static {
+    fn compute_hash(&mut self, flow: &Flow) -> u64;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString)]
+pub enum LoadBalancerType {
+    EcmpEverything,
+    EcmpSourcePort,
+}
+
+#[derive(Clone, Debug)]
+pub struct EcmpFlowHasher {
+    // We manually add this fake information to a flow because we don't have source port inside the
+    // `Flow` structure.
+    udp_src_port: u16,
+    rng: StdRng,
+}
+
+impl EcmpFlowHasher {
+    pub(crate) fn new(udp_src_port: u16, seed: u64) -> Self {
+        Self {
+            udp_src_port,
+            rng: StdRng::seed_from_u64(seed),
+        }
+    }
+}
+
+impl LoadBalancer for EcmpFlowHasher {
+    fn compute_hash(&mut self, flow: &Flow) -> u64 {
+        // EcmpFlowHasher
+        let mut hasher = DefaultHasher::new();
+        flow.id.hash(&mut hasher);
+        flow.src.hash(&mut hasher);
+        flow.dst.hash(&mut hasher);
+        let random_step = self.rng.gen_range(1..=100);
+        self.udp_src_port = self.udp_src_port.wrapping_add(random_step);
+        self.udp_src_port.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EcmpSourcePortHasher;
+
+impl LoadBalancer for EcmpSourcePortHasher {
+    fn compute_hash(&mut self, flow: &Flow) -> u64 {
+        // A hasher that only considers UDP source port.
+        // UDP source port is not used by RoCEv2. So our algorithm
+        // leverages this field to realize the ability to pin a flow
+        // to a desginated network path.
+        // let mut hasher = DefaultHasher::new();
+        // flow.udp_src_port.hash(&mut hasher);
+        // hasher.finish()
+        match flow.udp_src_port {
+            Some(p) => p as _,
+            None => panic!("You forget to set UDP source port"),
+        }
+    }
 }

@@ -1,21 +1,20 @@
 use crate::AllReduceAlgorithm;
 use nethint::{cluster::Topology, Flow};
-use rand::Rng;
 use std::rc::Rc;
 
 #[derive(Debug, Default)]
-pub struct TopologyAwareRingAllReduce {
+pub struct MccsRingAllReduce {
     seed: u64,
     num_rings: usize,
 }
 
-impl TopologyAwareRingAllReduce {
+impl MccsRingAllReduce {
     pub fn new(seed: u64, num_rings: usize) -> Self {
-        TopologyAwareRingAllReduce { seed, num_rings }
+        MccsRingAllReduce { seed, num_rings }
     }
 }
 
-impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
+impl AllReduceAlgorithm for MccsRingAllReduce {
     fn allreduce(&mut self, size: u64, vcluster: Rc<dyn Topology>) -> Vec<Flow> {
         use rand::prelude::SliceRandom;
         use rand::{rngs::StdRng, SeedableRng};
@@ -45,8 +44,8 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
             }
         }
 
-        for _ in 0..self.num_rings {
-            let n = vcluster.num_hosts();
+        let n = vcluster.num_hosts();
+        for channel_id in 0..self.num_rings {
             for _ in 0..2 {
                 for i in 0..n {
                     let sender = format!("host_{}", ring[i]);
@@ -57,7 +56,8 @@ impl AllReduceAlgorithm for TopologyAwareRingAllReduce {
                         &receiver,
                         None,
                     );
-                    flow.udp_src_port = Some(rng.gen_range(0..1024));
+                    // Set UDP source port here
+                    flow.udp_src_port = Some(channel_id as u16);
                     flows.push(flow);
                 }
             }

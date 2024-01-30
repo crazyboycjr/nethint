@@ -11,8 +11,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::{
-    config::ProbeConfig, random_ring::RandomRingAllReduce, rat::RatAllReduce,
-    topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm, AllReducePolicy, JobSpec,
+    config::ProbeConfig, mccs::MccsRingAllReduce, random_ring::RandomRingAllReduce,
+    rat::RatAllReduce, topology_aware::TopologyAwareRingAllReduce, AllReduceAlgorithm,
+    AllReducePolicy, JobSpec,
 };
 
 use utils::collector::OverheadCollector;
@@ -36,6 +37,7 @@ pub struct AllReduceApp<'c> {
     probe: ProbeConfig,
     auto_fallback: bool,
     alpha: Option<f64>,
+    num_rings: Option<usize>,
     nhosts_to_acquire: usize,
     in_probing: bool,
     probing_start_time: Timestamp,
@@ -60,6 +62,7 @@ impl<'c> AllReduceApp<'c> {
         probe: ProbeConfig,
         auto_fallback: bool,
         alpha: Option<f64>,
+        num_rings: Option<usize>,
         nhosts_to_acquire: usize,
     ) -> Self {
         let trace = Trace::new();
@@ -83,6 +86,7 @@ impl<'c> AllReduceApp<'c> {
             probe,
             auto_fallback,
             alpha,
+            num_rings,
             nhosts_to_acquire,
             in_probing: false,
             probing_start_time: 0,
@@ -123,10 +127,14 @@ impl<'c> AllReduceApp<'c> {
 
     fn new_allreduce_algorithm(&self) -> Box<dyn AllReduceAlgorithm> {
         match self.allreduce_policy {
-            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(self.seed, 1)),
-            AllReducePolicy::TopologyAware => {
-                Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
-            }
+            AllReducePolicy::Random => Box::new(RandomRingAllReduce::new(
+                self.seed,
+                self.num_rings.unwrap_or(1),
+            )),
+            AllReducePolicy::TopologyAware => Box::new(TopologyAwareRingAllReduce::new(
+                self.seed,
+                self.num_rings.unwrap_or(1),
+            )),
             AllReducePolicy::RAT => {
                 if self.auto_fallback {
                     let t_background = std::env::var("NETHINT_BACKGROUND_FLOW_PERIOD")
@@ -148,12 +156,19 @@ impl<'c> AllReduceApp<'c> {
                     if t_period < alpha * t_background {
                         Box::new(RatAllReduce::new(self.job_spec.num_workers))
                     } else {
-                        Box::new(TopologyAwareRingAllReduce::new(self.seed, 1))
+                        Box::new(TopologyAwareRingAllReduce::new(
+                            self.seed,
+                            self.num_rings.unwrap_or(1),
+                        ))
                     }
                 } else {
                     Box::new(RatAllReduce::new(self.job_spec.num_workers))
                 }
             }
+            AllReducePolicy::Mccs => Box::new(MccsRingAllReduce::new(
+                self.seed,
+                self.num_rings.unwrap_or(1),
+            )),
         }
     }
 

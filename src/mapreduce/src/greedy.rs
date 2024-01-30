@@ -500,7 +500,7 @@ impl GreedyReducerSchedulerPaper {
                 assert!(collocate);
                 local_traffic += flow_size;
             } else {
-                let route = cluster.resolve_route(m, &host_name, &RouteHint::default(), None);
+                let route = cluster.resolve_route(m, &host_name, &RouteHint::default());
                 if route.path.len() > 2 {
                     cross += flow_size;
                 }
@@ -545,7 +545,7 @@ impl GreedyReducerSchedulerPaper {
                 let s = shuffle_pairs.0[mi][ri];
                 let r_ix = cluster.get_node_index(r);
                 if m_ix != r_ix {
-                    let route = cluster.resolve_route(m, r, &RouteHint::default(), None);
+                    let route = cluster.resolve_route(m, r, &RouteHint::default());
                     for link_ix in route.path {
                         *traffic.entry(link_ix).or_insert(0) += s;
                     }
@@ -631,7 +631,6 @@ impl PlaceReducer for GreedyReducerSchedulerPaper {
                     &mapper.0[mi],
                     &best_node_name,
                     &RouteHint::default(),
-                    None,
                 );
                 for link_ix in route.path {
                     *traffic.entry(link_ix).or_insert(0) += flow_size;

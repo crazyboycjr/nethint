@@ -1,5 +1,6 @@
 use crate::bandwidth::Bandwidth;
 use crate::cluster::{Cluster, Node, NodeType};
+use crate::LoadBalancerType;
 use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 
@@ -20,12 +21,29 @@ pub enum TopoArgs {
     Arbitrary {
         /// Specify the number of racks
         nracks: usize,
-        /// Specify the number of hosts under one rack
+        /// Specify the number of hosts within one rack
         rack_size: usize,
         /// Bandwidth of a host, in Gbps
         host_bw: f64,
         /// Bandwidth of a ToR switch, in Gbps
         rack_bw: f64,
+    },
+
+    /// Two-layer (number of switch layers) Multipath, where the two layer of switches are fully
+    /// connected
+    TwoLayerMultiPath {
+        /// Specify the number of spine switches
+        nspines: usize,
+        /// Specify the number of racks (or leaf switches)
+        nracks: usize,
+        /// Specify the number of hosts within one rack
+        rack_size: usize,
+        /// Bandwidth of a host, in Gbps
+        host_bw: f64,
+        /// Bandwidth of each link between a spine and a leaf, in Gbps.
+        rack_uplink_port_bw: f64,
+        /// Type of network load balancer
+        load_balancer_type: LoadBalancerType,
     },
 }
 
@@ -59,30 +77,63 @@ impl TopoArgs {
                     rack_bw: bandwidth * num_hosts_under_edge as f64 / oversub_ratio,
                 }
             }
+            &Self::TwoLayerMultiPath {
+                nspines,
+                nracks,
+                rack_size,
+                host_bw,
+                rack_uplink_port_bw,
+                ..
+            } => Self::Arbitrary {
+                nracks,
+                rack_size,
+                host_bw,
+                rack_bw: rack_uplink_port_bw * nspines as f64,
+            },
         }
     }
+
+    /// Number of spines/roots switch in the cluster
+    pub fn nroots(&self) -> usize {
+        match self {
+            &Self::Arbitrary { .. } | &Self::FatTree { .. } => 1,
+            &Self::TwoLayerMultiPath { nspines, .. } => nspines,
+        }
+    }
+
+    /// Number of racks in the cluster
     pub fn nracks(&self) -> usize {
         match self {
             &Self::Arbitrary { nracks, .. } => nracks,
             &Self::FatTree { .. } => self.by_arbitrary_topo().nracks(),
+            &Self::TwoLayerMultiPath { .. } => self.by_arbitrary_topo().nracks(),
         }
     }
+
+    /// Number of hosts in a rack
     pub fn rack_size(&self) -> usize {
         match self {
             &Self::Arbitrary { rack_size, .. } => rack_size,
             &Self::FatTree { .. } => self.by_arbitrary_topo().rack_size(),
+            &Self::TwoLayerMultiPath { .. } => self.by_arbitrary_topo().rack_size(),
         }
     }
+
+    /// Host outbound/inbound bandwidth
     pub fn host_bw(&self) -> f64 {
         match self {
             &Self::Arbitrary { host_bw, .. } => host_bw,
             &Self::FatTree { .. } => self.by_arbitrary_topo().host_bw(),
+            &Self::TwoLayerMultiPath { .. } => self.by_arbitrary_topo().host_bw(),
         }
     }
+
+    /// Aggregated rack outbound/inbound bandwidth
     pub fn rack_bw(&self) -> f64 {
         match self {
             &Self::Arbitrary { rack_bw, .. } => rack_bw,
             &Self::FatTree { bandwidth, .. } => bandwidth,
+            &Self::TwoLayerMultiPath { .. } => self.by_arbitrary_topo().rack_bw(),
         }
     }
 }
@@ -104,6 +155,18 @@ impl std::fmt::Display for TopoArgs {
                 f,
                 "arbitrary_{}_{}_{}g_{}g",
                 nracks, rack_size, host_bw, rack_bw,
+            ),
+            TopoArgs::TwoLayerMultiPath {
+                nspines,
+                nracks,
+                rack_size,
+                host_bw,
+                rack_uplink_port_bw,
+                load_balancer_type,
+            } => write!(
+                f,
+                "twolayermultipath_{}_{}_{}_{}g_{}g_{:?}",
+                nspines, nracks, rack_size, host_bw, rack_uplink_port_bw, load_balancer_type,
             ),
         }
     }
@@ -158,6 +221,46 @@ pub fn build_arbitrary_cluster(
         }
 
         host_id += rack_size;
+    }
+
+    cluster
+}
+
+pub fn build_twolayer_multipath_cluster(
+    nspines: usize,
+    nracks: usize,
+    rack_size: usize,
+    host_bw: Bandwidth,
+    rack_uplink_port_bw: Bandwidth,
+) -> Cluster {
+    let mut cluster = Cluster::new();
+    let mut host_cnt = 0;
+
+    for i in 0..nspines {
+        let spine_name = format!("spine_{}", i);
+        let spine = Node::new(&spine_name, 1, NodeType::Switch);
+        cluster.add_node(spine);
+    }
+
+    for i in 0..nracks {
+        // we use tor_{} here because this assumption is used across this codebase.
+        // use some other name may break the code unexpected
+        let tor_name = format!("tor_{}", i);
+        let tor = Node::new(&tor_name, 2, NodeType::Switch);
+        cluster.add_node(tor);
+
+        for j in 0..nspines {
+            cluster.add_link_by_name(&format!("spine_{}", j), &tor_name, rack_uplink_port_bw);
+        }
+
+        for j in host_cnt..host_cnt + rack_size {
+            let host_name = format!("host_{}", j);
+            let host = Node::new(&host_name, 3, NodeType::Host);
+            cluster.add_node(host);
+            cluster.add_link_by_name(&tor_name, &host_name, host_bw);
+        }
+
+        host_cnt += rack_size;
     }
 
     cluster

@@ -10,6 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::{smallvec, SmallVec};
 use thiserror::Error;
 
+use crate::cluster::TopologyMultiPath;
 use crate::{
     app::{AppEvent, AppEventKind, Application, Replayer},
     background_flow_hard::{search_zipf_exp, BackgroundFlowHard},
@@ -157,10 +158,7 @@ impl SimulatorBuilder {
             // This is a dirty hack to let the simulated apps can get background_flow changing period easily
             let freq = self.setting.background_flow_hard.frequency_ns;
             std::env::set_var("NETHINT_BACKGROUND_FLOW_PERIOD", freq.to_string());
-            timers.push(Box::new(PoissonTimer::new(
-                freq,
-                freq as f64,
-            )));
+            timers.push(Box::new(PoissonTimer::new(freq, freq as f64)));
         }
 
         if self.setting.background_flow_hard.enable {
@@ -390,6 +388,8 @@ impl Simulator {
                     match timer.as_box_any().downcast::<RepeatTimer>() {
                         Ok(mut repeat_timer) => {
                             // estimator samples
+                            // TODO(cjr): temporarily comment out this line as we don't run
+                            // nethintv2
                             self.estimator.as_mut().unwrap().sample(self.ts);
 
                             repeat_timer.reset();
@@ -546,7 +546,11 @@ impl Simulator {
                 // the next event should be the timer event
                 if let Some(timer) = self.timers.peek() {
                     if timer.next_alert() != self.ts {
-                        log::warn!("ts_inc = 0, while next alert ts: {}, self.ts: {}", timer.next_alert(), self.ts);
+                        log::warn!(
+                            "ts_inc = 0, while next alert ts: {}, self.ts: {}",
+                            timer.next_alert(),
+                            self.ts
+                        );
                     }
                     if timer.kind() == TimerKind::Once {
                         let timer = self.timers.pop().unwrap();
@@ -700,16 +704,22 @@ impl<'a> Executor<'a> for Simulator {
 
 #[inline]
 fn hash_vm_pair(f: &Flow) -> usize {
-    let vsrc_id: usize = f.vsrc.as_ref().unwrap()
-            .strip_prefix("host_")
-            .unwrap()
-            .parse()
-            .unwrap();
-    let vdst_id: usize = f.vsrc.as_ref().unwrap()
-            .strip_prefix("host_")
-            .unwrap()
-            .parse()
-            .unwrap();
+    let vsrc_id: usize = f
+        .vsrc
+        .as_ref()
+        .unwrap()
+        .strip_prefix("host_")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let vdst_id: usize = f
+        .vsrc
+        .as_ref()
+        .unwrap()
+        .strip_prefix("host_")
+        .unwrap()
+        .parse()
+        .unwrap();
     (vsrc_id << 32) | vdst_id
 }
 
@@ -926,15 +936,16 @@ impl NetState {
 
     fn add_flow(&mut self, r: TraceRecord, cluster: Option<&Cluster>, sim_ts: Timestamp) {
         let start = std::time::Instant::now();
-        let hint = RouteHint::VirtAddr(r.flow.vsrc.as_deref(), r.flow.vdst.as_deref());
         let (max_rate, route) = if let Some(cluster) = cluster {
             // only the physical cluster is what we have, no virtualization
+            let hint = RouteHint::VirtAddr(r.flow.vsrc.as_deref(), r.flow.vdst.as_deref());
             let max_rate = bandwidth::MAX;
             (
                 max_rate,
-                cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint, None),
+                cluster.resolve_route(&r.flow.src, &r.flow.dst, &hint),
             )
         } else {
+            let mut lb = self.brain.as_mut().unwrap().borrow_mut().load_balancer.take();
             let brain = self.brain.as_ref().unwrap().borrow();
             let max_rate = if let Some(tenant_id) = r.flow.tenant_id {
                 let vcluster = brain.vclusters[&tenant_id].borrow();
@@ -963,15 +974,19 @@ impl NetState {
             };
             assert!(max_rate > 0.gbps());
 
-            (
+            let ret = (
                 max_rate,
                 self.brain
                     .as_ref()
                     .unwrap()
                     .borrow()
                     .cluster()
-                    .resolve_route(&r.flow.src, &r.flow.dst, &hint, None),
-            )
+                    .resolve_route_multipath(&r.flow, &mut lb),
+            );
+
+            drop(brain);
+            self.brain.as_mut().unwrap().borrow_mut().load_balancer = lb;
+            ret
         };
 
         let end = std::time::Instant::now();

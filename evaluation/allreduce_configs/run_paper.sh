@@ -6,9 +6,10 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM SIGHUP EXIT
 # sed -i '/^buffer_size/a computation_speed = 0.1' *.toml
 
 configs=(
-standard3.toml
-standard3_pervm.toml
-standard3_pertenant.toml
+# standard3.toml
+# standard3_pervm.toml
+# standard3_pertenant.toml
+mccs1.toml
 )
 
 for conf in ${configs[@]}; do

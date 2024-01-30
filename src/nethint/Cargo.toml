@@ -20,6 +20,8 @@ serde = { version = "1.0.120", features = ["derive"] }
 toml = "0.5.8"
 rand_distr = "0.4.0"
 zipf = "7.0.0"
+strum = "0.26.1"
+strum_macros = "0.26.1"
 utils = { path = "../utils" }
 
 [dev-dependencies]

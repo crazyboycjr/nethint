@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::bandwidth::Bandwidth;
 use crate::brain::TenantId;
 use crate::simulator::FlowState;
+use crate::Flow;
 use crate::LoadBalancer;
 
 lazy_static! {
@@ -23,6 +24,16 @@ pub type LinkIxIter = EdgeIndices;
 
 use std::ops::{Index, IndexMut};
 
+pub trait TopologyMultiPath: Topology {
+    fn get_uplinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx>;
+    // fn find_all_links(&self, ix: NodeIx, iy: NodeIx) -> std::slice::Iter<LinkIx>;
+    fn resolve_route_multipath(
+        &self,
+        flow: &Flow,
+        load_balancer: &mut Option<Box<dyn LoadBalancer>>,
+    ) -> Route;
+}
+
 pub trait Topology:
     Index<NodeIx, Output = Node> + Index<LinkIx, Output = Link> + IndexMut<LinkIx> + IndexMut<NodeIx>
 {
@@ -34,15 +45,10 @@ pub trait Topology:
     fn get_reverse_link(&self, ix: LinkIx) -> LinkIx;
     fn all_links(&self) -> EdgeIndices;
     fn find_link(&self, ix: NodeIx, iy: NodeIx) -> Option<LinkIx>;
-    fn resolve_route(
-        &self,
-        src: &str,
-        dst: &str,
-        hint: &RouteHint,
-        load_balancer: Option<Box<dyn LoadBalancer>>,
-    ) -> Route;
+    fn resolve_route(&self, src: &str, dst: &str, hint: &RouteHint) -> Route;
     fn num_hosts(&self) -> usize;
     fn num_switches(&self) -> usize;
+    fn num_racks(&self) -> usize;
     /// do network translation
     fn translate(&self, vname: &str) -> String;
     fn to_dot(&self) -> Dot<&Graph<Node, Link>>;
@@ -191,14 +197,8 @@ impl Topology for VirtCluster {
         self.inner.find_link(ix, iy)
     }
 
-    fn resolve_route(
-        &self,
-        src: &str,
-        dst: &str,
-        hint: &RouteHint,
-        load_balancer: Option<Box<dyn LoadBalancer>>,
-    ) -> Route {
-        self.inner.resolve_route(src, dst, hint, load_balancer)
+    fn resolve_route(&self, src: &str, dst: &str, hint: &RouteHint) -> Route {
+        self.inner.resolve_route(src, dst, hint)
     }
 
     #[inline]
@@ -209,6 +209,11 @@ impl Topology for VirtCluster {
     #[inline]
     fn num_switches(&self) -> usize {
         self.inner.num_switches()
+    }
+
+    #[inline]
+    fn num_racks(&self) -> usize {
+        self.inner.num_racks()
     }
 
     #[inline]
@@ -227,6 +232,7 @@ pub struct Cluster {
     graph: Graph<Node, Link>,
     node_map: HashMap<String, NodeIndex>,
     num_hosts: usize,
+    num_racks: usize,
 }
 
 impl Cluster {
@@ -249,6 +255,7 @@ impl Cluster {
         let mut g = Graph::new();
         let mut node_map = HashMap::default();
         let num_hosts = nodes.iter().filter(|n| n.is_host()).count();
+        let num_racks = nodes.iter().filter(|n| n.is_tor()).count();
         nodes.into_iter().for_each(|n| {
             let name = n.name.clone();
             let node_idx = g.add_node(n);
@@ -259,6 +266,7 @@ impl Cluster {
             graph: g,
             node_map,
             num_hosts,
+            num_racks,
         }
     }
 
@@ -266,6 +274,9 @@ impl Cluster {
     pub fn add_node(&mut self, node: Node) -> NodeIndex {
         if node.is_host() {
             self.num_hosts += 1;
+        }
+        if node.is_tor() {
+            self.num_racks += 1;
         }
         let name = node.name.clone();
         let node_idx = self.graph.add_node(node);
@@ -289,8 +300,8 @@ impl Cluster {
         let l2 = self.graph.add_edge(cnode, pnode, Link::new(bw));
 
         self.graph[pnode].children.push(l1);
-        assert!(self.graph[cnode].parent.is_none());
-        self.graph[cnode].parent = Some(l2);
+        // assert!(self.graph[cnode].parent.is_empty());
+        self.graph[cnode].parent.push(l2);
     }
 }
 
@@ -320,6 +331,126 @@ impl IndexMut<NodeIx> for Cluster {
     }
 }
 
+impl TopologyMultiPath for Cluster {
+    fn get_uplinks(&self, ix: NodeIx) -> std::slice::Iter<LinkIx> {
+        self.graph[ix].parent.iter()
+    }
+
+    fn resolve_route_multipath(
+        &self,
+        flow: &Flow,
+        load_balancer: &mut Option<Box<dyn LoadBalancer>>,
+    ) -> Route {
+        let Some(load_balancer) = load_balancer else {
+            return self.resolve_route(
+                &flow.src,
+                &flow.dst,
+                &RouteHint::VirtAddr(flow.vsrc.as_deref(), flow.vdst.as_deref()),
+            );
+        };
+
+        let g = &self.graph;
+        let src_id = self.node_map[&flow.src];
+        let dst_id = self.node_map[&flow.dst];
+
+        log::debug!("searching route from {} to {}", flow.src, flow.dst);
+        log::trace!("src_node: {:?}, dst_node: {:?}", g[src_id], g[dst_id]);
+        assert_eq!(g[src_id].depth, g[dst_id].depth);
+        let mut depth = g[src_id].depth;
+
+        if src_id == dst_id {
+            return self.resolve_route(
+                &flow.src,
+                &flow.dst,
+                &RouteHint::VirtAddr(flow.vsrc.as_deref(), flow.vdst.as_deref()),
+            );
+        }
+
+        // path1: x --> root-level switch
+        let mut path1 = Vec::new();
+        // path2: reverse(y to the root-level switch in path1)
+        let mut path2 = Vec::new();
+
+        let mut x = src_id;
+        // all the nodes at a certain layer that y can reach
+        let mut ys = vec![vec![dst_id]];
+        let mut ys_from = vec![vec![]];
+
+        // first pass: find the LCA
+        while !ys.last().unwrap().contains(&x) && depth > 1 {
+            let choice = match g[x].parent.len() {
+                0 => {
+                    panic!("something is wrong, check your cluster topology")
+                }
+                _ => {
+                    // has multiple paths
+                    // choose a path with the load balancer
+                    let hash = load_balancer.compute_hash(flow);
+                    (hash % g[x].parent.len() as u64) as usize
+                }
+            };
+            let parx = g[x].parent[choice as usize];
+            x = g.raw_edges()[parx.index()].target();
+            path1.push(parx);
+            depth -= 1;
+            // y goes one level up (like a BFS order)
+            let mut ys_next = vec![];
+            let mut ys_from_next = vec![];
+            for &y in ys.last().unwrap() {
+                ys_next.extend(
+                    g[y].parent
+                        .iter()
+                        .map(|pary| g.raw_edges()[pary.index()].target()),
+                );
+                // ys_from_next.extend(std::iter::repeat(y).take(g[y].parent.len()));
+                ys_from_next.extend(g[y].parent.iter());
+            }
+            ys.push(ys_next);
+            ys_from.push(ys_from_next);
+        }
+
+        assert!(
+            ys.last().unwrap().contains(&x),
+            "route from {} to {} not found",
+            flow.src,
+            flow.dst
+        );
+
+        // second pass: generate the subpath from the common ancestor to y
+        while x != dst_id && !ys.is_empty() {
+            let ys_last = ys.pop().unwrap();
+            let ys_from_last = ys_from.pop().unwrap();
+            assert!(
+                ys_last.len() == ys_from_last.len()
+                    || (ys_from_last.len() == 0 && ys_last.len() == 1 && ys_last[0] == dst_id)
+            );
+            if let Some(pos) = ys_last.iter().position(|&y| y == x) {
+                let parx = ys_from_last[pos];
+                x = self.get_source(parx);
+                path2.push(self.get_reverse_link(parx));
+            } else {
+                panic!("Something is wrong, check your topology")
+            }
+        }
+
+        path1.append(&mut path2);
+        let route = Route {
+            from: src_id,
+            to: dst_id,
+            path: path1,
+        };
+
+        log::trace!(
+            "find a route from {} to {}, route; {:#?}",
+            flow.src,
+            flow.dst,
+            route
+        );
+
+        route
+    }
+}
+
 impl Topology for Cluster {
     #[inline]
     fn get_node_index(&self, name: &str) -> NodeIx {
@@ -342,8 +473,9 @@ impl Topology for Cluster {
 
     #[inline]
     fn get_uplink(&self, ix: NodeIx) -> LinkIx {
-        self.graph[ix]
+        *self.graph[ix]
             .parent
+            .get(0)
             .unwrap_or_else(|| panic!("invalid index: {:?}", ix))
     }
 
@@ -370,13 +502,7 @@ impl Topology for Cluster {
     /// When psrc == pdst && vsrc == vdst, the flow is intra-Vm flow, return empty path.
     /// When psrc == pdst && vsrc != vdst, the flow is inter-VM but the VM colocates, let the flow goes througth the access port of the switch.
     /// Otherwise, resolve the route as normal.
-    fn resolve_route(
-        &self,
-        src: &str,
-        dst: &str,
-        hint: &RouteHint,
-        load_balancer: Option<Box<dyn LoadBalancer>>,
-    ) -> Route {
+    fn resolve_route(&self, src: &str, dst: &str, hint: &RouteHint) -> Route {
         let g = &self.graph;
         let src_id = self.node_map[src];
         let dst_id = self.node_map[dst];
@@ -392,7 +518,7 @@ impl Topology for Cluster {
                     // psrc == pdst && vsrc != vdst
                     let mut path = Vec::with_capacity(2);
                     let x = src_id;
-                    let parx = g[x].parent.unwrap();
+                    let parx = g[x].parent[0];
                     path.push(parx);
                     path.push(self.get_reverse_link(parx));
                     log::trace!("find a route from {}[{}] to {}[{}]", src, vsrc, dst, vdst);
@@ -412,8 +538,8 @@ impl Topology for Cluster {
         let mut x = src_id;
         let mut y = dst_id;
         while x != y && depth > 1 {
-            let parx = g[x].parent.unwrap();
-            let pary = g[y].parent.unwrap();
+            let parx = g[x].parent[0];
+            let pary = g[y].parent[0];
             x = g.raw_edges()[parx.index()].target();
             y = g.raw_edges()[pary.index()].target();
             depth -= 1;
@@ -432,7 +558,6 @@ impl Topology for Cluster {
 
         log::trace!("find a route from {} to {}, route; {:#?}", src, dst, route);
 
-        assert!(load_balancer.is_none(), "unimplemented");
         route
     }
 
@@ -444,6 +569,11 @@ impl Topology for Cluster {
     #[inline]
     fn num_switches(&self) -> usize {
         self.graph.node_count() - self.num_hosts
+    }
+
+    #[inline]
+    fn num_racks(&self) -> usize {
+        self.num_racks
     }
 
     #[inline]
@@ -506,7 +636,7 @@ pub struct Node {
     pub depth: usize, // 1: core, 2: agg, 3: edge, 4: host
     pub node_type: NodeType,
     // this gives us faster route search
-    parent: Option<EdgeIndex>,
+    parent: Vec<EdgeIndex>,
     children: Vec<EdgeIndex>,
     // counters
     pub(crate) counters: Counters,
@@ -553,7 +683,7 @@ impl Node {
             name: name.to_owned(),
             depth,
             node_type,
-            parent: None,
+            parent: Vec::new(),
             children: Vec::new(),
             counters: Counters::new(),
         }
@@ -562,6 +692,11 @@ impl Node {
     #[inline]
     pub fn is_host(&self) -> bool {
         matches!(self.node_type, NodeType::Host)
+    }
+
+    #[inline]
+    pub fn is_tor(&self) -> bool {
+        !self.is_host() && self.name.starts_with("tor_")
     }
 }
 

@@ -136,7 +136,7 @@ impl Sampler {
     fn sample(&mut self, vcluster: &VirtCluster, ts: Timestamp) {
         // enumerate each node
         let num_hosts = vcluster.num_hosts();
-        let num_racks = vcluster.num_switches() - 1;
+        let num_racks = vcluster.num_racks();
         let mut agg = vec![Counters::new(); num_racks];
 
         for i in 0..num_hosts {

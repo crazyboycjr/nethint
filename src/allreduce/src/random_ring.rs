@@ -1,6 +1,7 @@
 use crate::AllReduceAlgorithm;
 use nethint::{cluster::Topology, Flow};
 use rand::prelude::SliceRandom;
+use rand::Rng;
 use rand::{rngs::StdRng, SeedableRng};
 use std::rc::Rc;
 
@@ -27,21 +28,22 @@ impl AllReduceAlgorithm for RandomRingAllReduce {
         let n = vcluster.num_hosts();
 
         let mut flows = Vec::new();
-        for _ in 0..self.num_rings {
-            let mut alloced_hosts: Vec<usize> = (0..n).into_iter().collect();
-            alloced_hosts.shuffle(&mut self.rng);
-            assert!(n > 0);
-            for _ in 0..2 {
-                for i in 0..n {
-                    let pred = format!("host_{}", alloced_hosts[i]);
-                    let succ = format!("host_{}", alloced_hosts[(i + 1) % n]);
-                    log::debug!("pred: {}, succ: {}", pred, succ);
-                    let flow = Flow::new(
+        let mut alloced_hosts: Vec<usize> = (0..n).into_iter().collect();
+        alloced_hosts.shuffle(&mut self.rng);
+        assert!(n > 0);
+        for _ in 0..2 {
+            for i in 0..n {
+                let pred = format!("host_{}", alloced_hosts[i]);
+                let succ = format!("host_{}", alloced_hosts[(i + 1) % n]);
+                log::debug!("pred: {}, succ: {}", pred, succ);
+                for _ in 0..self.num_rings {
+                    let mut flow = Flow::new(
                         size as usize * (n - 1) / n / self.num_rings,
                         &pred,
                         &succ,
                         None,
                     );
+                    flow.udp_src_port = Some(self.rng.gen_range(0..1024));
                     flows.push(flow);
                 }
             }

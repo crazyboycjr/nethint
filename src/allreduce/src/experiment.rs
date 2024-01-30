@@ -147,6 +147,7 @@ fn run_batch(
             batch.probe,
             batch.auto_fallback.unwrap_or_default(),
             batch.alpha,
+            batch.num_rings,
             nhosts_to_acquire,
         ));
 

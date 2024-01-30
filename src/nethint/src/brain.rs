@@ -10,9 +10,12 @@ use thiserror::Error;
 use crate::bandwidth::{Bandwidth, BandwidthTrait};
 use crate::cluster::{Cluster, Link, LinkIx, Node, NodeIx, NodeType, Topology, VirtCluster};
 use crate::{
-    architecture::{build_arbitrary_cluster, build_fatree_fake, TopoArgs},
+    architecture::{
+        build_arbitrary_cluster, build_fatree_fake, build_twolayer_multipath_cluster, TopoArgs,
+    },
     SharingMode,
 };
+use crate::{EcmpFlowHasher, LoadBalancer, LoadBalancerType, EcmpSourcePortHasher};
 
 pub type TenantId = usize;
 
@@ -78,6 +81,8 @@ pub struct Brain {
     setting: BrainSetting,
     /// physical clsuter
     cluster: Arc<Cluster>,
+    /// Network Load Balancer (optional)
+    pub(crate) load_balancer: Option<Box<dyn LoadBalancer>>,
     /// original bandwidth
     orig_bw: HashMap<LinkIx, Bandwidth>,
     /// used set of nodes in phycisal cluster, the value
@@ -118,6 +123,18 @@ pub enum Error {
     InvalidHostName(String),
 }
 
+fn create_load_balancer(setting: &BrainSetting) -> Option<Box<dyn LoadBalancer>> {
+    match setting.topology {
+        TopoArgs::TwoLayerMultiPath {
+            load_balancer_type, ..
+        } => Some(match load_balancer_type {
+            LoadBalancerType::EcmpEverything => Box::new(EcmpFlowHasher::new(0, setting.seed)),
+            LoadBalancerType::EcmpSourcePort => Box::new(EcmpSourcePortHasher),
+        }),
+        TopoArgs::FatTree { .. } | TopoArgs::Arbitrary { .. } => None,
+    }
+}
+
 impl Brain {
     pub fn replicate_for_multithread(&self) -> Self {
         let new_cluster = (*self.cluster).clone();
@@ -132,6 +149,7 @@ impl Brain {
         Brain {
             setting: self.setting.clone(),
             cluster: Arc::new(new_cluster),
+            load_balancer: create_load_balancer(&self.setting),
             orig_bw: self.orig_bw.clone(),
             used: self.used.clone(),
             vclusters,
@@ -163,6 +181,20 @@ impl Brain {
                 host_bw,
                 rack_bw,
             } => build_arbitrary_cluster(nracks, rack_size, host_bw.gbps(), rack_bw.gbps()),
+            TopoArgs::TwoLayerMultiPath {
+                nspines,
+                nracks,
+                rack_size,
+                host_bw,
+                rack_uplink_port_bw,
+                ..
+            } => build_twolayer_multipath_cluster(
+                nspines,
+                nracks,
+                rack_size,
+                host_bw.gbps(),
+                rack_uplink_port_bw.gbps(),
+            ),
         };
 
         let used = (0..cluster.num_hosts())
@@ -177,9 +209,11 @@ impl Brain {
             .map(|link_ix| (link_ix, cluster[link_ix].bandwidth))
             .collect();
 
+        let load_balancer = create_load_balancer(&setting);
         let mut brain = Brain {
             setting,
             cluster: Arc::new(cluster),
+            load_balancer,
             orig_bw,
             used,
             vclusters: Default::default(),
@@ -500,6 +534,11 @@ impl Brain {
         self.gc_queue.push(tenant_id);
     }
 
+    #[inline]
+    fn has_multipath(&self) -> bool {
+        self.load_balancer.is_some()
+    }
+
     fn place_specified(
         &mut self,
         hosts_spec: &[NodeIx],
@@ -515,8 +554,20 @@ impl Brain {
         let mut virt_to_vmno: HashMap<String, usize> = HashMap::default();
 
         let mut inner = Cluster::new();
-        let root = "virtual_cloud";
-        inner.add_node(Node::new(root, 1, NodeType::Switch));
+
+        let roots = if self.has_multipath() {
+            let mut roots = vec![];
+            for i in 0..self.setting.topology.nroots() {
+                let rooti = format!("spine_{}", i);
+                inner.add_node(Node::new(&rooti, 1, NodeType::Switch));
+                roots.push(rooti);
+            }
+            roots
+        } else {
+            let root = "virtual_cloud".to_owned();
+            inner.add_node(Node::new(&root, 1, NodeType::Switch));
+            vec![root]
+        };
 
         for &host_ix in hosts_spec {
             let uplink_ix = self.cluster.get_uplink(host_ix);
@@ -527,9 +578,12 @@ impl Brain {
                 // new ToR in virtual cluster
                 let tor_name = format!("tor_{}", tor_alloc.len());
                 inner.add_node(Node::new(&tor_name, 2, NodeType::Switch));
-                // despite we have sharing mode, we intentionally leave 0.gbps() here.
-                // Then if anywhere tries to use this information, it will probably yields some errors during computation.
-                inner.add_link_by_name(root, &tor_name, 0.gbps());
+                // Connect to all roots
+                for root in &roots {
+                    // despite we have sharing mode, we intentionally leave 0.gbps() here.
+                    // Then if anywhere tries to use this information, it will probably yields some errors during computation.
+                    inner.add_link_by_name(root, &tor_name, 0.gbps());
+                }
                 tor_alloc.insert(tor_ix, tor_name);
             }
 
@@ -554,17 +608,30 @@ impl Brain {
                 let next = Self::find_next_slot(e, max_slots)
                     .unwrap_or_else(|| panic!("host_ix: {:?}, used: {:?}", host_ix, e));
                 e.push(next);
-                virt_to_vmno.insert(vhost_name.clone(), next).ok_or(()).unwrap_err();
+                virt_to_vmno
+                    .insert(vhost_name.clone(), next)
+                    .ok_or(())
+                    .unwrap_err();
             });
         }
 
-        tor_alloc
-            .insert(
-                self.cluster().get_node_index("cloud"),
-                "virtual_cloud".to_owned(),
-            )
-            .ok_or(())
-            .unwrap_err();
+        if self.has_multipath() {
+            for i in 0..self.setting.topology.nroots() {
+                let rooti = format!("spine_{}", i);
+                tor_alloc
+                    .insert(self.cluster.get_node_index(&rooti), rooti)
+                    .ok_or(())
+                    .unwrap_err();
+            }
+        } else {
+            tor_alloc
+                .insert(
+                    self.cluster().get_node_index("cloud"),
+                    "virtual_cloud".to_owned(),
+                )
+                .ok_or(())
+                .unwrap_err();
+        }
 
         let virt_to_phys = host_alloc
             .into_iter()
@@ -648,7 +715,7 @@ impl Brain {
             self.used.iter().map(|(&k, v)| (k, v.len())).collect();
 
         while allocated < nhosts {
-            let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_switches() - 1)
+            let mut tors: Vec<(usize, NodeIx)> = (0..self.cluster.num_racks())
                 .map(|i| {
                     let name = format!("tor_{}", i);
                     let tor_ix = self.cluster.get_node_index(&name);

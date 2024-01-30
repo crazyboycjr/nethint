@@ -299,6 +299,7 @@ impl AllreduceApp {
                 Box::new(TopologyAwareRingAllReduce::new(self.seed, num_rings))
             }
             AllReducePolicy::RAT => Box::new(RatAllReduce::new(num_trees)),
+            AllReducePolicy::Mccs => unimplemented!("We only do simulation for mCCS."),
         }
     }
 
