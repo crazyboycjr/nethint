@@ -45,13 +45,13 @@ nethint_level = 0
 policy = "TopologyAware"
 probe = { enable = false }
 nethint_level = 1
-num_rings = 8
+num_rings = 16
 
 [[batch]]
 policy = "Mccs"
 probe = { enable = false }
 nethint_level = 1
-num_rings = 8
+num_rings = 16
 
 # [[batch]]
 # policy = "RAT"
