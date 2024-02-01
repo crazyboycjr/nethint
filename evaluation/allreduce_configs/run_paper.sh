@@ -9,7 +9,8 @@ configs=(
 # standard3.toml
 # standard3_pervm.toml
 # standard3_pertenant.toml
-mccs1.toml
+# mccs1.toml
+mccs2.toml
 )
 
 for conf in ${configs[@]}; do
