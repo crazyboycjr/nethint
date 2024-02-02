@@ -7,8 +7,9 @@ ncases = 50
 # In mccs simulation, we treat each GPU as a VM slot in nethint.
 # Allocating GPUs is just like allocating VMs to the Brain (the cloud controller).
 # job_size_distribution = [[40, 2], [40, 4], [40, 8], [40, 16], [40, 32]]
-job_size_distribution = [[40, 2], [40, 4], [40, 8], [40, 16], [40, 32]]
+# job_size_distribution = [[40, 2], [40, 4], [40, 8], [40, 16], [40, 32]]
 # job_size_distribution = [[40, 64]]
+job_size_distribution = [[40, 16], [40, 32]]
 # job_size_distribution = [[40, 2], [40, 4], [80, 32]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
@@ -20,7 +21,7 @@ num_iterations = 100
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
 # poisson_lambda = 24_000_000_000.0
 # poisson_lambda = 72_000_000.0
-poisson_lambda = 96_000_000.0
+poisson_lambda = 200_000_000.0
 # poisson_lambda = 720_000_000.0
 
 placement_strategy = { type = "Compact" }
@@ -35,7 +36,7 @@ seed = 1
 directory = "/tmp/mccs_init/mccs2"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -108,8 +109,8 @@ type = "TwoLayerMultiPath"  # FatTree|Arbitrary|TwoLayerMultiPath
 
 [brain.topology.args]    # When type = "TwoLayerMultiPath"
 nspines = 16
-nracks = 16
-rack_size = 8
+nracks = 24
+rack_size = 4
 host_bw = 1600
 rack_uplink_port_bw = 200
 # load_balancer_type = "EcmpEverything"  # EcmpEverything|EcmpSourcePort

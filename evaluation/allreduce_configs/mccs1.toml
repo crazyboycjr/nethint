@@ -7,7 +7,8 @@ ncases = 50
 # In mccs simulation, we treat each GPU as a VM slot in nethint.
 # Allocating GPUs is just like allocating VMs to the Brain (the cloud controller).
 # job_size_distribution = [[40, 2], [40, 4], [40, 8], [40, 16], [40, 32]]
-job_size_distribution = [[40, 2], [40, 4], [40, 8], [40, 16], [40, 32]]
+# job_size_distribution = [[40, 2], [40, 4], [40, 8], [40, 16], [40, 32]]
+job_size_distribution = [[40, 16], [40, 32]]
 # job_size_distribution = [[40, 4]]
 
 # Buffer size of all jobs, in bytes, similar to ResNet50 ~= 98MB
@@ -19,7 +20,8 @@ num_iterations = 100
 # Lambda of the poisson arrival, 2*100MB/50Gbps = 0.032s each iteration, total in 32s
 # poisson_lambda = 24_000_000_000.0
 # poisson_lambda = 72_000_000.0
-poisson_lambda = 96_000_000.0
+# poisson_lambda = 96_000_000.0
+poisson_lambda = 200_000_000.0
 # poisson_lambda = 720_000_000.0
 
 # placement_strategy = { type = "Compact" }
@@ -34,7 +36,7 @@ seed = 1
 directory = "/tmp/mccs_init/mccs1"
 
 # Number of repeats for each batch of experiments
-batch_repeat = 1
+batch_repeat = 5
 
 [[batch]]
 policy = "Random"
@@ -78,7 +80,7 @@ seed = 1
 # Whether the cluster's bandwidth is asymmetric
 asymmetric = false
 # The percentage of nodes marked broken
-broken = 0.0
+broken = 0.1
 # The slots of each physical machine (Each slot is a GPU in mccs)
 max_slots = 8
 # how bandwidth is partitioned among multiple VMs in the same physical server, possible values are "RateLimited", "Guaranteed"
@@ -88,7 +90,7 @@ sharing_mode = "RateLimited" # Every GPU gets host_bw / max_slots this amount of
 # guaranteed_bandwidth = 0
 background_flow_high_freq = { enable = true, probability = 1.0, amplitude = 10 }
 # background_flow_high_freq = { enable = false }
-gc_period = 10
+gc_period = 2
 
 # The topology for simulation
 [brain.topology]
@@ -107,8 +109,8 @@ type = "TwoLayerMultiPath"  # FatTree|Arbitrary|TwoLayerMultiPath
 
 [brain.topology.args]    # When type = "TwoLayerMultiPath"
 nspines = 16
-nracks = 16
-rack_size = 8
+nracks = 24
+rack_size = 4
 host_bw = 1600
 rack_uplink_port_bw = 200
 # load_balancer_type = "EcmpEverything"  # EcmpEverything|EcmpSourcePort
